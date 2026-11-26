@@ -336,6 +336,8 @@ remove its `midi/` folder and `midi.json` with the rest of it.
   "models": [
     {"id": "htdemucs_6s", "group": "separation", "use": "stems",
      "name": "HT Demucs 6 stems", "stems": ["vocals", ...], "license": "MIT",
+     "source": {"author": "Meta AI (Rouard, Massa, Défossez)",
+                "url": "https://github.com/facebookresearch/demucs"},
      "state": "downloaded", "size_bytes": 54996327, "download_bytes": 54996327,
      "available": true},
     ...
@@ -355,7 +357,10 @@ pinned file at the wrong size), `not_downloaded`, `built_in` (Basic Pitch ships
 inside StemDeck) or `unknown` (the folder could not be worked out, for example
 when torch does not load). `size_bytes` is what is on disk now, or null;
 `download_bytes` is a full download, or null when unknown. `license` is null
-when the code does not know it. No path is ever in the answer. What a model is
+when the code does not know it. `source` is who made the model and the
+original author's own page (never a re-upload), or null when it is not
+verified (a model a deployment swapped in); the list is in
+[Models](models.md#where-each-model-comes-from). No path is ever in the answer. What a model is
 used for comes from `stem_models_resolved` and `transcribe_<stem>` /
 `transcribe_<stem>_engine` in `GET /api/settings`, not from here. The song-sections
 model is not listed: the Hugging Face hub caches it under a layout only its
@@ -397,7 +402,7 @@ An entry:
 | `size`, `sha256` | The model file's size and SHA-256, null until it is stored |
 | `stems` | The stems you declared, in the order vocals, drums, bass, guitar, piano |
 | `arch`, `params` | `mel_band_roformer` or `bs_roformer`, and its parameter count |
-| `source` | `{kind: "hf" or "upload", label, license_declared}`. `label` is `owner/repo@<12 hex of the commit>` or the file name. `license_declared` is what the Hugging Face card says, shown as given and never checked |
+| `source` | `{kind: "hf" or "upload", label, license_declared, link}`. `label` is `owner/repo@<12 hex of the commit>` or the file name. `license_declared` is what the Hugging Face card says, shown as given and never checked. `link` is the Hugging Face address it was added from (an `https://huggingface.co/` address), or null for a model from files |
 | `added_at`, `checked_at` | Epoch seconds |
 | `cpu_rtf` | Seconds of work per second of audio on the CPU, from the check's test run |
 | `usable`, `missing` | Whether separation can use it now, and whether its file is gone |

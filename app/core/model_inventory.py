@@ -8,7 +8,7 @@ removes a model.
 Each entry names no path, only states and sizes: the folders are this
 machine's (a user name, a drive), and the page has no use for them.
 
-    {"id", "group", "use", "name", "stems", "license", "state",
+    {"id", "group", "use", "name", "stems", "license", "source", "state",
      "size_bytes", "download_bytes", "available"}
 
 group is "separation", "transcription" or "analysis". use says what the
@@ -29,6 +29,12 @@ state is one of:
 size_bytes is what its files hold on disk now (None when nothing is there or
 the state is unknown); download_bytes is what a full download is, when the
 code knows it.
+
+source is who made the model and the page they publish it on,
+{"author", "url"}: the original author's own page, never a re-upload, read
+from that page itself (_SOURCES). None when it is not verified: a model a
+deployment swapped in through the environment, which the code knows only by
+its file name.
 
 Where each model lives is asked of the code that downloads it, never worked
 out again here: stem_models.model_path() for the separation models (torch.hub's
@@ -82,6 +88,52 @@ _WHISPER_BYTES = {"turbo": 1_617_941_637, "small": 483_617_219}
 _BEAT_BYTES = 81_058_141
 _KARAOKE_BYTES = 52_834_731
 _WHISPER_LICENSE = "MIT"
+# beat_this states "The code and the published model weights are released
+# under the MIT license" (github.com/CPJKU/beat_this, README, License). A
+# checkpoint a deployment named with STEMDECK_BEAT_MODEL may be a file of its
+# own, so only the published default carries it.
+_BEAT_LICENSE = "MIT"
+
+# Who made each model, and the page they publish it on: the original author's
+# own page, never a re-upload or a mirror. Each read on that page on
+# 2026-11-26 (docs/models.md, "Where each model comes from"):
+#   Demucs: the repository's README and LICENSE (MIT), the paper by Rouard,
+#     Massa and Defossez that it cites for Hybrid Transformer Demucs.
+#   Kim: the model card at the pinned revision (stem_models.KIM_REVISION).
+#   Karaoke 2: UVR's README, "UVR's core developers trained all of the models
+#     provided in this package", the core developers being Anjok07 and aufr33.
+#   Basic Pitch: Spotify's repository. ByteDance: Zenodo record 4034264, by
+#     Qiuqiang Kong. YourMT3+: the model card at huggingface.co/mimbres,
+#     Sungkyun Chang's account. Whisper: OpenAI's repository, whose README
+#     says the code and the model weights are MIT (the files StemDeck fetches
+#     are the ones its package names). beat_this: its repository, by Foscarin,
+#     Schlueter and Widmer at JKU Linz.
+_DEMUCS_SOURCE = ("Meta AI (Rouard, Massa, Défossez)", "https://github.com/facebookresearch/demucs")
+_SOURCES: dict[str, tuple[str, str]] = {
+    "htdemucs_6s": _DEMUCS_SOURCE,
+    "htdemucs_ft": _DEMUCS_SOURCE,
+    "kim_mel_roformer": ("Kimberley Jensen", "https://huggingface.co/KimberleyJSN/melbandroformer"),
+    "uvr_karaoke_2": (
+        "Ultimate Vocal Remover (Anjok07, aufr33)",
+        "https://github.com/Anjok07/ultimatevocalremovergui",
+    ),
+    "basic_pitch": ("Spotify", "https://github.com/spotify/basic-pitch"),
+    "piano_hr": ("Qiuqiang Kong (ByteDance)", "https://zenodo.org/records/4034264"),
+    "ymt3": ("Sungkyun Chang", "https://huggingface.co/mimbres/YourMT3"),
+    "whisper": ("OpenAI", "https://github.com/openai/whisper"),
+    "beat_this": (
+        "Foscarin, Schlüter and Widmer (JKU Linz)",
+        "https://github.com/CPJKU/beat_this",
+    ),
+}
+
+
+def source_of(key: str) -> dict[str, str] | None:
+    """{"author", "url"} for the model ``key`` names, or None when it is not
+    verified."""
+    known = _SOURCES.get(key)
+    return {"author": known[0], "url": known[1]} if known else None
+
 
 STATES = ("downloaded", "partial", "not_downloaded", "built_in", "unknown")
 
@@ -145,6 +197,7 @@ def _entry(
     *,
     stems: Iterable[str] = (),
     license: str | None,
+    source: dict[str, str] | None,
     state: str,
     size: int | None,
     download_bytes: int | None,
@@ -157,6 +210,7 @@ def _entry(
         "name": name,
         "stems": list(stems),
         "license": license,
+        "source": source,
         "state": state,
         "size_bytes": size,
         "download_bytes": download_bytes,
@@ -182,6 +236,7 @@ def _separation() -> list[dict[str, Any]]:
                 model.name,
                 stems=[s for s in (*stem_models.SELECTABLE_STEMS, "other") if s in model.stems],
                 license=model.license,
+                source=source_of(model.id),
                 state=state,
                 size=size,
                 download_bytes=model.download_bytes,
@@ -212,6 +267,7 @@ def _karaoke() -> dict[str, Any]:
         _KARAOKE_NAME if default else VOCAL_SPLIT_MODEL,
         stems=["lead_backing"],
         license=_KARAOKE_LICENSE if default else None,
+        source=source_of("uvr_karaoke_2") if default else None,
         state=state,
         size=size,
         download_bytes=_KARAOKE_BYTES if default else None,
@@ -233,6 +289,7 @@ def _basic_pitch() -> dict[str, Any]:
         midi_file.ENGINE_LABEL,
         stems=list(midi_engines.get(midi_file.ENGINE_ID).stems),
         license=midi_file.ENGINE_LICENCE,
+        source=source_of("basic_pitch"),
         state="built_in",
         size=_file_size(midi_file.MODEL_PATH),
         download_bytes=None,
@@ -257,6 +314,7 @@ def _piano_hr() -> dict[str, Any]:
         stems=["piano"],
         # The weights' licence: the code is MIT (GET /api/transcribe/status).
         license=piano_hr.MODEL_LICENCE,
+        source=source_of("piano_hr"),
         state=state,
         size=size,
         download_bytes=PIANO_HR_CHECKPOINT_SIZE,
@@ -283,6 +341,7 @@ def _ymt3() -> dict[str, Any]:
         ymt3.ENGINE_LABEL,
         stems=list(midi_engines.get(ymt3.ENGINE_ID).stems),
         license=ymt3.MODEL_LICENCE,
+        source=source_of("ymt3"),
         state=state,
         size=size,
         download_bytes=midi_engines.get(ymt3.ENGINE_ID).download_bytes,
@@ -313,6 +372,7 @@ def _whisper() -> list[dict[str, Any]]:
                 use,
                 f"Whisper {name}",
                 license=_WHISPER_LICENSE,
+                source=source_of("whisper"),
                 state=state,
                 size=size,
                 download_bytes=_WHISPER_BYTES.get(name),
@@ -332,7 +392,8 @@ def _beat_this() -> dict[str, Any]:
         "analysis",
         "beats",
         f"Beat This! ({BEAT_MODEL_CHECKPOINT})",
-        license=None,
+        license=_BEAT_LICENSE if default else None,
+        source=source_of("beat_this") if default else None,
         state=state,
         size=size,
         download_bytes=_BEAT_BYTES if default else None,

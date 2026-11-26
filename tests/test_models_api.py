@@ -173,6 +173,7 @@ def test_no_path_in_the_answer(client, folders):
         "name",
         "stems",
         "license",
+        "source",
         "state",
         "size_bytes",
         "download_bytes",
@@ -190,6 +191,8 @@ def test_a_karaoke_model_swapped_in_is_named_by_its_file_with_no_licence(
     assert entry["name"] == "other_karaoke.ckpt"
     assert entry["license"] is None
     assert entry["download_bytes"] is None
+    # The code does not know who made it: "Source: not verified", no link.
+    assert entry["source"] is None
 
 
 def test_whisper_file_names():
@@ -246,3 +249,72 @@ def test_yourmt3_is_listed_with_its_download_and_what_it_keeps(client, folders):
     _write(ymt3.weights_path(), 188_412_704)
     entry = _by_id(client.get("/api/models").json())["ymt3"]
     assert (entry["state"], entry["size_bytes"]) == ("downloaded", 188_412_704)
+
+
+# The original author's own page for each model, read on that page on
+# 2026-11-26 (docs/models.md, "Where each model comes from"). Never a mirror
+# or a re-upload: a change here is a change of fact, checked again first.
+SOURCES = {
+    "htdemucs_6s": (
+        "Meta AI (Rouard, Massa, Défossez)",
+        "https://github.com/facebookresearch/demucs",
+    ),
+    "htdemucs_ft": (
+        "Meta AI (Rouard, Massa, Défossez)",
+        "https://github.com/facebookresearch/demucs",
+    ),
+    "kim_mel_roformer": ("Kimberley Jensen", "https://huggingface.co/KimberleyJSN/melbandroformer"),
+    "uvr_karaoke_2": (
+        "Ultimate Vocal Remover (Anjok07, aufr33)",
+        "https://github.com/Anjok07/ultimatevocalremovergui",
+    ),
+    "basic_pitch": ("Spotify", "https://github.com/spotify/basic-pitch"),
+    "piano_hr": ("Qiuqiang Kong (ByteDance)", "https://zenodo.org/records/4034264"),
+    "ymt3": ("Sungkyun Chang", "https://huggingface.co/mimbres/YourMT3"),
+    "whisper_turbo": ("OpenAI", "https://github.com/openai/whisper"),
+    "whisper_small": ("OpenAI", "https://github.com/openai/whisper"),
+    "beat_this": ("Foscarin, Schlüter and Widmer (JKU Linz)", "https://github.com/CPJKU/beat_this"),
+}
+
+LICENCES = {
+    "htdemucs_6s": "MIT",
+    "htdemucs_ft": "MIT",
+    # The model card at the pinned revision declares MIT; the repository
+    # has no LICENSE file (docs/models.md).
+    "kim_mel_roformer": "MIT",
+    # UVR's README: "honor the MIT license by providing credit to UVR".
+    "uvr_karaoke_2": "MIT",
+    "basic_pitch": "Apache-2.0",
+    "piano_hr": "CC BY 4.0",
+    "ymt3": "Apache-2.0",
+    "whisper_turbo": "MIT",
+    "whisper_small": "MIT",
+    # Its README: the code and the published weights are MIT. It said no
+    # licence here before 2026-11-26.
+    "beat_this": "MIT",
+}
+
+
+def test_every_built_in_model_names_its_author_and_page(client, folders):
+    models = _by_id(client.get("/api/models").json())
+    assert set(models) == set(SOURCES)
+    for model_id, (author, url) in SOURCES.items():
+        assert models[model_id]["source"] == {"author": author, "url": url}, model_id
+        assert models[model_id]["license"] == LICENCES[model_id], model_id
+
+
+def test_a_source_is_always_an_https_page_of_its_author():
+    for key, (author, url) in model_inventory._SOURCES.items():
+        assert author and author == author.strip(), key
+        assert url.startswith("https://") and " " not in url, key
+        # Never a mirror: the trainer-less BS-RoFormer SW is never listed,
+        # and no re-upload host stands in for an author's page.
+        for host in ("mirror", "seanghay", "Acapellas", "uvr5-models", "TRvlvr"):
+            assert host not in url, (key, url)
+
+
+def test_a_beat_checkpoint_swapped_in_has_no_licence_and_no_source(client, folders, monkeypatch):
+    monkeypatch.setattr(model_inventory, "BEAT_MODEL_CHECKPOINT", "my_own")
+    entry = _by_id(client.get("/api/models").json())["beat_this"]
+    assert entry["license"] is None
+    assert entry["source"] is None

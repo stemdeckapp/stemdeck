@@ -17,12 +17,12 @@ const entry = (id, group, use, extra = {}) => ({
 });
 const MODELS = {
   models: [
-    entry("htdemucs_6s", "separation", "stems", { name: "HT Demucs 6 stems", stems: ["vocals", "drums", "bass", "guitar", "piano", "other"], state: "downloaded", size_bytes: 54_996_327, download_bytes: 54_996_327 }),
+    entry("htdemucs_6s", "separation", "stems", { name: "HT Demucs 6 stems", stems: ["vocals", "drums", "bass", "guitar", "piano", "other"], state: "downloaded", size_bytes: 54_996_327, download_bytes: 54_996_327, source: { author: "Meta AI (Rouard, Massa, Défossez)", url: "https://github.com/facebookresearch/demucs" } }),
     entry("htdemucs_ft", "separation", "stems", { name: "HT Demucs fine-tuned", stems: ["vocals", "drums", "bass", "other"], state: "partial", size_bytes: 84_141_271, download_bytes: 336_565_084 }),
     entry("kim_mel_roformer", "separation", "stems", { name: "Mel-Band RoFormer (Kim)", stems: ["vocals"], download_bytes: 913_106_900, available: false }),
     entry("uvr_karaoke_2", "separation", "lead_backing", { name: "UVR-MDX-NET Karaoke 2", stems: ["lead_backing"] }),
     entry("basic_pitch", "transcription", "midi", { name: "Basic Pitch", stems: ["vocals", "bass", "guitar", "piano", "other"], license: "Apache-2.0", state: "built_in", size_bytes: 230_000 }),
-    entry("piano_hr", "transcription", "midi_piano", { name: "ByteDance Piano Transcription", stems: ["piano"], license: "CC BY 4.0", download_bytes: 171_966_578 }),
+    entry("piano_hr", "transcription", "midi_piano", { name: "ByteDance Piano Transcription", stems: ["piano"], license: "CC BY 4.0", download_bytes: 171_966_578, source: { author: "Qiuqiang Kong (ByteDance)", url: "https://zenodo.org/records/4034264" } }),
     entry("ymt3", "transcription", "midi_multi", { name: "YourMT3+", stems: ["drums", "bass", "guitar", "piano", "other"], license: "Apache-2.0", download_bytes: 561_544_628 }),
     entry("whisper_turbo", "analysis", "lyrics_gpu", { name: "Whisper turbo", download_bytes: 1_617_941_637 }),
     entry("whisper_small", "analysis", "lyrics_cpu", { name: "Whisper small", state: "downloaded", size_bytes: 483_617_219 }),
@@ -99,6 +99,22 @@ test("the built-in models are grouped by purpose, each with its state and size",
   await expect(pane.locator(".models-remove-note")).toContainText("cannot be removed here");
   // Read-only: no button in a built-in row.
   await expect(pane.locator(".models-row button")).toHaveCount(0);
+});
+
+test("each row names its source, linked to the author's own page", async ({ page }) => {
+  await stubServer(page);
+  await openModels(page);
+  const six = row(page, "htdemucs_6s").locator(".models-source");
+  await expect(six).toHaveText("Source: Meta AI (Rouard, Massa, Défossez), github.com/facebookresearch/demucs ↗");
+  const link = six.locator("a.models-source-link");
+  await expect(link).toHaveAttribute("href", "https://github.com/facebookresearch/demucs");
+  // target="_blank" is what main.js hands to the desktop app's open_url.
+  await expect(link).toHaveAttribute("target", "_blank");
+  await expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  await expect(row(page, "piano_hr").locator(".models-source a")).toHaveAttribute("href", "https://zenodo.org/records/4034264");
+  // An entry with no verified source says so, with no link.
+  await expect(row(page, "uvr_karaoke_2").locator(".models-source")).toHaveText("Source: not verified");
+  await expect(row(page, "uvr_karaoke_2").locator(".models-source a")).toHaveCount(0);
 });
 
 test("Used for follows the per-stem choices and the MIDI lanes", async ({ page }) => {

@@ -4,6 +4,31 @@ Records the license basis for ML checkpoints StemDeck downloads at runtime.
 Not exhaustive -- only entries where the decision wasn't a simple upstream
 license file are documented here.
 
+## Where each model comes from
+
+Settings > Models shows a **Source** line under every built-in model: who
+made it, and a link to the page they publish it on. The link is always the
+original author's own page, never a re-upload or a mirror, and it opens in
+your web browser (in the desktop app too). Each fact below was read on that
+page itself on 2026-11-26 (`_SOURCES` in `app/core/model_inventory.py`).
+
+| Model | Author | Page | Licence |
+|---|---|---|---|
+| HT Demucs 6 stems, HT Demucs fine-tuned | Meta AI (Rouard, Massa, Défossez) | https://github.com/facebookresearch/demucs | MIT (its `LICENSE`) |
+| Mel-Band RoFormer (Kim) | Kimberley Jensen | https://huggingface.co/KimberleyJSN/melbandroformer | MIT, as the model card declares at the pinned revision |
+| UVR-MDX-NET Karaoke 2 | Ultimate Vocal Remover (Anjok07, aufr33) | https://github.com/Anjok07/ultimatevocalremovergui | MIT, with credit to UVR |
+| Basic Pitch | Spotify | https://github.com/spotify/basic-pitch | Apache-2.0 |
+| ByteDance Piano Transcription | Qiuqiang Kong (ByteDance) | https://zenodo.org/records/4034264 | CC BY 4.0 (the Zenodo record) |
+| YourMT3+ | Sungkyun Chang | https://huggingface.co/mimbres/YourMT3 | Apache-2.0 (the model card) |
+| Whisper turbo, Whisper small | OpenAI | https://github.com/openai/whisper | MIT (its README: code and weights) |
+| Beat This! (final0) | Foscarin, Schlüter and Widmer (JKU Linz) | https://github.com/CPJKU/beat_this | MIT (its README: code and weights) |
+
+A model a deployment swapped in through the environment
+(`STEMDECK_KARAOKE_MODEL`, `STEMDECK_BEAT_MODEL`) says **Source: not
+verified**, with no link and no licence: StemDeck knows it only by its name. A
+model you added yourself says **Source: added by you**, with the Hugging Face
+link you added it from, if any.
+
 ## Demucs (htdemucs_6s)
 
 MIT, published by the `demucs` PyPI package (Meta/Facebook Research). No
@@ -36,7 +61,12 @@ time is left to you.
 - **Checkpoint**: `MelBandRoformer.ckpt`, Kimberley Jensen's Mel-Band RoFormer
   vocals model.
 - **Source**: https://huggingface.co/KimberleyJSN/melbandroformer
-- **License**: MIT, as the model card declares.
+- **License**: MIT, as the model card declares. That is the only licence
+  statement there is: neither the Hugging Face repository nor the author's
+  GitHub repository (`KimberleyJensen/Mel-Band-Roformer-Vocal-Model`) has a
+  LICENSE file. The card's licence field read `unknown` at the first upload
+  (2024-08-06), `gpl-3.0` from 2025-06-17 and `mit` from 2026-04-22, the
+  revision StemDeck pins.
 - **Runtime**: audio-separator's `MelBandRoformer` class (MIT,
   `nomadkaraoke/python-audio-separator`), the same package that runs Karaoke 2.
   StemDeck reads the checkpoint itself and runs it in its own separation worker.
@@ -241,7 +271,11 @@ The checkpoint is not bundled in StemDeck installers.
 - **Checkpoints**: `large-v3-turbo` (1.6 GB) on a GPU with room for it,
   `small` (0.5 GB) on a CPU or a smaller GPU. Overridable with
   `STEMDECK_WHISPER_MODEL_GPU` / `STEMDECK_WHISPER_MODEL_CPU`.
-- **License**: MIT for both the code and the published weights.
+- **License**: MIT for both the code and the published weights: the
+  repository's README says "Whisper's code and model weights are released
+  under the MIT License". StemDeck fetches the files that package names. The
+  `openai/whisper-small` card on Hugging Face says Apache-2.0 for its own
+  copy in another format, which StemDeck does not use.
 - **Upstream**: https://github.com/openai/whisper
 
 Runs only when no lyrics were found for a job and the `transcribe_lyrics`
@@ -249,6 +283,18 @@ setting allows it (by default on a GPU only). Weights download on first use
 into `<TORCH_HOME>/whisper`, or during desktop setup when transcription would
 run, and are verified by Whisper's own SHA-256 check. Not bundled in StemDeck
 installers.
+
+## Beat This! (beat grid)
+
+- **Model**: `final0`, the main model of the ISMIR 2024 paper "Beat This!
+  Accurate Beat Tracking Without DBN Postprocessing" by Francesco Foscarin,
+  Jan Schlüter and Gerhard Widmer (Institute of Computational Perception,
+  JKU Linz), PyPI `beat-this`.
+- **License**: MIT for the code and the published weights; its README says
+  so, and notes that some of its training data is under stricter terms.
+- **Upstream**: https://github.com/CPJKU/beat_this
+- **Download**: 81,058,141 bytes from the authors' own file share, fetched
+  the first time a song needs it into torch.hub's checkpoints folder.
 
 ## MIDI from a stem
 
@@ -470,7 +516,10 @@ the CPU file scored 0.428 against the GPU's 0.357.
   > the default model or any other model trained as part of the UVR project,
   > please honor the MIT license by providing credit to UVR and its
   > developers."
-- **Credit**: Ultimate Vocal Remover (Anjok07) -- https://github.com/Anjok07/ultimatevocalremovergui
+- **Trained by**: UVR's core developers, Anjok07 and aufr33. UVR's README
+  says they "trained all of the models provided in this package" (except the
+  Demucs 4-stem models); no single trainer of Karaoke 2 is named.
+- **Credit**: Ultimate Vocal Remover (Anjok07, aufr33) -- https://github.com/Anjok07/ultimatevocalremovergui
 
 This is the shipped default (`VOCAL_SPLIT_MODEL` in `app/core/config.py`,
 overridable via `STEMDECK_KARAOKE_MODEL`).
@@ -491,8 +540,9 @@ directly verifying:
   now returns 401 (gated/removed) -- confirmed directly, not secondhand.
 
 Kimberley Jensen's Mel-Band RoFormer vocals model was checked at the same
-time and was found to have no LICENSE file in its repository. Its Hugging Face
-model card does declare MIT, so it is now offered for vocals; see
+time and was found to have no LICENSE file in its repository, and it still has
+none (checked again 2026-11-26). Its Hugging Face model card does declare MIT
+at the pinned revision, so it is offered for vocals; see
 "Mel-Band RoFormer vocals (kim_mel_roformer)" above for the pinned revision and
 hash that make that declaration safe to rely on.
 

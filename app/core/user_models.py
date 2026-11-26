@@ -381,6 +381,24 @@ def worker_spec(model_id: str) -> dict:
     }
 
 
+# The only links a record can hold: what hf_fetch.HfLink.canonical() builds.
+_LINK_PREFIX = "https://huggingface.co/"
+_MAX_LINK_CHARS = 400
+
+
+def _public_link(source: dict) -> str | None:
+    """The Hugging Face link a model was added from, or None (a model from
+    files, or a record from before links were kept). Read back from the
+    registry, so checked again: https on huggingface.co, no whitespace or
+    quote, bounded."""
+    link = source.get("link") if source.get("kind") == "hf" else None
+    if not isinstance(link, str) or not link.startswith(_LINK_PREFIX):
+        return None
+    if len(link) > _MAX_LINK_CHARS or any(c.isspace() or c in "\"'<>\\" for c in link):
+        return None
+    return link
+
+
 def public(model_id: str, rec: dict | None = None) -> dict | None:
     """The entry as GET /api/my-models serves it. No path, no link query."""
     rec = rec if rec is not None else record(model_id)
@@ -413,6 +431,9 @@ def public(model_id: str, rec: dict | None = None) -> dict | None:
             "kind": source.get("kind"),
             "label": source.get("label"),
             "license_declared": source.get("license_declared"),
+            # The link the person added it from (hf_fetch.HfLink.canonical,
+            # rebuilt from checked parts), for Settings' "Source" line.
+            "link": _public_link(source),
         },
         "added_at": rec.get("added_at"),
         "checked_at": rec.get("checked_at"),

@@ -15,11 +15,13 @@ import {
   modelEntries,
   purposeLine,
   sizeText,
+  sourceView,
   stateView,
   usedForLanes,
   usedForLine,
   usedForStems,
 } from "../../static/js/modelsView.js";
+import { isHttpsLink, linkText, linkedSentence } from "../../static/js/sourceLink.js";
 
 let pass = 0,
   fail = 0;
@@ -144,6 +146,27 @@ eq("unknown", stateView(entry("a", "separation", "stems", { state: "unknown" }),
 eq("a state this page does not know reads as unknown", stateView(entry("a", "separation", "stems", { state: "later" }), t, "en").state, "unknown");
 eq("not downloaded and cannot run here", stateView({ ...kim, available: false }, t, "en"), { state: "unavailable", text: "Cannot run here" });
 eq("downloaded but cannot run here still says downloaded", stateView({ ...six, available: false }, t, "en").state, "downloaded");
+
+// ── The Source line: author, then the page, linked ──
+const demucs = { source: { author: "Meta AI (Rouard, Massa, Défossez)", url: "https://github.com/facebookresearch/demucs" } };
+eq("a source: the sentence around the link", sourceView(demucs, t), {
+  before: "Source: Meta AI (Rouard, Massa, Défossez), ",
+  link: { text: "github.com/facebookresearch/demucs", url: "https://github.com/facebookresearch/demucs" },
+  after: "",
+});
+eq("no source: not verified, with no link", sourceView({ source: null }, t), { before: "Source: not verified", link: null, after: "" });
+eq("an entry from an older server: not verified", sourceView({}, t).before, "Source: not verified");
+eq("an author but a link that is not https: not verified", sourceView({ source: { author: "A", url: "http://example.org/a" } }, t).link, null);
+eq("a javascript address is never a link", sourceView({ source: { author: "A", url: "javascript:alert(1)" } }, t).link, null);
+eq("a quote in the address is never a link", isHttpsLink('https://example.org/a"b'), false);
+eq("the link text drops the scheme and the trailing slash", linkText("https://zenodo.org/records/4034264/"), "zenodo.org/records/4034264");
+// Word order is the language's: French puts a space before the colon, and
+// the link lands where its sentence puts it.
+const fr = tableT(TRANSLATIONS.fr);
+eq("French keeps its own punctuation", sourceView(demucs, fr).before, "Source : Meta AI (Rouard, Massa, Défossez), ");
+const before = (k, v) => (k === "x" ? `A ${v.link} B` : "plain");
+eq("text after the link is kept", linkedSentence("x", "y", {}, "https://a.example/b", before), { before: "A ", link: { text: "a.example/b", url: "https://a.example/b" }, after: " B" });
+eq("a sentence that lost its {link} is shown without one", linkedSentence("x", "y", {}, "https://a.example/b", () => "no link here"), { before: "no link here", link: null, after: "" });
 
 // ── Every key this module reads is in all ten tables ──
 const KEYS = Object.keys(TRANSLATIONS.en).filter((k) => k.startsWith("settings.models.") || k === "settings.tab.models" || k === "settings.desc.models" || k.startsWith("help.set.models"));

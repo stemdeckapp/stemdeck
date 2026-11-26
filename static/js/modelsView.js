@@ -17,6 +17,7 @@
 // the moment the Separation or Transcription tab saves one.
 
 import { formatSize, listText } from "./myModelsView.js";
+import { isHttpsLink, linkedSentence } from "./sourceLink.js";
 import { STEM_LABEL } from "./stemModelsView.js";
 import { ENGINE_FIELDS, MIDI_LANES, SETTING_FIELDS, laneChoice, laneEngine, laneNameKey } from "./laneMidiView.js";
 
@@ -134,6 +135,18 @@ export function purposeLine(entry, t, locale) {
 export function licenceLine(entry, t) {
   const l = typeof entry?.license === "string" ? entry.license.trim() : "";
   return l ? t("settings.models.licence", { licence: l }) : "";
+}
+
+/**
+ * A built-in model's "Source" line: who made it and the page they publish
+ * it on, linked; "Source: not verified" with no link when the server has
+ * no verified source for it (a model a deployment swapped in).
+ */
+export function sourceView(entry, t) {
+  const src = isObj(entry?.source) ? entry.source : null;
+  const author = typeof src?.author === "string" ? src.author.trim() : "";
+  if (!author || !isHttpsLink(src.url)) return { before: t("settings.models.sourceNotVerified"), link: null, after: "" };
+  return linkedSentence("settings.models.source", "settings.models.sourceNotVerified", { author }, src.url, t);
 }
 
 /** Bytes as the My models list writes them ("55 MB", "1,6 GB" in some

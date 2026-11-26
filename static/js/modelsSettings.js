@@ -23,9 +23,11 @@ import {
   isModelsAnswer,
   licenceLine,
   purposeLine,
+  sourceView,
   stateView,
   usedForLine,
 } from "./modelsView.js";
+import { linkedLine } from "./sourceLink.js";
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -54,6 +56,7 @@ export async function wireModelsSettings(overlay) {
       el("div", "settings-row-title models-name", m.name),
       el("div", "settings-row-desc models-purpose", purposeLine(m, t, locale)),
       el("div", "settings-row-desc models-licence", licenceLine(m, t)),
+      linkedLine("settings-row-desc models-source", sourceView(m, t)),
       el("div", "settings-row-desc models-used", usedForLine(m, settings, t, locale)),
     );
     const view = stateView(m, t, locale);

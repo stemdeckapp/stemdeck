@@ -389,8 +389,8 @@
       "specs": ["lane-midi", "help-mode", "lane-alignment", "track-header", "eq-panels", "transpose", "speed-control"]
     },
     {
-      "why": "Settings > Models: the built-in models by purpose and their pure view (grouping, Used for, the state badge and size), the read-only /api/models route and inventory behind it, and the links from Separation and Transcription; My models lives in this tab",
-      "paths": ["static/js/modelsSettings.js", "static/js/modelsView.js", "app/core/model_inventory.py", "app/api/config.py", "static/js/catalog.js", "static/css/settings.css"],
+      "why": "Settings > Models: the built-in models by purpose and their pure view (grouping, Used for, the Source line and its link, the state badge and size), the read-only /api/models route and inventory behind it, and the links from Separation and Transcription; My models lives in this tab",
+      "paths": ["static/js/modelsSettings.js", "static/js/modelsView.js", "static/js/sourceLink.js", "app/core/model_inventory.py", "app/api/config.py", "static/js/catalog.js", "static/css/settings.css"],
       "specs": ["models-settings", "my-models", "settings-nav", "help-mode"]
     }
   ]

@@ -526,6 +526,8 @@ const SETTINGS = [
   // buttons. "Add a model..." in a stem's list is in the stem sentences.
   ["settings.tab.models", [
     ["settings.models.builtIn.title", "help.set.modelsBuiltIn"],
+    // Each row's "Source" line, built-in and added alike, and its link.
+    ["settings.models.sourceName", "help.set.modelsSource"],
     ["settings.myModels.title", "help.set.myModels"],
     ["settings.myModels.link.label", "help.set.myModelsLink"],
     ["settings.myModels.file.choose", "help.set.myModelsFile"],
