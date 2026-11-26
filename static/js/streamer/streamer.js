@@ -189,6 +189,7 @@ const ICONS = {
   minus: ["M5 12h14"],
   wave: ["M3 11v2M6 9v6M9 6v12M12 9v6M15 4v16M18 8v8M21 11v2"],
   scissors: [["circle", { cx: 6, cy: 6, r: 3 }], ["circle", { cx: 6, cy: 18, r: 3 }], "M20 4L8.1 15.9M14.5 14.5L20 20M8.1 8.1L12 12"],
+  gauge: ["M4.5 17a8.5 8.5 0 1 1 15 0", "M12 14l4-5"],
   undo: ["M9 14L4 9l5-5M4 9h11a5 5 0 0 1 0 10h-3"],
   redo: ["M15 14l5-5-5-5M20 9H9a5 5 0 0 0 0 10h3"],
   film: [["rect", { x: 3, y: 4, width: 18, height: 16, rx: 2 }], "M7 4v16M17 4v16M3 9h4M3 15h4M17 9h4M17 15h4"],
@@ -383,12 +384,17 @@ function buildBuilder() {
   const clockNow = el("span", "sm-clock-now", clockTenths(0));
   const clockDur = el("span", "sm-clock-dur", `/ ${clockTenths(0)}`);
   clockTime.append(clockNow, clockDur);
+  clock.append(clockTime);
+  // The speed: a card of its own, titled like the Take Timeline card.
   const speed = buildSpeed();
-  clock.append(clockTime, speed.group);
+  const speedCard = el("div", "sm-card sm-speed-card");
+  speedCard.append(icon(ICONS.gauge, { size: 18, width: 1.9 }), tx(el("span", "sm-speed-title"), "speed.group"), speed.group);
   // The cards' row: one line, or two in a narrow strip (streamer.css), the
   // clock and the speed then on a line of their own.
   const stripRow = el("div", "sm-strip-row");
-  stripRow.append(stripTitle, hist, clock);
+  const clockPair = el("div", "sm-clock-pair");
+  clockPair.append(clock, speedCard);
+  stripRow.append(stripTitle, hist, clockPair);
   strip.append(stripRow);
   const rv = buildReview();
   // The two windows: side by side, or stacked when too narrow for two
@@ -405,7 +411,8 @@ function buildBuilder() {
 }
 
 /**
- * The speed, in the clock's card: a notch slower, the box, a notch faster.
+ * The speed, in its own card after the clock's: a notch slower, the box, a
+ * notch faster.
  * It is the transport's one speed (the footer's, which is hidden while
  * Performance is open): the box is wired by transport.wireSpeedBox, the steps
  * go through transport.stepSpeed, and paintSpeed shows transport.getSpeed.

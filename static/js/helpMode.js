@@ -410,7 +410,7 @@ const HELP = [
   ["#streamer .sm-stop", "help.smStop"],
   ["#streamer .sm-play", "help.play"],
   ["#streamer .sm-history", "help.smUndo", null, "help.eqUndoTitle"],
-  // The speed in the clock's card: its steps and box (the footer's one value).
+  // The speed's own card after the clock: its steps and box (the footer's one value).
   ["#streamer .sm-speed", "help.smSpeed", null, "speed.group"],
   ["#streamer .sm-tl-ruler", "help.smRuler", null, "streamer.position"],
   // A section's marker over the timeline, named by its section.

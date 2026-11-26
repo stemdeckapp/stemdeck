@@ -1,5 +1,5 @@
-// Performance Mode's speed control: in the clock's card of the strip under
-// the windows (Take Timeline, undo and redo, the clock). It is the
+// Performance Mode's speed control: its own "Speed" card after the clock, in
+// the strip under the windows (Take Timeline, undo and redo, the clock). It is the
 // transport's one speed (transport.js), the footer's, hidden while
 // Performance is open: its box is wired by transport.wireSpeedBox, its steps
 // go through transport.stepSpeed, and it shows transport.getSpeed. So a speed
@@ -10,7 +10,7 @@
 // locked while a take is open (streamerModel.speedView, tested in Node in
 // tests/js/streamer-model.test.mjs), with the reason on the group.
 //
-// In a narrow strip (under 560 px) the clock and the speed take a line of
+// In a narrow strip (under 660 px) the clock and the speed take a line of
 // their own under the title and undo / redo; nothing scrolls sideways at a
 // phone's width.
 
@@ -117,9 +117,9 @@ test.describe("Performance speed", () => {
   });
 
   // One line where there is room; two at a phone's width and in a narrow
-  // window. The speed stays inside the clock's card, the clock is not cut,
-  // and nothing scrolls sideways.
-  for (const [w, h, rows] of [[1920, 1080, 1], [1366, 768, 1], [800, 900, 1], [600, 700, 2], [375, 812, 2]]) {
+  // window. The speed is in its own titled card beside the clock, the clock
+  // is not cut, and nothing scrolls sideways.
+  for (const [w, h, rows] of [[1920, 1080, 1], [1366, 768, 1], [600, 700, 2], [375, 812, 2]]) {
     test(`${w} x ${h}: the speed fits beside the clock (${rows} ${rows === 1 ? "line" : "lines"})`, async ({ page }) => {
       await page.setViewportSize({ width: w, height: h });
       await openStudio(page);
@@ -130,14 +130,17 @@ test.describe("Performance speed", () => {
         const q = (s) => document.querySelector(`#streamer ${s}`);
         const b = (s) => q(s).getBoundingClientRect();
         const clock = b(".sm-clock");
+        const card = b(".sm-speed-card");
         const speed = b(".sm-speed");
         const time = q(".sm-clock-time");
         const center = q(".sm-center");
         const doc = document.scrollingElement;
         return {
-          speedInClock: speed.left >= clock.left - 0.5 && speed.right <= clock.right + 0.5 && speed.top >= clock.top - 0.5 && speed.bottom <= clock.bottom + 0.5,
+          speedInCard: speed.left >= card.left - 0.5 && speed.right <= card.right + 0.5 && speed.top >= card.top - 0.5 && speed.bottom <= card.bottom + 0.5,
+          cardTitle: q(".sm-speed-title").textContent,
+          cardBesideClock: card.left >= clock.right - 0.5 && Math.abs(card.top - clock.top) < 1,
           timeCut: time.scrollWidth > time.clientWidth + 1,
-          timeUnderSpeed: time.getBoundingClientRect().right > speed.left + 0.5,
+          timeUnderSpeed: time.getBoundingClientRect().right > clock.right + 0.5,
           clockBelowTitle: clock.top >= b(".sm-strip-title").bottom - 0.5,
           stripH: b(".sm-strip").height,
           cardH: b(".sm-strip-title").height,
@@ -146,7 +149,9 @@ test.describe("Performance speed", () => {
           pageX: doc.scrollWidth > doc.clientWidth,
         };
       });
-      expect(L.speedInClock).toBe(true);
+      expect(L.speedInCard).toBe(true);
+      expect(L.cardTitle).toBe("Speed");
+      expect(L.cardBesideClock).toBe(true);
       expect(L.timeCut).toBe(false);
       expect(L.timeUnderSpeed).toBe(false);
       expect(L.rowOverflow).toBe(false);
