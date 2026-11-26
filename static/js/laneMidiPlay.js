@@ -8,10 +8,11 @@
 // its viewBox in seconds and stretched over the row like the waveform's own
 // SVG, so the timeline, the zoom (the --zoom width of the canvas), the scroll
 // and the playhead line are the waveform's without a render loop of its own.
-// The waveform stays under it, dimmed. On the Drums lane each row is a kind
-// of drum, named at the row's left (midiNotesView.drumGeometry). A redraw of
-// the lanes rewrites the row, and syncMidiRows (called after every redraw)
-// puts the roll back.
+// The row's data-midi-source is the lane's Sound, and waves.css draws what
+// plays in front: the waveform for Stem, the notes for MIDI, both evenly for
+// Both. On the Drums lane each row is a kind of drum, named at the row's
+// left (midiNotesView.drumGeometry). A redraw of the lanes rewrites the row,
+// and syncMidiRows (called after every redraw) puts the roll back.
 //
 // HEAR: the row's source switch (Stem, MIDI, Both). MIDI renders the notes
 // once to a mono buffer (midiSynth.js, midiRender.js) and hands it to the engine as the
@@ -142,7 +143,15 @@ function dropRoll(lane) {
   _rolls.delete(lane);
   _rollLabels.get(lane)?.remove();
   _rollLabels.delete(lane);
-  waveRowOf(lane)?.classList.remove("midi-view");
+  const row = waveRowOf(lane);
+  row?.classList.remove("midi-view");
+  if (row) delete row.dataset.midiSource;
+}
+
+/** Which of the roll and the waveform is in front: the lane's Sound, on the row that holds its roll. */
+function paintRollSource(lane) {
+  const row = _rolls.get(lane)?.parentElement;
+  if (row) row.dataset.midiSource = laneSource(lane);
 }
 
 /**
@@ -193,6 +202,7 @@ export function syncRolls(lanes, viewOn) {
       if (labels.parentElement !== row) row.append(labels);
     }
     row.classList.add("midi-view");
+    paintRollSource(lane);
   }
 }
 
@@ -265,8 +275,14 @@ export function soundNote(lane) {
   return _soundNote.get(lane) || null;
 }
 
-function chooseSource(lane, source) {
+/** The lane's Sound, and its picture with it (the one place either changes). */
+function setSource(lane, source) {
   _source.set(sourceKey(lane), normalSource(source));
+  paintRollSource(lane);
+}
+
+function chooseSource(lane, source) {
+  setSource(lane, source);
   _soundNote.delete(lane);
   syncSources();
   _onChange();
@@ -335,7 +351,7 @@ async function addSound(engine, lane, m) {
   } catch (e) {
     console.warn("[midi] the MIDI sound could not be added:", e);
     _soundNote.set(lane, { kind: "error", text: t("laneMidi.source.failed") });
-    _source.set(sourceKey(lane), "stem");
+    setSource(lane, "stem");
     engine.setLaneSource?.(lane, "stem");
   }
   _onChange();

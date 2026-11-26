@@ -407,8 +407,10 @@ test("the notes icon opens the row and draws the notes over the waveform, on its
   expect(ys[2]).toBeLessThan(ys[1]);
   expect(ys[1]).toBeLessThan(ys[0]);
   await expect(roll.locator("rect").first()).toHaveAttribute("fill-opacity", "1");
-  // The waveform is still there, under it.
+  // The waveform is still there, and the Sound is Stem: the waveform in front.
   await expect(row.locator(":scope > .stem-waveform-svg")).toHaveCount(1);
+  await expect(row).toHaveAttribute("data-midi-source", "stem");
+  await expect.poll(() => picture(page, "bass")).toMatchObject({ front: "waveform", waveStronger: true });
   for (const [i, t] of [[0, 1], [1, 2], [2, 4]]) {
     const at = await noteAndPlayhead(page, i, t);
     expect(Math.abs(at.note - at.playhead), `note ${i} at zoom 1`).toBeLessThanOrEqual(1.5);
@@ -422,7 +424,71 @@ test("the notes icon opens the row and draws the notes over the waveform, on its
   await chip(page, "bass").click();
   await expect(roll).toHaveCount(0);
   await expect(chip(page, "bass")).not.toHaveClass(/viewing/);
+  await expect(row).not.toHaveAttribute("data-midi-source", /.+/);
 });
+
+/**
+ * Which of the lane's two pictures is in front and stronger, as drawn: the
+ * computed opacity of the waveform's SVG and of the roll, and their order in
+ * the row (the roll behind is z-index -1, in front it follows the waveform).
+ */
+function picture(page, lane) {
+  return page.evaluate((l) => {
+    const row = document.querySelector(`.stem-waveform-layer > .stem-waveform-row[data-stem="${l}"]`);
+    const wave = Number(getComputedStyle(row.querySelector(":scope > .stem-waveform-svg")).opacity);
+    const rollStyle = getComputedStyle(row.querySelector(":scope > svg.midi-roll"));
+    const notes = Number(rollStyle.opacity);
+    return {
+      source: row.dataset.midiSource,
+      front: rollStyle.zIndex === "-1" ? "waveform" : "notes",
+      wave,
+      notes,
+      waveStronger: wave > notes,
+      notesStronger: notes > wave,
+      even: wave === notes,
+    };
+  }, lane);
+}
+
+// The picture follows the Sound on the click, before the MIDI sound is ready,
+// and on the Drums lane as on a pitched one.
+for (const lane of ["bass", "drums"]) {
+  test(`the ${lane} lane's picture follows its Sound: Stem, MIDI, Both`, async ({ page }) => {
+    await stubServer(page, { midi: { [lane]: { ...DONE, ...(lane === "drums" ? { engine: "ymt3", notes: 4 } : {}) } } });
+    await openStudio(page);
+    await openMidiRow(page, lane);
+    const row = page.locator(`.stem-waveform-layer > .stem-waveform-row[data-stem="${lane}"]`);
+    await expect(row.locator(":scope > svg.midi-roll")).toHaveCount(1);
+    const source = waveRow(page, lane).locator(".midi-source");
+    await expect(row).toHaveAttribute("data-midi-source", "stem");
+    await expect.poll(() => picture(page, lane)).toMatchObject({ front: "waveform", waveStronger: true });
+
+    await source.locator('[data-source="midi"]').click();
+    await expect(row).toHaveAttribute("data-midi-source", "midi");
+    await expect.poll(() => picture(page, lane)).toMatchObject({ front: "notes", notesStronger: true, notes: 1 });
+
+    // A redraw of the lanes (a zoom) keeps it.
+    await page.evaluate(async () => (await import("/js/transport.js")).setWaveZoomLevel(3));
+    await expect(row.locator(":scope > svg.midi-roll")).toHaveCount(1);
+    await expect(row).toHaveAttribute("data-midi-source", "midi");
+
+    // Both waits for the MIDI sound to be ready (the switch is off meanwhile).
+    await expect(source.locator('[data-source="both"]')).toBeEnabled();
+    await source.locator('[data-source="both"]').click();
+    await expect(row).toHaveAttribute("data-midi-source", "both");
+    await expect.poll(() => picture(page, lane)).toMatchObject({ front: "notes", even: true });
+
+    // Closing and opening the row again keeps the lane's Sound and its picture.
+    await chip(page, lane).click();
+    await expect(row).not.toHaveAttribute("data-midi-source", /.+/);
+    await openMidiRow(page, lane);
+    await expect(row).toHaveAttribute("data-midi-source", "both");
+
+    await source.locator('[data-source="stem"]').click();
+    await expect(row).toHaveAttribute("data-midi-source", "stem");
+    await expect.poll(() => picture(page, lane)).toMatchObject({ front: "waveform", waveStronger: true });
+  });
+}
 
 /** The RMS of each of the bass lane's VU taps now: [stem, MIDI] once the MIDI is in. */
 function laneLevels(page) {
