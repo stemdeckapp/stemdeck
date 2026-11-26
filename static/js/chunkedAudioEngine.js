@@ -198,6 +198,7 @@ import { loadStretchWorklet, disposeStretchNode, pipelineLatencySeconds as stret
 import { createEngineFx, engineFxApi } from "./fxChain.js";
 import { reachedEnd } from "./playbackEnd.js";
 import { altSourceStart, laneSourceMode, sourceOn } from "./altSource.js";
+import { scheduleDip } from "./laneDip.js";
 
 export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {}) {
   const AC = window.AudioContext || window.webkitAudioContext;
@@ -251,7 +252,6 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
     members: () => [...stemMap.values()],
     liveNodes: (s) => s.activeNodes,
     onLatencyChange: () => { _epoch++; },
-    levelOf: (s) => _levelOf(s),
   });
   master.connect(fx.masterInput);
 
@@ -404,11 +404,10 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
     });
   };
 
-  // Ducking either side of a bus change. Both buses are delayed by the same
-  // amount, so a dip scheduled at the source lands at the output as one short
-  // dip rather than as a click from splicing two different keys together.
-  const ROUTE_FADE = 0.006;
-  const ROUTE_HOLD = 0.02;
+  // Ducking either side of a bus change (laneDip.js). Both buses are delayed
+  // by the same amount, so a dip scheduled at the source lands at the output
+  // as one short dip rather than as a click from splicing two different keys
+  // together.
 
   // A lane arriving on, or leaving, a bus. Only the first arrival and the last
   // departure touch the worklet: the bus is wired in while occupied and taken
@@ -447,14 +446,9 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
       _laneLeft(previous);
     };
     if (immediate || !playing) { swap(); return; }
-    const g = stem.gain.gain;
-    const at = ctx.currentTime;
-    g.cancelScheduledValues(at);
-    g.setValueAtTime(g.value, at);
-    g.linearRampToValueAtTime(0, at + ROUTE_FADE);
-    g.setValueAtTime(0, at + ROUTE_FADE + ROUTE_HOLD);
-    g.linearRampToValueAtTime(_levelOf(stem), at + ROUTE_FADE + ROUTE_HOLD + ROUTE_FADE);
-    setTimeout(swap, (ROUTE_FADE + ROUTE_HOLD / 2) * 1000);
+    // On the stem's dip node, not its gain: a volume, mute or Sound change
+    // inside the dip is then not undone by it.
+    setTimeout(swap, scheduleDip(stem.dip.gain, ctx.currentTime) * 1000);
   }
 
   function _getCurrentTime() {
@@ -932,6 +926,7 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
     try { member.chainHost?.dispose(); } catch { /* already gone */ }
     member.chainHost = null;
     try { member.gain.disconnect(); } catch { /* noop */ }
+    try { member.dip?.disconnect(); } catch { /* noop */ }
     // Its EQ slot, with any EQ branch still fading out on a timer.
     try { member.fx?.dispose(); } catch { /* noop */ }
     member.fx = null;

@@ -29,6 +29,7 @@ import { loadStretchWorklet, disposeStretchNode, pipelineLatencySeconds as stret
 import { createEngineFx, engineFxApi } from "./fxChain.js";
 import { reachedEnd } from "./playbackEnd.js";
 import { altSourceStart, laneSourceMode, sourceOn } from "./altSource.js";
+import { scheduleDip } from "./laneDip.js";
 
 export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   // Mobile/iOS only starts audio from a context resumed inside a user gesture.
@@ -70,7 +71,6 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     members: () => [...tracks.values()].filter((t) => !t.visualOnly),
     liveNodes: (t) => (t.source ? [t.source] : []),
     onLatencyChange: () => { _epoch++; },
-    levelOf: (t) => levelOf(t),
   });
   master.connect(fx.masterInput);
 
@@ -440,11 +440,10 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     }
   }
 
-  // Ducking either side of a bus change. Both buses are delayed by the same
-  // amount, so a dip scheduled at the source lands at the output as one short
-  // dip rather than as a click from splicing two different keys together.
-  const ROUTE_FADE = 0.006;
-  const ROUTE_HOLD = 0.02;
+  // Ducking either side of a bus change (laneDip.js). Both buses are delayed
+  // by the same amount, so a dip scheduled at the source lands at the output
+  // as one short dip rather than as a click from splicing two different keys
+  // together.
 
   // A track arriving on, or leaving, a bus. Mirrors chunkedAudioEngine.js:
   // only the first arrival and the last departure touch the worklet, the
@@ -479,14 +478,9 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
       _laneLeft(previous);
     };
     if (immediate || !playing) { swap(); return; }
-    const g = t.gain.gain;
-    const at = ctx.currentTime;
-    g.cancelScheduledValues(at);
-    g.setValueAtTime(g.value, at);
-    g.linearRampToValueAtTime(0, at + ROUTE_FADE);
-    g.setValueAtTime(0, at + ROUTE_FADE + ROUTE_HOLD);
-    g.linearRampToValueAtTime(levelOf(t), at + ROUTE_FADE + ROUTE_HOLD + ROUTE_FADE);
-    setTimeout(swap, (ROUTE_FADE + ROUTE_HOLD / 2) * 1000);
+    // On the track's dip node, not its gain: a volume, mute or Sound change
+    // inside the dip is then not undone by it.
+    setTimeout(swap, scheduleDip(t.dip.gain, ctx.currentTime) * 1000);
   }
 
   /**
@@ -559,6 +553,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
       try { t.chainHost?.dispose(); } catch { /* already gone */ }
       t.chainHost = null;
       try { t.gain.disconnect(); } catch { /* noop */ }
+      try { t.dip?.disconnect(); } catch { /* noop */ }
       // Its EQ slot, with any EQ branch still fading out on a timer.
       try { t.fx?.dispose(); } catch { /* noop */ }
       t.fx = null;

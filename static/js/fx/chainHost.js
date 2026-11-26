@@ -30,16 +30,16 @@
 // - A play start rebuilds a chain that has an LFO, so its phase follows song
 //   time again after a pause, as the export print's does.
 // - Inserting or removing a host while the song plays ducks the lane over
-//   32 ms, the way a key change does (audioEngine.js routeTrack).
+//   32 ms, the way a key change does (audioEngine.js routeTrack), on the
+//   source's own dip node (laneDip.js), never on the lane gain.
 
 import { rampTo, XFADE } from "./ramp.js";
 import { createSeries } from "./pedals.js";
 import { chainStructureKey, chainTailSec, chainLatencyFrames } from "./chainModel.js";
+import { scheduleDip } from "../laneDip.js";
 
 const DROP_MARGIN = 0.05;
 const MAX_FADING = 2;
-const ROUTE_FADE = 0.006;
-const ROUTE_HOLD = 0.02;
 
 const isOffline = (ctx) => typeof OfflineAudioContext !== "undefined" && ctx instanceof OfflineAudioContext;
 
@@ -237,12 +237,12 @@ export function createChainHost(ctx) {
 
 /**
  * Every host of one engine. `members()` lists the engine's playback sources
- * (each with .gain, .level, .controlName), `membersOf(name)` those of one
- * lane, `liveNodes(member)` the source nodes playing into it now, and
- * `levelOf(member)` the gain its node rests at (fxChain.createEngineFx).
+ * (each with .gain, .dip, .controlName), `membersOf(name)` those of one
+ * lane, and `liveNodes(member)` the source nodes playing into it now
+ * (fxChain.createEngineFx).
  */
 export function createChainHosts(ctx, {
-  members, membersOf, liveNodes, onLatencyChange = null, levelOf = (member) => member.level ?? 1,
+  members, membersOf, liveNodes, onLatencyChange = null,
 }) {
   const lanes = new Map();
   let anchor = { offset: 0, when: 0, playing: false };
@@ -253,17 +253,12 @@ export function createChainHosts(ctx, {
   const songTimeAt = (t) => (anchor.playing ? anchor.offset + (t - anchor.when) : anchor.offset);
   const timing = () => ({ songTime: songTimeAt(ctx.currentTime), when: ctx.currentTime });
 
-  // A short dip on the lane gain with the rewire at its bottom.
+  // A short dip with the rewire at its bottom, on the member's dip node
+  // (laneDip.js): the lane gain is the user's alone, so a volume, mute or
+  // Sound change inside the dip is not undone by it.
   function duck(member, fn, immediate) {
-    if (immediate || !anchor.playing) { fn(); return; }
-    const g = member.gain.gain;
-    const at = ctx.currentTime;
-    g.cancelScheduledValues(at);
-    g.setValueAtTime(g.value, at);
-    g.linearRampToValueAtTime(0, at + ROUTE_FADE);
-    g.setValueAtTime(0, at + ROUTE_FADE + ROUTE_HOLD);
-    g.linearRampToValueAtTime(levelOf(member), at + ROUTE_FADE + ROUTE_HOLD + ROUTE_FADE);
-    laterIn(ctx, ROUTE_FADE + ROUTE_HOLD / 2, fn);
+    if (immediate || !anchor.playing || !member.dip) { fn(); return; }
+    laterIn(ctx, scheduleDip(member.dip.gain, ctx.currentTime), fn);
   }
 
   function rewire(member, from, to) {

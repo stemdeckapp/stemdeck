@@ -50,6 +50,7 @@
     "static/js/mode.js",
     "static/js/audioEngine.js",
     "static/js/chunkedAudioEngine.js",
+    "static/js/laneDip.js",
     "static/js/audioContext.js",
     "static/js/utils.js",
     "static/js/constants.js",
@@ -258,7 +259,7 @@
     {
       "why": "Effects chains (Advanced mode): the engine, the pedals, the FX row and the export prints",
       "paths": [
-        "static/js/fx/**", "static/js/fxEngine.js", "static/js/fxChain.js", "static/css/fx.css",
+        "static/js/fx/**", "static/js/fxEngine.js", "static/js/fxChain.js", "static/js/laneDip.js", "static/css/fx.css",
         "static/js/audioEngine.js", "static/js/chunkedAudioEngine.js",
         "app/core/fx_prints.py"
       ],
