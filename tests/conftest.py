@@ -62,10 +62,37 @@ def _isolate_piano_hr(monkeypatch, tmp_path):
     monkeypatch.setattr(
         _midi,
         "_spawn_fetch_cmd",
-        lambda dst: [
+        lambda dst, *args: [
             sys.executable,
             "-c",
             'print(\'{"event":"error","code":"download"}\', flush=True); raise SystemExit(3)',
+        ],
+    )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_ymt3(monkeypatch, tmp_path):
+    """No test reads, writes, downloads or converts YourMT3+'s real files (a
+    561 MB checkpoint and a 188 MB weights file under MODELS_DIR,
+    app/pipeline/ymt3.py). config.MODELS_DIR, which their PinnedFile looks
+    up when asked, is a temporary folder, each file's verified state is
+    forgotten, and the conversion step exits at once as a failed one (the
+    download fails already, _isolate_piano_hr). Tests that want either point
+    midi._spawn_fetch_cmd or midi._spawn_convert_cmd at a stub of their own."""
+    from app.core import config as _config
+    from app.pipeline import midi as _midi
+    from app.pipeline import ymt3 as _ymt3
+
+    monkeypatch.setattr(_config, "MODELS_DIR", tmp_path / "_models")
+    for pinned in (_ymt3.CHECKPOINT, _ymt3.WEIGHTS):
+        monkeypatch.setitem(pinned._verified, "ident", None)
+    monkeypatch.setattr(
+        _midi,
+        "_spawn_convert_cmd",
+        lambda ckpt, out: [
+            sys.executable,
+            "-c",
+            'print(\'{"event":"error","code":"convert"}\', flush=True); raise SystemExit(3)',
         ],
     )
 

@@ -15,8 +15,8 @@ The endpoints the web app itself uses. They are not a stable public interface an
 | POST | `/api/jobs/{id}/reextract` | Separate one stem again with another model, from the song's original audio, and replace it in place: JSON `{stem, model}` → `202 {state}`. See [Re-extract one stem](#re-extract-one-stem) |
 | POST | `/api/jobs/{id}/reextract/undo` | Put back the stem the last re-extract of it replaced: JSON `{stem}` → `200 {state}` |
 | POST | `/api/jobs/{id}/reextract/keep` | Keep the re-extracted stem and delete its undo copy: JSON `{stem}` → `200 {state}` |
-| GET | `/api/transcribe/status` | Whether MIDI can be made on this install, with what engine, from which stems. See [MIDI from a stem](#midi-from-a-stem) |
-| POST | `/api/jobs/{id}/midi` | Make MIDI from the song's piano or bass stem: JSON `{stem, detail?}` → `202 {state: "running"}` |
+| GET | `/api/transcribe/status` | Whether MIDI can be made on this install, with which engines, from which stems. See [MIDI from a stem](#midi-from-a-stem) |
+| POST | `/api/jobs/{id}/midi` | Make MIDI from one of the song's stems: JSON `{stem, detail?}` → `202 {state: "running"}` |
 | POST | `/api/jobs/{id}/midi/{stem}/cancel` | Stop that run; the file the stem had stays: `200 {state}` |
 | DELETE | `/api/jobs/{id}/midi/{stem}` | Remove the stem's MIDI file and its record: `200 {deleted: stem}` |
 | GET | `/api/jobs/{id}/stems/{stem}.mid` | The stem's MIDI file (`audio/midi`), named `<song>_<stem>.mid` like a stem download |
@@ -169,43 +169,63 @@ the loudness, since the stems still add up to the same song.
 
 ## MIDI from a stem
 
-The notes of a finished song's piano or bass stem as a standard MIDI file,
-made on request (see [models.md](models.md#midi-from-a-stem)), one run at a time
-across the server. The bass is always Spotify's Basic Pitch, on the CPU, a few
-seconds a song. The piano is the engine the `transcribe_piano_engine` setting
-picks: `basic_pitch` (the default) or `piano_hr`, ByteDance's high-resolution
-piano transcription, on the GPU when the separation device setting resolves to
-CUDA, else on the CPU. Its checkpoint (172 MB) is downloaded by the first
-`piano_hr` run, as part of that run.
+The notes of one of a finished song's stems as a standard MIDI file, made on
+request (see [models.md](models.md#midi-from-a-stem)), one run at a time across
+the server. Every stem of `htdemucs_6s` can be transcribed: `vocals`, `drums`,
+`bass`, `guitar`, `piano`, `other`. Each with the engine its
+`transcribe_<stem>_engine` setting picks, among those that can take it:
 
-`GET /api/transcribe/status` is cheap and never loads the engine:
+| Engine | Stems | Runs on | First run downloads |
+|---|---|---|---|
+| `basic_pitch`, Spotify's Basic Pitch | every stem but the drums | the CPU, a few seconds a song | nothing (built in) |
+| `piano_hr`, ByteDance's high-resolution piano transcription | piano | the GPU when the separation device resolves to CUDA, else the CPU | its checkpoint, 172 MB |
+| `ymt3`, YourMT3+ | drums, bass, guitar, piano, other | the same | its checkpoint, 562 MB, then made into its 188 MB weights |
+
+Each stem's engine until one is picked: `ymt3` for the drums, bass, piano and
+other, `basic_pitch` for the vocals and the guitar (config.MIDI_DEFAULT_ENGINES
+says why, with the measurements). `ymt3` keeps only the notes of the stem's own
+instrument class; the drums' file is General MIDI percussion on channel 10.
+
+`GET /api/transcribe/status` never loads an engine:
 
 ```
 {"available": true | false,
  "reason": null | "no_runtime" | "unsupported_platform" | "engine_error",
  "engines": [
    {"id": "basic_pitch", "label": "Basic Pitch", "version": "0.4.0", "licence": "Apache-2.0",
-    "model_licence": "Apache-2.0", "stems": ["piano", "bass"], "available": true,
-    "reason": null, "model": "built_in", "download_bytes": null},
+    "model_licence": "Apache-2.0", "stems": ["vocals", "bass", "guitar", "piano", "other"],
+    "available": true, "reason": null, "source": "built_in", "model": "built_in",
+    "download_bytes": null, "disk_bytes": null, "device": "cpu",
+    "seconds_per_minute": null, "uses_detail": true},
    {"id": "piano_hr", "label": "ByteDance Piano Transcription", "version": "0.0.6",
-    "licence": "MIT", "model_licence": "CC BY 4.0", "stems": ["piano"], "available": true,
-    "reason": null, "model": "not_downloaded" | "partial" | "downloaded",
-    "download_bytes": 171966578}],
- "piano_engine": "basic_pitch" | "piano_hr", "piano_engines": ["basic_pitch", "piano_hr"],
- "stems": ["piano", "bass"], "max_seconds": 1200,
+    "licence": "MIT", "model_licence": "CC BY 4.0", "stems": ["piano"], ...,
+    "model": "not_downloaded" | "partial" | "downloaded",
+    "download_bytes": 171966578, "disk_bytes": 171966578, "device": "cpu" | "cuda", ...},
+   {"id": "ymt3", "label": "YourMT3+", "version": "5e66c1e", "licence": "Apache-2.0",
+    "model_licence": "Apache-2.0", "stems": ["drums", "bass", "guitar", "piano", "other"], ...,
+    "download_bytes": 561544628, "disk_bytes": 188412704, "device": "cpu" | "cuda",
+    "seconds_per_minute": {"cuda": 12, "cpu": 69}, "uses_detail": false}],
+ "stem_engines": {"vocals": ["basic_pitch"], "drums": ["ymt3"], "bass": ["basic_pitch", "ymt3"], ...},
+ "default_engines": {"vocals": "basic_pitch", "drums": "ymt3", ...},
+ "stems": ["vocals", "drums", "bass", "guitar", "piano", "other"], "max_seconds": 1200,
  "details": ["balanced", "detailed", "clean"]}
 ```
 
-`available` and `reason` at the top are Basic Pitch's, which every bass file
-needs; each engine has its own. `model` is the checkpoint by its size on disk
-only: a run checks its SHA-256 before it uses it.
+`available` and `reason` at the top are Basic Pitch's, whose vendored mido
+writes every engine's file; each engine has its own. `model` is the weights by
+their size on disk only: a run checks their SHA-256 before it uses them (for
+`ymt3`, `partial` is also a checkpoint downloaded but not yet converted).
+`device` is what a run would ask for now; `seconds_per_minute` the measured
+seconds of work per minute of audio on each device (null when not measured);
+`uses_detail` whether `transcribe_detail` changes the engine's notes.
+`source` is `built_in`; an engine the person brings would say `user`.
 
 `unsupported_platform` is Intel macOS, which has no onnxruntime; `no_runtime`
 is a module the engine needs that is not installed; `engine_error` is a
 vendored engine that is incomplete, or one that failed to import in a run
 since the server started.
 
-`POST /api/jobs/{id}/midi` takes `{"stem": "piano" | "bass", "detail"?}` and
+`POST /api/jobs/{id}/midi` takes `{"stem": <one of the six>, "detail"?}` and
 answers `202 {"state": "running"}` at once. Without `detail` the
 `transcribe_detail` setting is used. A body of the wrong shape (a missing or
 non-string `stem`, more than 32 characters) is FastAPI's own `422`. Every
@@ -215,10 +235,10 @@ order:
 | Status | `code` | When |
 |---|---|---|
 | 404 | `job_not_found` | Not a job id, or no such job |
-| 400 | `stem_not_supported` | `stem` is not `piano` or `bass` |
+| 400 | `stem_not_supported` | `stem` is not one of the six |
 | 400 | `bad_detail` | `detail` is not `balanced`, `detailed` or `clean` |
-| 503 | `engine_unavailable` | The stem's engine cannot run here: the status above says `available: false`, or, for the piano with `piano_hr` picked, that engine's own `available` is false |
-| 403 | `disabled` | `transcribe_piano` or `transcribe_bass` is `off` for that stem |
+| 503 | `engine_unavailable` | The stem's engine cannot run here: the status above says `available: false`, or that engine's own `available` is false |
+| 403 | `disabled` | `transcribe_<stem>` is `off` |
 | 409 | `busy` | The song is queued or separating, or a fill, a Lead + Backing split, a re-extract or a MIDI run is working on it; or a MIDI run is going on any song; or the server is stopping or the stems folder is moving |
 | 409 | `no_stem` | The song is not `done`, or has no such stem file |
 | 413 | `too_long` | The song, or the stem file's header, is longer than `max_seconds` |
@@ -231,27 +251,37 @@ event stream ends at once for a finished song, so it does not carry them):
 "midi": {
   "piano": {
     "state": "running" | "done" | "error" | "cancelled",
-    "pct": 0..100, "notes": <int> | null, "engine": "basic_pitch",
+    "pct": 0..100, "phase": "download" | "prepare" | "transcribe" | null,
+    "notes": <int> | null, "engine": "basic_pitch" | "piano_hr" | "ymt3",
     "detail": "balanced" | "detailed" | "clean",
     "tempo_source": "song" | "default" | null,
     "at": "<ISO 8601, UTC>", "error_code": <code> | null,
     "has_file": true | false
   },
-  "bass": {...}
+  "drums": {...}
 }
 ```
 
 `midi` is `{}` until the first run, and a stem is there only once it had one.
-`state`, `pct`, `detail`, `at` and `error_code` describe the latest run;
-`notes`, `tempo_source` and `has_file` describe the file on disk. A run that
-fails or is cancelled never touches the file the stem had: the new one is
+`state`, `pct`, `phase`, `detail`, `at` and `error_code` describe the latest
+run; `notes`, `tempo_source` and `has_file` describe the file on disk. A run
+that fails or is cancelled never touches the file the stem had: the new one is
 written under a temp name and renamed into place only when it is complete, so
 `has_file` stays `true` with the old file's notes. `error_code` is one of
 `too_long`, `no_audio` (the stem cannot be read), `engine`, `disk` (no space
 left), `io` (any other write error), `timeout`, `stalled` (no output for two
-minutes) or `interrupted` (the server stopped during the run; a run found
-`running` at startup becomes this). The state survives a restart: it is kept in
-`registry.json` and in the song's `metadata.json`.
+minutes), `interrupted` (the server stopped during the run; a run found
+`running` at startup becomes this), `download` (an engine's weights could not
+be fetched, or what arrived was not them) or `prepare` (YourMT3+'s weights
+could not be made from its checkpoint). The state survives a restart: it is
+kept in `registry.json` and in the song's `metadata.json`.
+
+`phase` is set while a run works: `"download"` while an engine's checkpoint
+downloads (its percent), `"prepare"` while YourMT3+'s weights are made from
+its checkpoint (once; the checkpoint is then deleted), then `"transcribe"`.
+The file the song had stays through a failed download or preparation. A
+`piano_hr` or `ymt3` run that fails on the GPU is run again, whole, on the CPU
+(`gpu_fallback` in `midi.json`).
 
 `tempo_source` is `song` when the song's beat grid is trusted (edited by you,
 or steady with at least 70% of its beats on an onset): the file then carries
@@ -277,23 +307,17 @@ when the file could not be removed.
 `Content-Disposition: attachment; filename="<song>_<stem>.mid"` (the same
 name rule as a stem download), and `Cache-Control: no-cache`, since a run
 replaces it under the same URL. `404 no_midi` when there is none or `stem` is
-not `piano` or `bass`.
-
-While a run works, the song's `midi.<stem>` has `"state": "running"`, `pct`,
-and `phase`: `"download"` while the `piano_hr` checkpoint downloads (its
-percent), then `"transcribe"`. A download that fails ends the run as
-`error_code: "download"`; the file the song had stays. A `piano_hr` run that
-fails on the GPU is run again, whole, on the CPU (`gpu_fallback` in
-`midi.json`).
+not one of the six.
 
 On disk, per song: `midi/<stem>.mid`, and `midi.json`:
 
 ```
 {"v": 1, "stems": {"piano": {
-  "engine": "basic_pitch" | "piano_hr", "engine_version": "0.4.0" | "0.0.6",
-  "vendor_id": "<16 hex>", "model_sha256": null | "<piano_hr checkpoint sha256>",
+  "engine": "basic_pitch" | "piano_hr" | "ymt3", "engine_version": "0.4.0" | "0.0.6" | "5e66c1e",
+  "vendor_id": "<16 hex>", "model_sha256": null | "<the weights' sha256>",
   "device": "cpu" | "cuda", "gpu_fallback": false,
-  "stem", "detail", "params": {the engine's thresholds; Basic Pitch's note length and frequency range},
+  "stem", "detail", "params": {Basic Pitch's thresholds, note length and frequency range;
+                               piano_hr's thresholds; ymt3's {"class_filter": <stem>}},
   "notes", "tempo_source", "bpm", "beats_per_bar", "bar_start",
   "created_at", "seconds_audio", "seconds_run"}}}
 ```
@@ -321,18 +345,19 @@ remove its `midi/` folder and `midi.json` with the rest of it.
 ```
 
 `group` is `separation` (the three separation models and the Karaoke 2 split),
-`transcription` (Basic Pitch, ByteDance Piano Transcription) or `analysis`
-(Whisper for lyrics, the beat model). `use` is `stems`, `lead_backing`, `midi`
-(Basic Pitch), `midi_piano` (ByteDance Piano Transcription), `lyrics`,
+`transcription` (Basic Pitch, ByteDance Piano Transcription, YourMT3+) or
+`analysis` (Whisper for lyrics, the beat model). `use` is `stems`,
+`lead_backing`, `midi` (Basic Pitch), `midi_piano` (ByteDance Piano
+Transcription), `midi_multi` (YourMT3+, its state from the weights file it
+keeps, `download_bytes` the checkpoint it downloads first), `lyrics`,
 `lyrics_gpu`, `lyrics_cpu` or `beats`. `state` is `downloaded`, `partial` (some files, or a
 pinned file at the wrong size), `not_downloaded`, `built_in` (Basic Pitch ships
 inside StemDeck) or `unknown` (the folder could not be worked out, for example
 when torch does not load). `size_bytes` is what is on disk now, or null;
 `download_bytes` is a full download, or null when unknown. `license` is null
 when the code does not know it. No path is ever in the answer. What a model is
-used for comes from `stem_models_resolved` and `transcribe_piano` /
-`transcribe_bass` / `transcribe_piano_engine` in `GET /api/settings`, not from
-here. The song-sections
+used for comes from `stem_models_resolved` and `transcribe_<stem>` /
+`transcribe_<stem>_engine` in `GET /api/settings`, not from here. The song-sections
 model is not listed: the Hugging Face hub caches it under a layout only its
 package names. Built-in models are never removed through the API (`remove` is
 false): a running separation may be reading the file.

@@ -1141,10 +1141,11 @@ TRANSCRIBE_WORD_GAP_SEC = 0.3
 # line) in the plain text.
 TRANSCRIBE_STANZA_GAP_SEC = 4.0
 
-# MIDI from the piano and bass stems (app/pipeline/midi.py, midi_worker.py):
-# notes transcribed with Spotify's Basic Pitch 0.4.0 (Apache-2.0), vendored in
-# app/_vendor/transcribe with its ONNX model, run on the CPU in a fresh worker
-# process per request. Not the lyrics transcription above, which is Whisper.
+# MIDI from a song's stems (app/pipeline/midi.py, midi_worker.py): notes
+# transcribed by one of three engines (MIDI_ENGINE_STEMS below), each run in
+# a fresh worker process per request. Basic Pitch 0.4.0 (Spotify,
+# Apache-2.0) is vendored in app/_vendor/transcribe with its ONNX model and
+# runs on the CPU. Not the lyrics transcription above, which is Whisper.
 #
 # Measured in the 2026-11-25 spike (data/transcribe-spike/bp/out/results.json,
 # onnxruntime 1.29 on the CPU): a 359 s song took 6.3 to 12.3 s per stem and
@@ -1159,21 +1160,37 @@ TIMEOUT_MIDI = max(60, _env_int("STEMDECK_TIMEOUT_MIDI", 600))
 # No output for this long is a hang. The worker reports each 2 s model window,
 # and decoding the longest song allowed is the one quiet stretch.
 TIMEOUT_MIDI_STALL = max(30, _env_int("STEMDECK_TIMEOUT_MIDI_STALL", 120))
-# The stems a MIDI file is made from, and the pitch range searched in each
-# (Hz, Basic Pitch's minimum_frequency and maximum_frequency). Piano: A0 to
-# about C8, the 88 keys. Bass: B0 on a five-string down to 30 Hz, up to 400 Hz,
-# above the 24th fret of a four-string's G string (392 Hz). The spike ran with
-# exactly these ranges.
-MIDI_STEMS = ("piano", "bass")
+# The stems a MIDI file is made from: every stem of htdemucs_6s, in the
+# order Settings lists them. And the pitch range Basic Pitch searches in
+# each (Hz, its minimum_frequency and maximum_frequency). Piano: A0 to about
+# C8, the 88 keys. Bass: B0 on a five-string down to 30 Hz, up to 400 Hz,
+# above the 24th fret of a four-string's G string (392 Hz); the spike ran
+# with exactly these two. Guitar: 60 Hz (a drop-C low string is 65 Hz) to
+# 1600 Hz; other: the piano's range; vocals: 65 Hz (C2) to 1100 Hz (C#6):
+# the ranges data/midi-bench/results/engines-per-stem.md measured with,
+# chosen before scoring. Basic Pitch cannot transcribe drums.
+MIDI_STEMS = ("vocals", "drums", "bass", "guitar", "piano", "other")
 MIDI_STEM_RANGES: dict[str, tuple[float, float]] = {
-    "piano": (27.5, 4200.0),
+    "vocals": (65.0, 1100.0),
     "bass": (30.0, 400.0),
+    "guitar": (60.0, 1600.0),
+    "piano": (27.5, 4200.0),
+    "other": (27.5, 4200.0),
 }
-# The General MIDI program and track name of each stem's file: 0 Acoustic
-# Grand Piano, 33 Electric Bass (finger).
+# The General MIDI program (0-based) and track name of each stem's file, when
+# the engine names no instrument: 53 Voice Oohs, 33 Electric Bass (finger),
+# 27 Electric Guitar (clean), 0 Acoustic Grand Piano, 48 String Ensemble 1.
+# The drums are on MIDI channel 10, General MIDI's percussion channel, which
+# takes no program (midi_file.build_midi). YourMT3+ names an instrument per
+# note: its file takes the program most of its notes have (ymt3.stem_notes).
+MIDI_DRUM_CHANNEL = 9
 MIDI_STEM_PROGRAMS: dict[str, tuple[int, str]] = {
-    "piano": (0, "Keys"),
+    "vocals": (53, "Vocals"),
+    "drums": (0, "Drums"),
     "bass": (33, "Bass"),
+    "guitar": (27, "Guitar"),
+    "piano": (0, "Keys"),
+    "other": (48, "Other"),
 }
 # How much detail is kept, per stem: Basic Pitch's thresholds (0..1), its
 # minimum note length (ms), and "one_voice" (midi_notes.one_voice, one note
@@ -1247,6 +1264,17 @@ MIDI_DETAIL_PRESETS: dict[str, dict[str, dict[str, float | bool]]] = {
         },
     },
 }
+# Guitar, other and vocals take the piano's thresholds, not tuned for them:
+# what engines-per-stem.md measured Basic Pitch with ("balanced", chosen
+# before scoring). The vocals keep one note at a time (one_voice): a voice
+# sings one, and on vocadito one voice scored 0.567 against 0.558 for every
+# note (clean, onset F1 at 50 ms).
+for _stem in ("guitar", "other", "vocals"):
+    MIDI_DETAIL_PRESETS[_stem] = {
+        detail: {**preset, "one_voice": _stem == "vocals"}
+        for detail, preset in MIDI_DETAIL_PRESETS["piano"].items()
+    }
+del _stem
 # The second piano engine (app/pipeline/piano_hr.py): ByteDance's
 # high-resolution piano transcription (Kong et al. 2021, "High-resolution
 # Piano Transcription with Pedals by Regressing Onset and Offset Times"),
@@ -1257,11 +1285,7 @@ MIDI_DETAIL_PRESETS: dict[str, dict[str, dict[str, float | bool]]] = {
 # file's MD5, 22b961b77c1878239fec963362097045, and the copy hashed here
 # matched it on 2026-11-26). The file name holds no "%" and no "=": the
 # address does ("=" only), and stem_models.ModelFile refuses a "%".
-#
-# Which engine makes the piano's MIDI (settings.transcribe_piano_engine). The
-# bass is always Basic Pitch: this model knows only the piano's 88 keys.
-MIDI_PIANO_ENGINES = ("basic_pitch", "piano_hr")
-MIDI_DEFAULT_PIANO_ENGINE = "basic_pitch"
+
 PIANO_HR_CHECKPOINT_URL = (
     "https://zenodo.org/api/records/4034264/files/CRNN_note_F1=0.9677_pedal_F1=0.9186.pth/content"
 )
@@ -1338,6 +1362,139 @@ MIDI_PIANO_HR_PRESETS: dict[str, dict[str, float | bool]] = {
         "pedal": True,
     },
 }
+# The engines, and the stems each can transcribe (app/core/midi_engines.py
+# lists them; settings.transcribe_<stem>_engine picks one per stem). Basic
+# Pitch hears pitch, not drums. piano_hr knows the piano's 88 keys only.
+# YourMT3+ takes every stem but the vocals: on vocadito (40 sung clips,
+# separated from a mix) it scored 0.481 onset F1 against Basic Pitch's 0.554
+# on annotator A1, 0.249 against 0.357 with offsets, and better only on
+# annotator A2 (0.585 against 0.544), so it does not meet Basic Pitch there.
+MIDI_ENGINES = ("basic_pitch", "piano_hr", "ymt3")
+MIDI_ENGINE_STEMS: dict[str, tuple[str, ...]] = {
+    "basic_pitch": ("vocals", "bass", "guitar", "piano", "other"),
+    "piano_hr": ("piano",),
+    "ymt3": ("drums", "bass", "guitar", "piano", "other"),
+}
+# Each stem's engine until the person picks another: the measured winner
+# among the engines that need no weights the person brings
+# (data/midi-bench/results/engines-per-stem.md: onset F1 at 50 ms on
+# separated stems, paired over the same tracks, 95% bootstrap interval):
+# - other: YourMT3+, 0.439 against Basic Pitch's 0.144 (+0.295,
+#   +0.232..+0.362, 44 of 49 Slakh songs). Pads, strings and brass are what
+#   Basic Pitch's onset decoding misses.
+# - piano: YourMT3+, 0.502 against 0.425 (+0.077, +0.031..+0.125, 35 of 49).
+#   piano_hr stays a choice: it is better on solo piano (MAESTRO).
+# - bass: YourMT3+, octave-aligned 0.551 against 0.521 (+0.030,
+#   +0.014..+0.047, 31 of 48). One data set, low certainty, but the same
+#   engine as three other stems.
+# - drums: YourMT3+, the only engine here that hears drums (0.704 overall on
+#   MDB Drums separated, 0.699 on Slakh separated). ADTOF measured better
+#   (0.854 on MDB) but its weights are non-commercial and the person would
+#   have to bring them.
+# - guitar: Basic Pitch. The two data sets disagree: on Slakh (synthetic,
+#   rendered with the same patches YourMT3+ trained on, 50 songs separated)
+#   YourMT3+ led, 0.482 against 0.330 (+0.153, +0.103..+0.207, 38 of 50); on
+#   Guitar-TECHS (real guitar recorded through an amplifier and a microphone,
+#   12 excerpts) Basic Pitch led, 0.683 against 0.544 for YourMT3+ as it
+#   ships (its class filter), and against 0.603 for all its notes (+0.081,
+#   +0.010..+0.156, 10 of 12); on the same excerpts' direct input YourMT3+
+#   led, 0.694 against 0.664. A guitar in a song is heard through an
+#   amplifier and a microphone, so the real, miked set decides; Basic Pitch
+#   also needs no 562 MB download. Through the real worker the same sets
+#   scored the same (scripts/midi_bench.py eng, results/bp-worker-small.md,
+#   ymt3-worker-gtechs.md).
+# - vocals: Basic Pitch, the only engine here that takes them (above).
+MIDI_DEFAULT_ENGINES: dict[str, str] = {
+    "vocals": "basic_pitch",
+    "drums": "ymt3",
+    "bass": "ymt3",
+    "guitar": "basic_pitch",
+    "piano": "ymt3",
+    "other": "ymt3",
+}
+# The third engine (app/pipeline/ymt3.py): YourMT3+ (Chang et al. 2024,
+# "YourMT3+: Multi-instrument Music Transcription with Enhanced Transformer
+# Architectures and Cross-dataset Stem Augmentation"), the YPTF.MoE+Multi
+# variant without pitch-shift augmentation ("noPS"), its inference code
+# vendored from the Hugging Face Space mimbres/YourMT3 (Apache-2.0) in
+# app/_vendor/ymt3 with a stand-in for transformers and Lightning, run on the
+# torch StemDeck already ships. It transcribes every instrument at once and
+# names each note's instrument, so a stem's file keeps only the notes of the
+# stem's own instrument class (MIDI_YMT3_CLASSES below).
+#
+# Its weights (Apache-2.0, the model card of huggingface.co/mimbres/YourMT3)
+# are the Lightning checkpoint the authors published, 561.5 MB with the
+# optimizer's state. StemDeck hosts no files, so the first run downloads that
+# checkpoint from Hugging Face at a pinned revision of the repository (the
+# address names the commit, so its bytes cannot change), checks its size and
+# SHA-256 (the Hub's own LFS hash, which the copy hashed here matched on
+# 2026-11-26), and converts it on this computer into a weights-only
+# safetensors file (app/pipeline/ymt3_convert.py, scripts/ymt3_weights.py):
+# the tensors, sorted, nothing else, so the result is the same bytes on every
+# computer and is checked against its own pinned SHA-256 before it is kept.
+# The checkpoint is then deleted. Nothing in it is ever run: it is read with
+# torch's weights-only loader, its few pickled objects (the training task's
+# tokenizer) given an inert stand-in.
+YMT3_CHECKPOINT_URL = (
+    "https://huggingface.co/mimbres/YourMT3/resolve/e45ebd70398682d54b7bb1901a5216e18f3b1824/"
+    "logs/2024/mc13_256_g4_all_v7_mt3f_sqr_rms_moe_wf4_n8k2_silu_rope_rp_b36_nops/"
+    "checkpoints/last.ckpt"
+)
+YMT3_CHECKPOINT_SHA256 = "ae38e415c79efd5592dcb9b658cdb99ddb11d4c4e1eaa364cab04a052473fc25"
+YMT3_CHECKPOINT_SIZE = 561_544_628
+YMT3_CHECKPOINT_RELPATH = "ymt3/last.ckpt"
+YMT3_WEIGHTS_SHA256 = "dbe76ceca4a7edddbe3e05468861567d67a257e50c8dd9824273efc0f198f292"
+YMT3_WEIGHTS_SIZE = 188_412_704
+YMT3_WEIGHTS_RELPATH = "ymt3/yourmt3_yptf_moe_multi_nops.safetensors"
+# Which of the model's notes a stem's file keeps: its General MIDI program
+# family (0-based programs; 100 and 101 are the model's two singing voices),
+# or the drums. "other" is every pitched note that is none of the piano,
+# guitar, bass or voice families: what htdemucs_6s leaves in its sixth stem.
+# Measured on separated Slakh stems (engines-per-stem.md): keeping only the
+# class lifted onset F1 by 0.108 on guitar to 0.218 on other over keeping
+# every pitched note, because it drops what bled in from the other stems.
+_YMT3_PIANO = frozenset(range(0, 8))
+_YMT3_GUITAR = frozenset(range(24, 32))
+_YMT3_BASS = frozenset(range(32, 40))
+_YMT3_VOICE = frozenset({100, 101})
+MIDI_YMT3_CLASSES: dict[str, dict[str, frozenset[int]]] = {
+    "piano": {"programs": _YMT3_PIANO},
+    "guitar": {"programs": _YMT3_GUITAR},
+    "bass": {"programs": _YMT3_BASS},
+    "vocals": {"programs": _YMT3_VOICE},
+    "other": {"not_programs": _YMT3_PIANO | _YMT3_GUITAR | _YMT3_BASS | _YMT3_VOICE},
+    "drums": {},
+}
+# The model's vocabulary has one loudness (every note is velocity 1), so a
+# file's notes all get this amplitude: velocity 92 of MIDI_VELOCITY_MIN..MAX.
+YMT3_NOTE_AMPLITUDE = 0.8
+# Segments (2.05 s each) decoded at once. On the GPU 8, the size
+# engines-per-stem.md measured on a 10 GB RTX 3080 (48 filled the card and ran
+# far slower). On the CPU one: measured 2026-11-26 on a dense separated
+# piano (Slakh Track01880, 60 s, 24 threads, ymt3.model_output), 8, 4, 2 and
+# 1 at a time took 108.5, 88.6, 90.6 and 84.0 s per audio minute, the longest
+# wait between two progress lines 37.2, 27.0, 16.7 and 11.1 s, notes identical
+# at every size. Batching buys nothing on the CPU, and one at a time keeps a
+# slow CPU's progress lines well inside TIMEOUT_MIDI_STALL.
+YMT3_BATCH_GPU = 8
+YMT3_BATCH_CPU = 1
+# Free GPU memory a run needs to start on the GPU; with less, a separation is
+# likely holding the card, and the run goes to the CPU instead of failing.
+# Measured through the worker (scripts/midi_bench.py --engine ymt3 eng, the
+# "gpu_peak_mb" it reports): torch reserved 1.6 GB on a sparse 90 s stem and
+# at most 3.0 GB on a dense one, at batch 8; the CUDA context adds about
+# 0.4 GB that torch does not count, so 3.5 GB.
+YMT3_GPU_MIN_FREE_MB = max(0, _env_int("STEMDECK_YMT3_GPU_MIN_FREE_MB", 3584))
+# Seconds of work per minute of audio, what Settings tells the person before
+# the first run (the model decodes token by token, so a dense stem takes up
+# to twice this).
+YMT3_SECONDS_PER_MINUTE = {"cuda": 12, "cpu": 69}
+# The whole ymt3 run: the longest song allowed (TRANSCRIBE_MAX_SECONDS, 20
+# minutes) at twice the CPU rate is 2760 s; five times that is a hang.
+TIMEOUT_MIDI_YMT3 = max(60, _env_int("STEMDECK_TIMEOUT_MIDI_YMT3", 14400))
+# Making the weights from the checkpoint: about 5 s here; a slow disk or an
+# antivirus scan of 750 MB can take minutes, an hour is a hang.
+TIMEOUT_MIDI_MODEL_PREPARE = max(60, _env_int("STEMDECK_TIMEOUT_MIDI_MODEL_PREPARE", 3600))
 # The written file: ticks per quarter note, and the velocity range a note's
 # amplitude (0..1) maps onto, so the quietest note is still heard and the
 # loudest leaves headroom.

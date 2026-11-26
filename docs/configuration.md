@@ -44,7 +44,10 @@
 | `STEMDECK_TIMEOUT_MIDI` | `600` | Stop a MIDI run after this many seconds in all (60 or more). |
 | `STEMDECK_TIMEOUT_MIDI_STALL` | `120` | Stop a MIDI run after this many seconds with no output from its worker (30 or more). |
 | `STEMDECK_TIMEOUT_MIDI_PIANO_HR` | `6000` | Stop a piano run with ByteDance Piano Transcription after this many seconds in all (60 or more). On a CPU it takes about half a minute per minute of audio. |
-| `STEMDECK_TIMEOUT_MIDI_MODEL_DOWNLOAD` | `3600` | Stop the first-use download of the ByteDance Piano Transcription checkpoint (172 MB) after this many seconds in all (60 or more). |
+| `STEMDECK_TIMEOUT_MIDI_MODEL_DOWNLOAD` | `3600` | Stop the first-use download of an engine's checkpoint (ByteDance Piano Transcription 172 MB, YourMT3+ 562 MB) after this many seconds in all (60 or more). |
+| `STEMDECK_TIMEOUT_MIDI_YMT3` | `14400` | Stop a YourMT3+ run after this many seconds in all (60 or more). On a CPU it takes about a minute per minute of audio, twice that for a dense stem. |
+| `STEMDECK_TIMEOUT_MIDI_MODEL_PREPARE` | `3600` | Stop the one-time making of YourMT3+'s weights from its checkpoint after this many seconds in all (60 or more). |
+| `STEMDECK_YMT3_GPU_MIN_FREE_MB` | `3584` | Free GPU memory a YourMT3+ run needs to start on the GPU; with less it runs on the CPU. |
 | `STEMDECK_PIANO_HR_GPU_MIN_FREE_MB` | `2048` | Free GPU memory (MB) a ByteDance Piano Transcription run needs to start on the GPU; with less it runs on the CPU. |
 | `STEMDECK_SSL_CERT` | (none) | PEM certificate; set with the key below to serve https directly. |
 | `STEMDECK_SSL_KEY` | (none) | PEM private key for the certificate above. |
@@ -85,16 +88,25 @@ Settings > Separation holds how a song is separated. These are saved in
 
 ### MIDI settings
 
-MIDI from the piano and bass stems (see [Models](models.md#midi-from-a-stem)).
-Saved in `settings.json` like the separation settings, and read on each
-request, so a change applies to the next run.
+MIDI from the stems (see [Models](models.md#midi-from-a-stem)). Saved in
+`settings.json` like the separation settings, and read on each request, so a
+change applies to the next run. `<stem>` is each of `vocals`, `drums`, `bass`,
+`guitar`, `piano` and `other`.
 
-- **`transcribe_piano`**, **`transcribe_bass`**: `"auto"` (default) or
-  `"off"`. `"off"` refuses MIDI from that stem (`403 disabled`).
-- **`transcribe_detail`**: the preset a run uses when the request names none.
-  `"balanced"` (default: onset 0.5, frame 0.3, notes of 80 ms or more),
-  `"detailed"` (onset 0.4, frame 0.25, 58 ms, for fast lines) or `"clean"`
-  (onset 0.7, frame 0.5, 127.7 ms, 40 to 65% fewer notes).
+- **`transcribe_<stem>`**: `"auto"` (default) or `"off"`. `"off"` refuses MIDI
+  from that stem (`403 disabled`).
+- **`transcribe_<stem>_engine`**: the engine that makes that stem's MIDI, one
+  of those that can take it (`GET /api/transcribe/status`, `stem_engines`):
+  `basic_pitch`, `piano_hr` (the piano only) or `ymt3` (every stem but the
+  vocals). Default: `ymt3` for the drums, bass, piano and other, `basic_pitch`
+  for the vocals and the guitar. A stored engine the stem cannot take reads
+  as its default. `transcribe_piano_engine` keeps the name and values it had
+  when it was the only one.
+- **`transcribe_detail`**: the preset a run uses when the request names none:
+  `"balanced"` (default), `"detailed"` (quiet and short notes too) or
+  `"clean"` (only clear notes). The thresholds per stem and engine are
+  `MIDI_DETAIL_PRESETS` and `MIDI_PIANO_HR_PRESETS` in `app/core/config.py`.
+  YourMT3+ has no thresholds: Detail does not change its notes.
 
 Any other value is refused with a 422 that lists the allowed ones, and a
 request with one bad value changes nothing.

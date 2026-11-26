@@ -13,3 +13,7 @@ app/_vendor/transcribe/** -text
 # The same for the second piano engine (app/_vendor/piano_hr): its files are
 # checked against the sdists' own hashes (manifest.json) by the same test.
 app/_vendor/piano_hr/** -text
+
+# The same for YourMT3+ (app/_vendor/ymt3): its files are checked against the
+# Hugging Face Space's own git blob ids and the hashes in manifest.json.
+app/_vendor/ymt3/** -text

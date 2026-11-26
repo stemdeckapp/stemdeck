@@ -12,7 +12,7 @@ Two halves with one rule each:
   this module stays importable without it.
 
 Notes are never moved onto the grid. The tempo map only decides where the
-bar lines fall: every note keeps the time Basic Pitch heard it at, to the
+bar lines fall: every note keeps the time its engine heard it at, to the
 tick, so the file lines up with the stems from their first sample.
 """
 
@@ -31,6 +31,7 @@ from typing import Any
 from app.core.config import (
     BEATGRID_MAX_IRREGULARITY,
     MIDI_DEFAULT_BPM,
+    MIDI_DRUM_CHANNEL,
     MIDI_PPQ,
     MIDI_STEM_PROGRAMS,
     MIDI_TEMPO_MIN_CONFIDENCE,
@@ -264,13 +265,25 @@ def note_ticks(notes: Iterable[Sequence[Any]], tempo: TempoMap) -> list[tuple[in
     return [n for n in out if n[1] > n[0]]
 
 
-def build_midi(notes: Iterable[Sequence[Any]], stem: str, plan: dict[str, Any]):
+def build_midi(
+    notes: Iterable[Sequence[Any]],
+    stem: str,
+    plan: dict[str, Any],
+    program: int | None = None,
+):
     """The file as a mido.MidiFile: format 0, one track, MIDI_PPQ ticks per
-    quarter, the track named and its program set for ``stem``, the plan's
-    tempo map and meter, then every note on channel 0."""
+    quarter, the track named for ``stem``, the plan's tempo map and meter,
+    then every note. The drums' notes are General MIDI percussion on channel
+    10 (MIDI_DRUM_CHANNEL), which takes no program; any other stem's are on
+    channel 1 under ``program`` (0..127), or the stem's own
+    (MIDI_STEM_PROGRAMS) when the engine named none."""
     import mido
 
-    program, name = MIDI_STEM_PROGRAMS[stem]
+    default_program, name = MIDI_STEM_PROGRAMS[stem]
+    drums = stem == "drums"
+    channel = MIDI_DRUM_CHANNEL if drums else 0
+    if not isinstance(program, int) or isinstance(program, bool) or not 0 <= program <= 127:
+        program = default_program
     tempo = TempoMap(plan)
     events: list[tuple[int, int, Any]] = []
     for at, _first, us in tempo.segments:
@@ -287,13 +300,18 @@ def build_midi(notes: Iterable[Sequence[Any]], stem: str, plan: dict[str, Any]):
     for start, end, pitch, vel in note_ticks(notes, tempo):
         # At one tick, note-offs before note-ons: a key released and struck
         # again on the same tick sounds again.
-        events.append((start, 3, mido.Message("note_on", note=pitch, velocity=vel, time=0)))
-        events.append((end, 2, mido.Message("note_off", note=pitch, velocity=0, time=0)))
+        events.append(
+            (start, 3, mido.Message("note_on", note=pitch, velocity=vel, channel=channel, time=0))
+        )
+        events.append(
+            (end, 2, mido.Message("note_off", note=pitch, velocity=0, channel=channel, time=0))
+        )
     events.sort(key=lambda e: (e[0], e[1]))
 
     track = mido.MidiTrack()
     track.append(mido.MetaMessage("track_name", name=name, time=0))
-    track.append(mido.Message("program_change", program=program, channel=0, time=0))
+    if not drums:
+        track.append(mido.Message("program_change", program=program, channel=channel, time=0))
     now = 0
     for at, _order, message in events:
         track.append(message.copy(time=at - now))
@@ -304,12 +322,18 @@ def build_midi(notes: Iterable[Sequence[Any]], stem: str, plan: dict[str, Any]):
     return midi
 
 
-def write_midi(notes: Iterable[Sequence[Any]], path: Path, stem: str, plan: dict[str, Any]) -> int:
+def write_midi(
+    notes: Iterable[Sequence[Any]],
+    path: Path,
+    stem: str,
+    plan: dict[str, Any],
+    program: int | None = None,
+) -> int:
     """Write the file to ``path``, flushed and synced to disk before this
     returns, so a rename of it afterwards never publishes a short file.
     Returns the number of notes written."""
     notes = list(notes)
-    midi = build_midi(notes, stem, plan)
+    midi = build_midi(notes, stem, plan, program)
     with open(path, "wb") as handle:
         midi.save(file=handle)
         handle.flush()
@@ -405,7 +429,7 @@ def read_notes(path: Path) -> dict[str, Any]:
     Read in the server without mido, which only the worker has on its path:
     a small reader of Standard MIDI Files with metrical time, which is what
     write_midi writes. Times follow the file's tempo map, so they come back
-    within half a tick of the times Basic Pitch heard (TempoMap). A note-on
+    within half a tick of the times the engine heard (TempoMap). A note-on
     of velocity 0 is a note-off; a note still held at the end of the file
     ends at its last event. Raises MidiReadError on a file it cannot read."""
     division, tempos, events = _read_events(Path(path).read_bytes())

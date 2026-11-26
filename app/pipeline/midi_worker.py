@@ -1,16 +1,18 @@
 """Isolated note worker: one stem in, one .mid out.
 
 Run as ``python -m app.pipeline.midi_worker --audio <stem> --out <file.mid>
---stem piano|bass --params <json> --tempo <json> --max-seconds <n>
---engine basic_pitch|piano_hr ...``. A fresh process per request, like the
-lyrics transcription worker: a run is asked for by hand, seconds to a few
-minutes of work, so nothing stays resident between them.
+--stem <one of config.MIDI_STEMS> --params <json> --tempo <json>
+--max-seconds <n> --engine basic_pitch|piano_hr|ymt3 ...``. A fresh process
+per request, like the lyrics transcription worker: a run is asked for by
+hand, seconds to minutes of work, so nothing stays resident between them.
 
 Protocol: the real stdout carries JSON lines only, one object each:
 
-    {"event": "progress", "pct": 0..100}   (piano_hr's first one after the
-                                            start also has "device")
-    {"event": "done", "notes": n, "seconds_audio": s, "device": "cpu"|"cuda"}
+    {"event": "progress", "pct": 0..100}   (a torch engine's first one after
+                                            the start also has "device")
+    {"event": "done", "notes": n, "seconds_audio": s, "device": "cpu"|"cuda",
+     "gpu_peak_mb": n}                     (the last on CUDA only: the most
+                                            GPU memory torch reserved)
     {"event": "error", "code": "<code>"}   (and "phase": "import" when the
                                             engine itself failed to import)
 
@@ -20,7 +22,7 @@ imported the process moves its stdout file descriptor aside for the protocol
 and points descriptor 1 at stderr: whatever else writes "to stdout", Python
 or native, lands in stderr, which the parent keeps only as a diagnostic tail.
 
-Two engines, each a vendored copy put first on sys.path:
+Three engines, each a vendored copy put first on sys.path:
 
 - basic_pitch (app/_vendor/transcribe): always its ONNX model by explicit
   path, on the CPU. TensorFlow, CoreML and TFLite are blocked from
@@ -32,6 +34,14 @@ Two engines, each a vendored copy put first on sys.path:
   --device cuda runs it on the GPU when torch has one and it has
   --gpu-min-free-mb free, else on the CPU; "done" says which it was.
   matplotlib, which the package imported for nothing, is blocked.
+- ymt3 (app/_vendor/ymt3, app/pipeline/ymt3.py): every stem but the vocals,
+  on torch, from the weights-only file the parent has already made and
+  checked against its pinned SHA-256 (--checkpoint), read as tensors only.
+  Its code imports transformers and pytorch_lightning: the vendored
+  stand-ins (app/_vendor/ymt3/shim) go first on sys.path, every module the
+  engine imported is checked to come from the vendored folders, and the
+  real Lightning, wandb, torchmetrics and matplotlib are blocked. --device as
+  piano_hr.
 
 The worker never needs the network, and refuses it: every socket connect and
 name lookup raises, and so does os.system (the package's own downloader is a
@@ -52,6 +62,7 @@ import os
 import sys
 from pathlib import Path
 
+from app.core.config import MIDI_ENGINE_STEMS, MIDI_STEMS
 from app.core.process import arm_parent_watchdog
 
 # The real stdout, moved aside for the protocol (see _claim_stdout).
@@ -98,6 +109,19 @@ def _block_network() -> None:
 # matplotlib, which nothing in a transcription draws with. None in
 # sys.modules makes an import of them raise ImportError at once.
 _BLOCKED_RUNTIMES = ("tensorflow", "coremltools", "tflite_runtime", "matplotlib")
+# For ymt3: matplotlib, and what YourMT3's training code imported, none of
+# which may load in a worker, so a vendored file that still reached for one
+# fails loudly instead. Not Basic Pitch's runtimes: einops picks its tensor
+# library by the names in sys.modules, and would try a None tensorflow.
+_BLOCKED_YMT3 = (
+    "matplotlib",
+    "lightning",
+    "lightning_fabric",
+    "lightning_utilities",
+    "torchmetrics",
+    "wandb",
+    "deepspeed",
+)
 
 
 def _put_first(path: Path) -> None:
@@ -107,17 +131,30 @@ def _put_first(path: Path) -> None:
     sys.path.insert(0, value)
 
 
-def _install_engine(vendor_dir: Path, piano_vendor: Path | None = None) -> None:
+def engine_paths(engine: str, args: argparse.Namespace) -> list[Path]:
+    """The folders an engine's vendored code is imported from, the first to
+    be searched first: none for Basic Pitch (it is in --vendor)."""
+    if engine == "piano_hr" and args.piano_vendor is not None:
+        return [args.piano_vendor]
+    if engine == "ymt3" and args.ymt3_vendor is not None:
+        return [args.ymt3_vendor / "shim", args.ymt3_vendor / "src"]
+    return []
+
+
+def _install_engine(
+    vendor_dir: Path, engine_dirs: list[Path] | None = None, engine: str = "basic_pitch"
+) -> None:
     """Put the vendored engines first on sys.path: ``vendor_dir`` (Basic
-    Pitch, and mido, which the file writer needs for both engines), then
-    ``piano_vendor`` in front of it for piano_hr."""
+    Pitch, and mido, which the file writer needs for every engine), then
+    ``engine_dirs`` in front of it, the first of them first, with the
+    engine's blocked packages made unimportable."""
     import logging
 
-    for name in _BLOCKED_RUNTIMES:
+    for name in _BLOCKED_YMT3 if engine == "ymt3" else _BLOCKED_RUNTIMES:
         sys.modules[name] = None  # type: ignore[assignment]
     _put_first(vendor_dir)
-    if piano_vendor is not None:
-        _put_first(piano_vendor)
+    for folder in reversed(engine_dirs or []):
+        _put_first(folder)
     # The root logger answers its first warning by configuring itself
     # (logging.lastResort, then basicConfig on the module-level helpers).
     # Basic Pitch logs one per runtime it does not find; a handler of our own
@@ -133,14 +170,15 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--audio", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--stem", choices=("piano", "bass"), required=True)
+    parser.add_argument("--stem", choices=MIDI_STEMS, required=True)
     parser.add_argument("--params", required=True)
     parser.add_argument("--tempo", required=True)
     parser.add_argument("--max-seconds", type=float, required=True)
     parser.add_argument("--vendor", type=Path, required=True)
     parser.add_argument("--model", type=Path, required=True)
-    parser.add_argument("--engine", choices=("basic_pitch", "piano_hr"), default="basic_pitch")
+    parser.add_argument("--engine", choices=tuple(MIDI_ENGINE_STEMS), default="basic_pitch")
     parser.add_argument("--piano-vendor", type=Path)
+    parser.add_argument("--ymt3-vendor", type=Path)
     parser.add_argument("--checkpoint", type=Path)
     parser.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
     parser.add_argument("--batch", type=int, default=1)
@@ -247,8 +285,8 @@ def output_notes(output: dict, params: dict) -> list:
 
 
 def pick_device(asked: str, min_free_mb: int) -> str:
-    """The device piano_hr runs on: "cuda" when asked for and torch has a GPU
-    with ``min_free_mb`` free right now (a separation may hold most of it),
+    """The device a torch engine runs on: "cuda" when asked for and torch has
+    a GPU with ``min_free_mb`` free right now (a separation may hold most of it),
     else "cpu". Said on stderr, so the parent's log shows why."""
     if asked != "cuda":
         return "cpu"
@@ -271,23 +309,68 @@ def pick_device(asked: str, min_free_mb: int) -> str:
     return "cuda"
 
 
-def _import_engine(engine: str) -> None:
+def _from_vendored(names: tuple[str, ...], folders: list[Path]) -> None:
+    """Every module whose top-level name is in ``names`` came from one of
+    ``folders``: a package of the same name installed elsewhere would
+    otherwise be run in its place without a word."""
+    roots = [f.resolve() for f in folders]
+    for name, module in list(sys.modules.items()):
+        if module is None or name.split(".")[0] not in names:
+            continue
+        where = getattr(module, "__file__", None)
+        if where is None or not any(Path(where).resolve().is_relative_to(r) for r in roots):
+            raise ImportError(f"{name} did not come from the vendored engine ({where})")
+
+
+# The top-level packages of the ymt3 engine's vendored folders.
+_YMT3_PACKAGES = ("config", "model", "utils", "transformers", "pytorch_lightning")
+
+
+def _import_engine(engine: str, folders: list[Path] | None = None) -> None:
     import numpy  # noqa: F401
 
     if engine == "piano_hr":
         import torch  # noqa: F401
         from piano_transcription_inference import models, utilities  # noqa: F401
+    elif engine == "ymt3":
+        import einops  # noqa: F401
+        import torch  # noqa: F401
+        import torchaudio  # noqa: F401
+        from model import ymt3  # noqa: F401
+        from utils import event2note, note2event, task_manager  # noqa: F401
+
+        _from_vendored(_YMT3_PACKAGES, folders or [])
     else:
         from basic_pitch import inference, note_creation  # noqa: F401
         from basic_pitch.constants import AUDIO_N_SAMPLES, AUDIO_SAMPLE_RATE, FFT_HOP  # noqa: F401
 
 
-def _notes(args: argparse.Namespace, params: dict) -> tuple[list, str]:
-    """The notes of the whole stem, and the device they were made on."""
+def _gpu_peak_mb(device: str) -> int | None:
+    if device != "cuda":
+        return None
+    import torch
+
+    return int(torch.cuda.max_memory_reserved() // 2**20)
+
+
+def _notes(args: argparse.Namespace, params: dict) -> tuple[list, str, int | None]:
+    """The notes of the whole stem, the device they were made on, and the
+    General MIDI program the engine heard (None: the stem's own)."""
 
     def on_pct(pct: int) -> None:
         emit("progress", pct=pct)
 
+    if args.engine == "ymt3":
+        from app.pipeline import ymt3
+
+        device = pick_device(args.device, args.gpu_min_free_mb)
+        # Said before anything can fail on it, as for piano_hr.
+        emit("progress", pct=2, device=device)
+        model = ymt3.load_weights(ymt3.build_model(), args.checkpoint, device)
+        segs = ymt3.segments(ymt3.read_audio(args.audio))
+        preds = ymt3.model_output(model, segs, device, args.batch, on_pct)
+        events, program = ymt3.stem_notes(ymt3.decode(model, preds, len(segs)), args.stem)
+        return events, device, program
     if args.engine == "piano_hr":
         from app.pipeline import piano_hr
 
@@ -298,10 +381,10 @@ def _notes(args: argparse.Namespace, params: dict) -> tuple[list, str]:
         model = piano_hr.load_model(args.checkpoint, device)
         audio = piano_hr.read_audio(args.audio)
         output = piano_hr.model_output(model, audio, device, args.batch, on_pct)
-        return piano_hr.output_notes(output, params), device
+        return piano_hr.output_notes(output, params), device, None
     model = load_model(args.model)
     output = model_output(model, args.audio, on_pct)
-    return output_notes(output, params), "cpu"
+    return output_notes(output, params), "cpu", None
 
 
 def transcribe(args: argparse.Namespace) -> int:
@@ -314,14 +397,14 @@ def transcribe(args: argparse.Namespace) -> int:
         return 3
     params = json.loads(args.params)
     plan = json.loads(args.tempo)
-    if args.engine == "piano_hr" and (args.checkpoint is None or not args.checkpoint.is_file()):
+    if args.engine != "basic_pitch" and (args.checkpoint is None or not args.checkpoint.is_file()):
         # The parent downloads and checks it before it starts this process.
-        print("piano_hr needs --checkpoint, an existing file", file=sys.stderr)
+        print(f"{args.engine} needs --checkpoint, an existing file", file=sys.stderr)
         emit("error", code="engine")
         return 4
 
     try:
-        _import_engine(args.engine)
+        _import_engine(args.engine, engine_paths(args.engine, args))
     except Exception as exc:
         print(f"engine import failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         # "import": every run would fail the same way (midi.availability).
@@ -332,7 +415,7 @@ def transcribe(args: argparse.Namespace) -> int:
 
     emit("progress", pct=1)
     try:
-        notes, device = _notes(args, params)
+        notes, device, program = _notes(args, params)
     except Exception as exc:
         print(f"engine failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         emit("error", code="engine")
@@ -340,12 +423,14 @@ def transcribe(args: argparse.Namespace) -> int:
     emit("progress", pct=95)
 
     try:
-        count = write_midi(notes, args.out, args.stem, plan)
+        count = write_midi(notes, args.out, args.stem, plan, program)
     except OSError as exc:
         print(f"could not write the file: {exc}", file=sys.stderr)
         emit("error", code=_write_code(exc))
         return 5
-    emit("done", notes=count, seconds_audio=round(seconds, 3), device=device)
+    peak = _gpu_peak_mb(device)
+    extra = {"gpu_peak_mb": peak} if peak is not None else {}
+    emit("done", notes=count, seconds_audio=round(seconds, 3), device=device, **extra)
     return 0
 
 
@@ -358,11 +443,12 @@ def main(argv: list[str] | None = None) -> int:
     if not args.audio.is_file():
         emit("error", code="no_audio")
         return 3
-    if args.engine == "piano_hr" and args.stem != "piano":
-        # The model knows the 88 keys and nothing else.
+    if args.stem not in MIDI_ENGINE_STEMS[args.engine]:
+        # piano_hr knows the 88 keys and nothing else; Basic Pitch hears no
+        # drums; YourMT3+ is not used for the vocals (config.MIDI_ENGINES).
         emit("error", code="engine")
         return 4
-    _install_engine(args.vendor, args.piano_vendor if args.engine == "piano_hr" else None)
+    _install_engine(args.vendor, engine_paths(args.engine, args), args.engine)
     return transcribe(args)
 
 

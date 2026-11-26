@@ -14,7 +14,8 @@ machine's (a user name, a drive), and the page has no use for them.
 group is "separation", "transcription" or "analysis". use says what the
 model does inside its group: "stems" (it separates the stems listed),
 "lead_backing" (the Karaoke split of the vocals), "midi" (Basic Pitch),
-"midi_piano" (the second piano engine, piano_hr), "lyrics", "lyrics_gpu",
+"midi_piano" (the second piano engine, piano_hr), "midi_multi" (YourMT3+,
+which transcribes several stems), "lyrics", "lyrics_gpu",
 "lyrics_cpu" (Whisper) or "beats" (beat_this).
 
 state is one of:
@@ -33,7 +34,7 @@ Where each model lives is asked of the code that downloads it, never worked
 out again here: stem_models.model_path() for the separation models (torch.hub's
 checkpoints folder, and MODELS_DIR for Kim), model_cache.vocal_split_artifacts()
 for the Karaoke split, piano_hr.checkpoint_path() for the second piano engine
-(MODELS_DIR), model_cache.beat_this_artifacts() for the beat model,
+and ymt3.weights_path() for YourMT3+ (MODELS_DIR), model_cache.beat_this_artifacts() for the beat model,
 transcribe.whisper_models_dir() for Whisper. Two models the code does not place
 are left out: the song-sections model, which the Hugging Face hub caches under
 a layout only allin1_infer names, and the models a person added, which
@@ -53,7 +54,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
-from app.core import stem_models
+from app.core import midi_engines, stem_models
 from app.core.config import (
     BEAT_MODEL_CHECKPOINT,
     MODELS_DIR,
@@ -230,7 +231,7 @@ def _basic_pitch() -> dict[str, Any]:
         "transcription",
         "midi",
         midi_file.ENGINE_LABEL,
-        stems=["piano", "bass"],
+        stems=list(midi_engines.get(midi_file.ENGINE_ID).stems),
         license=midi_file.ENGINE_LICENCE,
         state="built_in",
         size=_file_size(midi_file.MODEL_PATH),
@@ -259,6 +260,32 @@ def _piano_hr() -> dict[str, Any]:
         state=state,
         size=size,
         download_bytes=PIANO_HR_CHECKPOINT_SIZE,
+        available=available,
+    )
+
+
+def _ymt3() -> dict[str, Any]:
+    from app.pipeline import midi, ymt3
+
+    try:
+        available = midi.engine_availability(ymt3.ENGINE_ID)[0]
+    except Exception:  # noqa: BLE001
+        available = False
+    # What stays on disk is the weights file; the checkpoint it is made from
+    # is there only between its download and its conversion.
+    state, size = _located(lambda: [(ymt3.weights_path(), ymt3.WEIGHTS.size)])
+    if state == "not_downloaded" and ymt3.model_state() == "partial":
+        state = "partial"
+    return _entry(
+        ymt3.ENGINE_ID,
+        "transcription",
+        "midi_multi",
+        ymt3.ENGINE_LABEL,
+        stems=list(midi_engines.get(ymt3.ENGINE_ID).stems),
+        license=ymt3.MODEL_LICENCE,
+        state=state,
+        size=size,
+        download_bytes=midi_engines.get(ymt3.ENGINE_ID).download_bytes,
         available=available,
     )
 
@@ -322,6 +349,7 @@ def inventory() -> dict[str, Any]:
             _karaoke(),
             _basic_pitch(),
             _piano_hr(),
+            _ymt3(),
             *_whisper(),
             _beat_this(),
         ],

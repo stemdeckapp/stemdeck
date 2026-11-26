@@ -541,3 +541,114 @@ def test_real_piano_hr_inference_finds_the_pitch(tmp_path):
     notes = _pitches(out)
     loudest = max(notes, key=lambda n: (n[2], n[1]))
     assert loudest[0] == 69, notes
+
+
+# -- the third engine (ymt3)
+
+
+def _ymt3_cmd(audio: Path, out: Path, stem: str, weights: Path, device: str = "cpu") -> list[str]:
+    cmd = midi_run._spawn_worker_cmd(
+        audio,
+        out,
+        stem,
+        midi_run.run_params(stem, "balanced", "ymt3"),
+        mf.default_tempo(),
+        "ymt3",
+        device,
+    )
+    cmd[cmd.index("--checkpoint") + 1] = str(weights)
+    return cmd
+
+
+def test_each_engine_refuses_a_stem_it_is_not_offered_for(tmp_path):
+    """Basic Pitch hears no drums; YourMT3+ is not offered for the vocals;
+    piano_hr knows only the piano. Refused before any engine is imported."""
+    audio = _wav(tmp_path / "a.wav", _tone(220, 1))
+    weights = tmp_path / "w.safetensors"
+    weights.write_bytes(b"x")
+    drums = midi_run._spawn_worker_cmd(audio, tmp_path / "a.mid", "drums", {}, mf.default_tempo())
+    for cmd in (drums, _ymt3_cmd(audio, tmp_path / "a.mid", "vocals", weights)):
+        result = _run(cmd, tmp_path, timeout=120)
+        assert result.returncode == 4
+        assert _events(result.stdout) == [{"event": "error", "code": "engine"}]
+    assert not (tmp_path / "a.mid").exists()
+
+
+def test_ymt3_refuses_missing_weights_and_a_file_that_is_not_them(tmp_path):
+    audio = _wav(tmp_path / "a.wav", _tone(220, 1))
+    result = _run(_ymt3_cmd(audio, tmp_path / "a.mid", "bass", tmp_path / "none"), tmp_path)
+    assert _events(result.stdout)[-1] == {"event": "error", "code": "engine"}
+    # A file that is not a weights file fails the load, not the import.
+    junk = tmp_path / "junk.safetensors"
+    junk.write_bytes(b"\x10\x00\x00\x00\x00\x00\x00\x00{}              ")
+    result = _run(_ymt3_cmd(audio, tmp_path / "a.mid", "bass", junk), tmp_path, timeout=300)
+    assert _events(result.stdout)[-1] == {"event": "error", "code": "engine"}, result.stderr[-2000:]
+    assert not (tmp_path / "a.mid").exists()
+
+
+def test_a_module_from_outside_the_vendored_folders_is_refused(tmp_path, monkeypatch):
+    """The ymt3 engine's top-level names (model, utils, config, transformers)
+    are generic: one installed elsewhere would run in its place without a
+    word, so the worker checks where each came from."""
+    import types
+
+    from app.pipeline import midi_worker
+
+    vendored = tmp_path / "vendored"
+    (vendored / "model").mkdir(parents=True)
+    inside = types.ModuleType("model")
+    inside.__file__ = str(vendored / "model" / "__init__.py")
+    monkeypatch.setitem(sys.modules, "model", inside)
+    midi_worker._from_vendored(("model",), [vendored])
+    outside = types.ModuleType("model.thing")
+    outside.__file__ = str(tmp_path / "elsewhere" / "thing.py")
+    monkeypatch.setitem(sys.modules, "model.thing", outside)
+    with pytest.raises(ImportError, match="did not come from the vendored engine"):
+        midi_worker._from_vendored(("model",), [vendored])
+
+
+def _real_ymt3_weights() -> Path | None:
+    """The real weights file, when this machine has it and it is the pinned
+    file: named by STEMDECK_TEST_YMT3_WEIGHTS, or the benchmark's copy."""
+    from app.core.config import YMT3_WEIGHTS_RELPATH
+    from app.pipeline import ymt3
+
+    named = os.environ.get("STEMDECK_TEST_YMT3_WEIGHTS")
+    candidates = [Path(named)] if named else []
+    candidates.append(ROOT / "data" / "ymt3-bench-models" / Path(YMT3_WEIGHTS_RELPATH))
+    for path in candidates:
+        if path.is_file() and ymt3.WEIGHTS.ok(path):
+            return path
+    return None
+
+
+def test_real_ymt3_inference_matches_the_engine_comparison(tmp_path):
+    """The real model, on the CPU, through the worker, on 20 s of a piano
+    separated from a Slakh song: every note in its file is one the engine
+    comparison's own run of YourMT3+ found there (data/midi-bench, the same
+    notes to the millisecond, class filter and all). Skipped where the
+    188 MB weights or the benchmark's audio are not on this machine."""
+    weights = _real_ymt3_weights()
+    bench = ROOT / "data" / "midi-bench" / "eng"
+    clip = bench / "crops" / "slakh-test" / "Track01880" / "piano.wav"
+    ref = bench / "out" / "ymt3" / "slakh__Track01880__piano__sep.json"
+    if weights is None or not clip.is_file() or not ref.is_file():
+        pytest.skip("the ymt3 weights or the benchmark's audio are not on this machine")
+    y, sr = sf.read(str(clip), dtype="float32", always_2d=True)
+    # A whole number of the model's 2.048 s segments, so they cut alike.
+    seconds = 10 * 32767 / 16000
+    part = _wav(tmp_path / "piano.wav", y[: int(seconds * sr)].mean(axis=1))
+    assert sr == SR
+    out = tmp_path / "piano.mid"
+    result = _run(_ymt3_cmd(part, out, "piano", weights), tmp_path, timeout=600)
+    assert result.returncode == 0, result.stderr[-3000:]
+    events = _events(result.stdout)
+    assert events[-1]["event"] == "done" and events[-1]["device"] == "cpu"
+    notes = mf.read_notes(out)["notes"]
+    expected = [
+        n for n in json.loads(ref.read_text(encoding="utf-8"))["notes"]
+        if not n[5] and 0 <= n[4] < 8 and n[0] < seconds - 0.1
+    ]  # fmt: skip
+    assert notes and len(notes) <= len(expected)
+    for start, _end, pitch, _vel in notes:
+        assert any(p == pitch and abs(s - start) < 0.003 for s, _e, p, *_ in expected), start

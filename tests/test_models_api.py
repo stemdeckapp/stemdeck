@@ -80,7 +80,8 @@ def test_lists_every_built_in_model_by_purpose(client, folders):
         "built_in",
         "Apache-2.0",
     )
-    assert bp["stems"] == ["piano", "bass"]
+    # Every stem it can transcribe, in Settings' order: not the drums.
+    assert bp["stems"] == ["vocals", "bass", "guitar", "piano", "other"]
     assert models["beat_this"]["group"] == "analysis"
     assert models["beat_this"]["use"] == "beats"
     lyrics = [m for m in body["models"] if m["use"].startswith("lyrics")]
@@ -222,3 +223,26 @@ def test_the_second_piano_engine_is_listed_with_its_download(client, folders):
     _write(piano_hr.checkpoint_path(), 171_966_578)
     entry = _by_id(client.get("/api/models").json())["piano_hr"]
     assert (entry["state"], entry["size_bytes"]) == ("downloaded", 171_966_578)
+
+
+def test_yourmt3_is_listed_with_its_download_and_what_it_keeps(client, folders):
+    """YourMT3+: its weights' licence, the download its first run makes (the
+    published checkpoint), and its state from the weights-only file it keeps
+    (ymt3.weights_path, under a temporary MODELS_DIR: conftest's
+    _isolate_ymt3). A checkpoint waiting for its conversion is "partial"."""
+    from app.pipeline import ymt3
+
+    entry = _by_id(client.get("/api/models").json())["ymt3"]
+    assert (entry["group"], entry["use"], entry["stems"]) == (
+        "transcription",
+        "midi_multi",
+        ["drums", "bass", "guitar", "piano", "other"],
+    )
+    assert (entry["license"], entry["download_bytes"]) == ("Apache-2.0", 561_544_628)
+    assert (entry["state"], entry["size_bytes"]) == ("not_downloaded", None)
+    _write(ymt3.checkpoint_path(), 1000)
+    assert _by_id(client.get("/api/models").json())["ymt3"]["state"] == "partial"
+    ymt3.checkpoint_path().unlink()
+    _write(ymt3.weights_path(), 188_412_704)
+    entry = _by_id(client.get("/api/models").json())["ymt3"]
+    assert (entry["state"], entry["size_bytes"]) == ("downloaded", 188_412_704)

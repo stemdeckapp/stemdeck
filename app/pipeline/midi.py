@@ -1,22 +1,34 @@
-"""MIDI from a finished song's piano or bass stem, on request.
+"""MIDI from a finished song's stems, on request.
 
 POST /api/jobs/{id}/midi (app/api/midi.py) starts a run; this module does
 it, in a fresh worker process (midi_worker.py), so the server process never
 imports an engine. One run at a time across the whole server: two at once
 would only halve each.
 
-Two engines (config.MIDI_PIANO_ENGINES):
+Every stem of htdemucs_6s can be transcribed (config.MIDI_STEMS), each by the
+engine its setting picks (settings.transcribe_<stem>_engine) among those
+that can take it (app/core/midi_engines.py). The engines, and how each is
+run here (_ENGINES, one adapter per engine):
 
 - basic_pitch, Spotify's Basic Pitch (Apache-2.0), vendored with its ONNX
-  model in app/_vendor/transcribe, on the CPU. Every bass run, and a piano
-  run unless the setting says otherwise.
+  model in app/_vendor/transcribe, on the CPU. Every stem but the drums.
 - piano_hr, ByteDance's high-resolution piano transcription (app/pipeline/
-  piano_hr.py), for the piano when settings.transcribe_piano_engine picks
-  it: on the GPU when the separation device setting resolves to CUDA, else
-  on the CPU (MPS is not used: never measured on a Mac). Its checkpoint is
-  fetched on the first run that needs it, by app/core/model_fetch.py in a
-  process of its own (the worker has no network), with the run's progress
-  and cancel; a run on the GPU that fails is run again, whole, on the CPU.
+  piano_hr.py), the piano only.
+- ymt3, YourMT3+ (app/pipeline/ymt3.py), every stem but the vocals, the notes
+  of the stem's own instrument class only.
+
+piano_hr and ymt3 run on torch: on the GPU when the separation device
+setting resolves to CUDA and the card has enough memory free, else on the
+CPU (MPS is not used: never measured on a Mac); a run on the GPU that fails
+is run again, whole, on the CPU. Their weights are fetched on the first run
+that needs them, by app/core/model_fetch.py in a process of its own (the
+worker has no network), with the run's progress and cancel; YourMT3+'s are
+then made into a weights-only file (app/pipeline/ymt3_convert.py, its own
+process too), the run's "prepare" phase.
+
+An engine whose weights the person brings is added as a MidiEngine in
+app/core/midi_engines.py and an adapter in _ENGINES: nothing else here
+names an engine.
 
 Files, per song:
 
@@ -25,7 +37,7 @@ Files, per song:
   complete: a run that fails, is cancelled or is cut off by a crash leaves
   the file the song already had, byte for byte.
 - ``midi.json``, what made each file: engine, version, the vendored build,
-  the device, the detail and parameters, notes, tempo, timings.
+  the weights, the device, the detail and parameters, notes, tempo, timings.
 - ``Job.midi``, the state the page reads (clean_midi), kept in registry.json
   and metadata.json like every other saved field.
 
@@ -54,10 +66,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from app.core import midi_engines
 from app.core.config import (
     MIDI_DETAIL_PRESETS,
     MIDI_DETAILS,
-    MIDI_PIANO_ENGINES,
     MIDI_PIANO_HR_PRESETS,
     MIDI_STEM_RANGES,
     MIDI_STEMS,
@@ -69,19 +81,28 @@ from app.core.config import (
     PIANO_HR_GPU_MIN_FREE_MB,
     TIMEOUT_MIDI,
     TIMEOUT_MIDI_MODEL_DOWNLOAD,
+    TIMEOUT_MIDI_MODEL_PREPARE,
     TIMEOUT_MIDI_PIANO_HR,
     TIMEOUT_MIDI_STALL,
+    TIMEOUT_MIDI_YMT3,
     TRANSCRIBE_MAX_SECONDS,
+    YMT3_BATCH_CPU,
+    YMT3_BATCH_GPU,
+    YMT3_CHECKPOINT_SHA256,
+    YMT3_CHECKPOINT_SIZE,
+    YMT3_CHECKPOINT_URL,
+    YMT3_GPU_MIN_FREE_MB,
+    YMT3_SECONDS_PER_MINUTE,
+    YMT3_WEIGHTS_SHA256,
+    YMT3_WEIGHTS_SIZE,
 )
 from app.core.models import Job, _set, clean_midi
 from app.core.registry import set_proc
-from app.core.settings import fsync_dir, get_demucs_device, get_transcribe_piano_engine
+from app.core.settings import fsync_dir, get_demucs_device, get_transcribe_engine
 from app.core.speed_test import stop_process
-from app.pipeline import piano_hr
+from app.pipeline import piano_hr, ymt3
 from app.pipeline.midi_file import (
     ENGINE_ID,
-    ENGINE_LABEL,
-    ENGINE_LICENCE,
     MANIFEST_PATH,
     MODEL_PATH,
     VENDOR_DIR,
@@ -117,9 +138,13 @@ _RUNTIME_MODULES = (
 # What piano_hr imports from the installed runtime besides _RUNTIME_MODULES'
 # numpy, scipy, librosa and soundfile. torch is the one StemDeck already ships.
 _PIANO_HR_MODULES = ("torch", "numpy", "scipy", "librosa", "soundfile")
+# What YourMT3+'s vendored code imports from the installed runtime: torch,
+# torchaudio (its spectrogram and the resampler) and einops, all in uv.lock.
+_YMT3_MODULES = ("torch", "torchaudio", "einops", "numpy", "soundfile", "packaging")
 
 # Error codes a run can end with (Job.midi[stem]["error_code"]). "download":
-# the piano_hr checkpoint could not be fetched, or what arrived was not it.
+# an engine's weights could not be fetched, or what arrived was not them.
+# "prepare": YourMT3+'s weights could not be made from its checkpoint.
 ERROR_CODES = (
     "too_long",
     "no_audio",
@@ -130,6 +155,7 @@ ERROR_CODES = (
     "stalled",
     "interrupted",
     "download",
+    "prepare",
 )
 
 # The engines whose worker could not import them at all: every later run of
@@ -167,26 +193,298 @@ def _installed() -> tuple[bool, str | None]:
     return True, None
 
 
-@lru_cache(maxsize=1)
-def _piano_hr_installed() -> tuple[bool, str | None]:
-    # Intel macOS has no Basic Pitch runtime, so no MIDI at all, and torch
-    # there is 2.2 with numpy 1: never run, so never offered.
-    if _intel_mac():
-        return False, "unsupported_platform"
-    if _missing(_PIANO_HR_MODULES):
-        return False, "no_runtime"
-    if not piano_hr.vendored():
-        return False, "engine_error"
-    return True, None
+def torch_engine_device() -> str:
+    """The device a torch engine's run asks for: CUDA when the separation
+    device setting resolves to it (read per run, so a change applies to the
+    next), else the CPU. MPS is never asked for: neither model was measured
+    on one."""
+    try:
+        return "cuda" if get_demucs_device() == "cuda" else "cpu"
+    except Exception:  # noqa: BLE001 -- a device probe that fails is the CPU
+        logger.warning("MIDI: the device probe failed, the run is on the CPU", exc_info=True)
+        return "cpu"
+
+
+# engine id -> installed()'s answer, worked out once.
+_installed_engines: dict[str, tuple[bool, str | None]] = {}
+
+
+def forget_installed() -> None:
+    """Look for every engine's code and runtime again on the next ask."""
+    _installed.cache_clear()
+    _installed_engines.clear()
+
+
+@dataclass(frozen=True)
+class _Fetch:
+    """A pinned file an engine downloads on first use."""
+
+    url: str
+    sha256: str
+    size: int
+    path: Callable[[], Path]
+    ok: Callable[[Path], bool]
+    remove_bad: Callable[[Path], bool]
+
+
+class _Engine:
+    """How one engine (app/core/midi_engines.py) runs here. Subclasses set
+    what differs; everything else is the same for every engine."""
+
+    id = ""
+    timeout = TIMEOUT_MIDI
+
+    @property
+    def info(self) -> midi_engines.MidiEngine:
+        info = midi_engines.get(self.id)
+        if info is None:
+            raise KeyError(self.id)
+        return info
+
+    def installed(self) -> tuple[bool, str | None]:
+        """Whether its own code and runtime are here: cheap lookups, once per
+        process (forget_installed starts again)."""
+        held = _installed_engines.get(self.id)
+        if held is not None:
+            return held
+        if _intel_mac():
+            found: tuple[bool, str | None] = (False, "unsupported_platform")
+        elif _missing(self.runtime_modules()):
+            found = (False, "no_runtime")
+        elif not self.vendored():
+            found = (False, "engine_error")
+        else:
+            found = (True, None)
+        _installed_engines[self.id] = found
+        return found
+
+    def runtime_modules(self) -> tuple[str, ...]:
+        """The modules its worker imports from the installed runtime."""
+        return ()
+
+    def vendored(self) -> bool:
+        return True
+
+    def version(self) -> str | None:
+        return None
+
+    def vendor_id(self) -> str | None:
+        return None
+
+    def model_state(self) -> str:
+        """ "built_in", "downloaded", "partial" or "not_downloaded"."""
+        return "built_in"
+
+    def model_sha256(self) -> str | None:
+        """The weights a file is made with, for midi.json (None: they ship
+        inside the vendored build its vendor_id names)."""
+        return None
+
+    def params(self, stem: str, detail: str) -> dict[str, Any]:
+        return {}
+
+    def batch(self, device: str) -> int:
+        return 1
+
+    def gpu_min_free_mb(self) -> int:
+        return 0
+
+    def seconds_per_minute(self) -> dict[str, float] | None:
+        return None
+
+    def worker_args(self, device: str) -> list[str]:
+        """What the worker needs besides the stem, the file and Basic Pitch's
+        folder, which every engine's file writer uses."""
+        return []
+
+    def prepare(self, job: Job, run: Run) -> str | None:
+        """Make the engine ready to run (its weights fetched and checked):
+        None when it is, "cancelled", or an error code."""
+        return None
+
+
+class _BasicPitch(_Engine):
+    id = ENGINE_ID
+
+    def installed(self) -> tuple[bool, str | None]:  # type: ignore[override]
+        return _installed()
+
+    def version(self) -> str | None:
+        return engine_version()
+
+    def vendor_id(self) -> str | None:
+        return vendor_id()
+
+    def params(self, stem: str, detail: str) -> dict[str, Any]:
+        low, high = MIDI_STEM_RANGES[stem]
+        return {
+            **MIDI_DETAIL_PRESETS[stem][detail],
+            "minimum_frequency": low,
+            "maximum_frequency": high,
+        }
+
+
+class _PianoHr(_Engine):
+    id = piano_hr.ENGINE_ID
+    timeout = TIMEOUT_MIDI_PIANO_HR
+
+    def runtime_modules(self) -> tuple[str, ...]:
+        return _PIANO_HR_MODULES
+
+    def vendored(self) -> bool:
+        return piano_hr.vendored()
+
+    def version(self) -> str | None:
+        return piano_hr.engine_version()
+
+    def vendor_id(self) -> str | None:
+        return piano_hr.vendor_id()
+
+    def model_state(self) -> str:
+        return piano_hr.checkpoint_state()
+
+    def model_sha256(self) -> str | None:
+        return PIANO_HR_CHECKPOINT_SHA256
+
+    def params(self, stem: str, detail: str) -> dict[str, Any]:
+        return dict(MIDI_PIANO_HR_PRESETS[detail])
+
+    def batch(self, device: str) -> int:
+        return PIANO_HR_BATCH_GPU if device == "cuda" else PIANO_HR_BATCH_CPU
+
+    def gpu_min_free_mb(self) -> int:
+        return PIANO_HR_GPU_MIN_FREE_MB
+
+    def worker_args(self, device: str) -> list[str]:
+        return [
+            "--piano-vendor",
+            str(piano_hr.VENDOR_DIR),
+            "--checkpoint",
+            str(piano_hr.checkpoint_path()),
+        ]
+
+    def prepare(self, job: Job, run: Run) -> str | None:
+        fetch = _Fetch(
+            PIANO_HR_CHECKPOINT_URL,
+            PIANO_HR_CHECKPOINT_SHA256,
+            PIANO_HR_CHECKPOINT_SIZE,
+            piano_hr.checkpoint_path,
+            piano_hr.checkpoint_ok,
+            piano_hr.remove_bad_checkpoint,
+        )
+        code = _ensure_file(job, run, fetch, "piano_hr checkpoint")
+        if code is None:
+            _update(job, run.stem, phase="transcribe", pct=0)
+        return code
+
+
+class _Ymt3(_Engine):
+    id = ymt3.ENGINE_ID
+    timeout = TIMEOUT_MIDI_YMT3
+
+    def runtime_modules(self) -> tuple[str, ...]:
+        return _YMT3_MODULES
+
+    def vendored(self) -> bool:
+        return ymt3.vendored()
+
+    def version(self) -> str | None:
+        return ymt3.engine_version()
+
+    def vendor_id(self) -> str | None:
+        return ymt3.vendor_id()
+
+    def model_state(self) -> str:
+        return ymt3.model_state()
+
+    def model_sha256(self) -> str | None:
+        return YMT3_WEIGHTS_SHA256
+
+    def params(self, stem: str, detail: str) -> dict[str, Any]:
+        # The model has no thresholds: Detail does not change its notes. What
+        # a file keeps is the stem's instrument class (ymt3.keeps).
+        return {"class_filter": stem}
+
+    def batch(self, device: str) -> int:
+        return YMT3_BATCH_GPU if device == "cuda" else YMT3_BATCH_CPU
+
+    def gpu_min_free_mb(self) -> int:
+        return YMT3_GPU_MIN_FREE_MB
+
+    def seconds_per_minute(self) -> dict[str, float] | None:
+        return dict(YMT3_SECONDS_PER_MINUTE)
+
+    def worker_args(self, device: str) -> list[str]:
+        return ["--ymt3-vendor", str(ymt3.VENDOR_DIR), "--checkpoint", str(ymt3.weights_path())]
+
+    def prepare(self, job: Job, run: Run) -> str | None:
+        """The weights file, made once: the checkpoint downloaded and
+        checked, converted (phase "prepare"), the result checked against its
+        own pinned SHA-256, then the checkpoint removed."""
+        weights = ymt3.weights_path()
+        if ymt3.weights_ok(weights):
+            return None
+        if ymt3.WEIGHTS.remove_bad(weights):
+            logger.warning("[%s] MIDI: the ymt3 weights were not the pinned file", job.id)
+        fetch = _Fetch(
+            YMT3_CHECKPOINT_URL,
+            YMT3_CHECKPOINT_SHA256,
+            YMT3_CHECKPOINT_SIZE,
+            ymt3.checkpoint_path,
+            ymt3.checkpoint_ok,
+            ymt3.CHECKPOINT.remove_bad,
+        )
+        code = _ensure_file(job, run, fetch, "ymt3 checkpoint")
+        if code is not None:
+            return code
+        checkpoint = ymt3.checkpoint_path()
+        _update(job, run.stem, phase="prepare", pct=0)
+        logger.info("[%s] MIDI: making the ymt3 weights from its checkpoint", job.id)
+        outcome = _run_worker(
+            job,
+            run,
+            _spawn_convert_cmd(checkpoint, weights),
+            lambda pct: _update(job, run.stem, pct=pct),
+            timeout=TIMEOUT_MIDI_MODEL_PREPARE,
+            stall=TIMEOUT_MIDI_MODEL_PREPARE,
+        )
+        if outcome.stopped == "cancelled":
+            return "cancelled"
+        if _failed(outcome) or not ymt3.weights_ok(weights):
+            code = (outcome.event or {}).get("code")
+            code = code if code in ("disk", "io") and outcome.stopped is None else "prepare"
+            logger.warning(
+                "[%s] MIDI: the ymt3 weights could not be made (%s): %s",
+                job.id,
+                code,
+                " | ".join(outcome.tail[-3:]) or "no diagnostic output",
+            )
+            ymt3.WEIGHTS.remove_bad(weights)
+            return code
+        # The weights are all a run needs; the 561 MB it came from goes.
+        try:
+            checkpoint.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("[%s] MIDI: could not remove the ymt3 checkpoint", job.id, exc_info=True)
+        _update(job, run.stem, phase="transcribe", pct=0)
+        return None
+
+
+_ENGINES: dict[str, _Engine] = {e.id: e for e in (_BasicPitch(), _PianoHr(), _Ymt3())}
+
+
+def _engine(engine_id: str) -> _Engine:
+    return _ENGINES[engine_id]
 
 
 def availability() -> tuple[bool, str | None]:
-    """(available, reason) of MIDI at all, which is Basic Pitch's: it makes
-    every bass file. reason None, "unsupported_platform" (Intel macOS, which
-    has no onnxruntime in uv.lock), "no_runtime" (a module the engine needs
-    is not installed) or "engine_error" (the vendored engine is incomplete,
-    or failed to import in a worker since the server started). Cheap: file
-    and module lookups once, never an import of the engine."""
+    """(available, reason) of MIDI at all, which is Basic Pitch's: every
+    engine's file is written with the mido it vendors. reason None,
+    "unsupported_platform" (Intel macOS, which has no onnxruntime in
+    uv.lock), "no_runtime" (a module the engine needs is not installed) or
+    "engine_error" (the vendored engine is incomplete, or failed to import in
+    a worker since the server started). Cheap: file and module lookups once,
+    never an import of the engine."""
     available, reason = _installed()
     if available and ENGINE_ID in _engine_broken:
         return False, "engine_error"
@@ -194,65 +492,68 @@ def availability() -> tuple[bool, str | None]:
 
 
 def engine_availability(engine: str) -> tuple[bool, str | None]:
-    """availability() for one engine. piano_hr also needs Basic Pitch's
-    runtime (MIDI as a whole) and torch; its checkpoint is not needed, the
-    first run fetches it."""
+    """availability() for one engine: MIDI as a whole, then the engine's own
+    code and runtime. Its weights are not needed: the first run fetches
+    them."""
     available, reason = availability()
     if engine == ENGINE_ID or not available:
         return available, reason
-    if engine != piano_hr.ENGINE_ID:
+    adapter = _ENGINES.get(engine)
+    if adapter is None or midi_engines.get(engine) is None:
         return False, "engine_error"
-    available, reason = _piano_hr_installed()
-    if available and piano_hr.ENGINE_ID in _engine_broken:
+    available, reason = adapter.installed()
+    if available and engine in _engine_broken:
         return False, "engine_error"
     return available, reason
 
 
-def engine_for(stem: str, piano_engine: str) -> str:
-    """The engine a run of ``stem`` uses: the piano setting's for the piano,
-    Basic Pitch for the bass, which piano_hr cannot hear."""
-    if stem == "piano" and piano_engine in MIDI_PIANO_ENGINES:
-        return piano_engine
-    return ENGINE_ID
+def engine_for(stem: str) -> str:
+    """The engine a run of ``stem`` uses: its setting, read per request (an
+    engine that cannot take the stem reads as the stem's default)."""
+    return get_transcribe_engine(stem)
 
 
 def status() -> dict[str, Any]:
-    """GET /api/transcribe/status."""
+    """GET /api/transcribe/status. Blocking (the device probe may import
+    torch): the route runs it in the thread pool."""
     available, reason = availability()
-    hr_available, hr_reason = engine_availability(piano_hr.ENGINE_ID)
+    device = torch_engine_device()
+    engines = []
+    for info in midi_engines.all_engines():
+        adapter = _ENGINES.get(info.id)
+        if adapter is None:
+            continue
+        ok, why = engine_availability(info.id)
+        engines.append(
+            {
+                "id": info.id,
+                "label": info.label,
+                "version": adapter.version(),
+                "licence": info.licence,
+                "model_licence": info.model_licence,
+                "stems": list(info.stems),
+                "available": ok,
+                "reason": why,
+                "source": info.source,
+                # "built_in", or for a model fetched on first use
+                # "downloaded", "partial" or "not_downloaded": the size on
+                # disk only; a run checks the SHA-256 before it uses it.
+                "model": adapter.model_state(),
+                "download_bytes": info.download_bytes,
+                "disk_bytes": info.disk_bytes,
+                # The device a run would ask for now, and the measured seconds
+                # of work per minute of audio on each (None: not measured).
+                "device": device if info.gpu else "cpu",
+                "seconds_per_minute": adapter.seconds_per_minute(),
+                "uses_detail": info.uses_detail,
+            }
+        )
     return {
         "available": available,
         "reason": reason,
-        "engines": [
-            {
-                "id": ENGINE_ID,
-                "label": ENGINE_LABEL,
-                "version": engine_version(),
-                "licence": ENGINE_LICENCE,
-                "model_licence": ENGINE_LICENCE,
-                "stems": list(MIDI_STEMS),
-                "available": available,
-                "reason": reason,
-                "model": "built_in",
-                "download_bytes": None,
-            },
-            {
-                "id": piano_hr.ENGINE_ID,
-                "label": piano_hr.ENGINE_LABEL,
-                "version": piano_hr.engine_version(),
-                "licence": piano_hr.ENGINE_LICENCE,
-                "model_licence": piano_hr.MODEL_LICENCE,
-                "stems": ["piano"],
-                "available": hr_available,
-                "reason": hr_reason,
-                # "downloaded", "partial" or "not_downloaded": the size on
-                # disk only; a run checks the SHA-256 before it uses it.
-                "model": piano_hr.checkpoint_state(),
-                "download_bytes": PIANO_HR_CHECKPOINT_SIZE,
-            },
-        ],
-        "piano_engine": get_transcribe_piano_engine(),
-        "piano_engines": list(MIDI_PIANO_ENGINES),
+        "engines": engines,
+        "stem_engines": {stem: list(midi_engines.for_stem(stem)) for stem in MIDI_STEMS},
+        "default_engines": {stem: midi_engines.default_for(stem) for stem in MIDI_STEMS},
         "stems": list(MIDI_STEMS),
         "max_seconds": TRANSCRIBE_MAX_SECONDS,
         "details": list(MIDI_DETAILS),
@@ -316,14 +617,7 @@ def song_tempo(job_dir: Path) -> dict[str, Any]:
 
 def run_params(stem: str, detail: str, engine: str = ENGINE_ID) -> dict[str, Any]:
     """The engine's parameters for ``stem`` at ``detail``."""
-    if engine == piano_hr.ENGINE_ID:
-        return dict(MIDI_PIANO_HR_PRESETS[detail])
-    low, high = MIDI_STEM_RANGES[stem]
-    return {
-        **MIDI_DETAIL_PRESETS[stem][detail],
-        "minimum_frequency": low,
-        "maximum_frequency": high,
-    }
+    return _engine(engine).params(stem, detail)
 
 
 def _now_iso() -> str:
@@ -472,21 +766,19 @@ def _spawn_worker_cmd(
 ) -> list[str]:
     """The worker invocation. Module-level seam so tests can swap in a stub,
     the way transcribe.py exposes its own."""
+    adapter = _engine(engine)
     extra: list[str] = []
-    if engine == piano_hr.ENGINE_ID:
+    if engine != ENGINE_ID:
         extra = [
             "--engine",
             engine,
-            "--piano-vendor",
-            str(piano_hr.VENDOR_DIR),
-            "--checkpoint",
-            str(piano_hr.checkpoint_path()),
+            *adapter.worker_args(device),
             "--device",
             device,
             "--batch",
-            str(PIANO_HR_BATCH_GPU if device == "cuda" else PIANO_HR_BATCH_CPU),
+            str(adapter.batch(device)),
             "--gpu-min-free-mb",
-            str(PIANO_HR_GPU_MIN_FREE_MB),
+            str(adapter.gpu_min_free_mb()),
         ]
     return [
         sys.executable,
@@ -512,21 +804,40 @@ def _spawn_worker_cmd(
     ]
 
 
-def _spawn_fetch_cmd(dst: Path) -> list[str]:
-    """The piano_hr checkpoint's download (app/core/model_fetch.py): the
-    pinned address, size and SHA-256, into MODELS_DIR. A seam for tests."""
+def _spawn_fetch_cmd(dst: Path, url: str, sha256: str, size: int) -> list[str]:
+    """An engine's first-use download (app/core/model_fetch.py): the pinned
+    address, size and SHA-256, into MODELS_DIR. A seam for tests."""
     return [
         sys.executable,
         "-m",
         "app.core.model_fetch",
         "--url",
-        PIANO_HR_CHECKPOINT_URL,
+        url,
         "--dst",
         str(dst),
         "--sha256",
-        PIANO_HR_CHECKPOINT_SHA256,
+        sha256,
         "--size",
-        str(PIANO_HR_CHECKPOINT_SIZE),
+        str(size),
+    ]
+
+
+def _spawn_convert_cmd(checkpoint: Path, out: Path) -> list[str]:
+    """YourMT3+'s weights made from its checkpoint (app/pipeline/
+    ymt3_convert.py), checked against their pinned size and SHA-256. A seam
+    for tests."""
+    return [
+        sys.executable,
+        "-m",
+        "app.pipeline.ymt3_convert",
+        "--ckpt",
+        str(checkpoint),
+        "--out",
+        str(out),
+        "--sha256",
+        YMT3_WEIGHTS_SHA256,
+        "--size",
+        str(YMT3_WEIGHTS_SIZE),
     ]
 
 
@@ -669,14 +980,14 @@ def _record(
 ) -> dict[str, Any]:
     seconds_audio = event.get("seconds_audio")
     device = event.get("device")
-    hr = run.engine == piano_hr.ENGINE_ID
+    adapter = _engine(run.engine)
     return {
         "engine": run.engine,
-        "engine_version": piano_hr.engine_version() if hr else engine_version(),
-        "vendor_id": piano_hr.vendor_id() if hr else vendor_id(),
-        # The weights a piano_hr file was made with (Basic Pitch's ship in
-        # the vendored build vendor_id names).
-        "model_sha256": PIANO_HR_CHECKPOINT_SHA256 if hr else None,
+        "engine_version": adapter.version(),
+        "vendor_id": adapter.vendor_id(),
+        # The weights a file was made with (Basic Pitch's ship in the
+        # vendored build vendor_id names).
+        "model_sha256": adapter.model_sha256(),
         "device": device if device in ("cpu", "cuda") else None,
         "gpu_fallback": gpu_fallback,
         "stem": run.stem,
@@ -719,38 +1030,27 @@ def _gpu_retry(outcome: _Outcome, asked: str) -> bool:
     return _failure_code(outcome) not in _NOT_THE_GPU
 
 
-def piano_hr_device() -> str:
-    """The device a piano_hr run asks for: CUDA when the separation device
-    setting resolves to it (read per run, so a change applies to the next),
-    else the CPU. MPS is never asked for: the model's GRUs and its STFT
-    convolutions were never measured on one."""
-    try:
-        return "cuda" if get_demucs_device() == "cuda" else "cpu"
-    except Exception:  # noqa: BLE001 -- a device probe that fails is the CPU
-        logger.warning("MIDI: the device probe failed, piano_hr runs on the CPU", exc_info=True)
-        return "cpu"
-
-
-def _ensure_checkpoint(job: Job, run: Run) -> str | None:
-    """The piano_hr checkpoint on disk and checked against its pinned SHA-256
-    before it is used, downloaded first when it is missing or is not that
-    file. None when it is ready, "cancelled", or an error code."""
-    path = piano_hr.checkpoint_path()
-    if piano_hr.checkpoint_ok(path):
+def _ensure_file(job: Job, run: Run, fetch: _Fetch, name: str) -> str | None:
+    """``fetch``'s file on disk and checked against its pinned SHA-256
+    before it is used, downloaded first (phase "download") when it is
+    missing or is not that file. None when it is ready, "cancelled", or an
+    error code."""
+    path = fetch.path()
+    if fetch.ok(path):
         return None
-    if piano_hr.remove_bad_checkpoint(path):
-        logger.warning("[%s] MIDI: the piano_hr checkpoint was not the pinned file", job.id)
+    if fetch.remove_bad(path):
+        logger.warning("[%s] MIDI: the %s was not the pinned file", job.id, name)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         logger.warning("[%s] MIDI: cannot write the models folder: %s", job.id, exc)
         return _write_code(exc)
     _update(job, run.stem, phase="download", pct=0)
-    logger.info("[%s] MIDI: downloading the piano_hr checkpoint", job.id)
+    logger.info("[%s] MIDI: downloading the %s", job.id, name)
     outcome = _run_worker(
         job,
         run,
-        _spawn_fetch_cmd(path),
+        _spawn_fetch_cmd(path, fetch.url, fetch.sha256, fetch.size),
         lambda pct: _update(job, run.stem, pct=pct),
         timeout=TIMEOUT_MIDI_MODEL_DOWNLOAD,
     )
@@ -763,17 +1063,17 @@ def _ensure_checkpoint(job: Job, run: Run) -> str | None:
         code = (outcome.event or {}).get("code")
         code = code if code in ("disk", "io") and outcome.stopped is None else "download"
         logger.warning(
-            "[%s] MIDI: the piano_hr checkpoint could not be downloaded (%s): %s",
+            "[%s] MIDI: the %s could not be downloaded (%s): %s",
             job.id,
+            name,
             code,
             " | ".join(outcome.tail[-3:]) or "no diagnostic output",
         )
         return code
-    if not piano_hr.checkpoint_ok(path):
-        logger.warning("[%s] MIDI: the downloaded piano_hr checkpoint did not match", job.id)
-        piano_hr.remove_bad_checkpoint(path)
+    if not fetch.ok(path):
+        logger.warning("[%s] MIDI: the downloaded %s did not match", job.id, name)
+        fetch.remove_bad(path)
         return "download"
-    _update(job, run.stem, phase="transcribe", pct=0)
     return None
 
 
@@ -786,12 +1086,12 @@ def _stopped(job: Job, run: Run, had_file: bool) -> None:
 
 
 def run_blocking(job: Job, job_dir: Path, run: Run, audio: Path) -> None:
-    """The run ``claim`` started: the checkpoint (piano_hr), the worker, the
-    file, midi.json, the state. Blocking (asyncio.to_thread). Never raises;
-    every ending is in Job.midi."""
+    """The run ``claim`` started: the engine made ready (its weights fetched
+    and checked), the worker, the file, midi.json, the state. Blocking
+    (asyncio.to_thread). Never raises; every ending is in Job.midi."""
     started = time.monotonic()
     stem = run.stem
-    hr = run.engine == piano_hr.ENGINE_ID
+    adapter = _engine(run.engine)
     final = midi_path(job_dir, stem)
     temp = midi_dir(job_dir) / _temp_name(stem)
     had_file = final.is_file()
@@ -805,25 +1105,22 @@ def run_blocking(job: Job, job_dir: Path, run: Run, audio: Path) -> None:
             logger.warning("[%s] MIDI %s: cannot write the midi folder: %s", job.id, stem, exc)
             _end(job, run, "error", _write_code(exc), had_file)
             return
-        if hr:
-            code = _ensure_checkpoint(job, run)
-            if code == "cancelled":
-                _stopped(job, run, had_file)
-                return
-            if code is not None:
-                _end(job, run, "error", code, had_file)
-                return
+        code = adapter.prepare(job, run)
+        if code == "cancelled":
+            _stopped(job, run, had_file)
+            return
+        if code is not None:
+            _end(job, run, "error", code, had_file)
+            return
 
         def on_pct(pct: int) -> None:
             _update(job, stem, pct=pct)
 
         def attempt(device: str) -> _Outcome:
             cmd = _spawn_worker_cmd(audio, temp, stem, params, plan, run.engine, device)
-            return _run_worker(
-                job, run, cmd, on_pct, timeout=TIMEOUT_MIDI_PIANO_HR if hr else TIMEOUT_MIDI
-            )
+            return _run_worker(job, run, cmd, on_pct, timeout=adapter.timeout)
 
-        asked = piano_hr_device() if hr else "cpu"
+        asked = torch_engine_device() if adapter.info.gpu else "cpu"
         outcome = attempt(asked)
         gpu_fallback = False
         if _gpu_retry(outcome, asked):

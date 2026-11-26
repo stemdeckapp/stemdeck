@@ -1,0 +1,260 @@
+{
+  "id": "73191ff8c147b141",
+  "name": "YourMT3+",
+  "variant": "YPTF.MoE+Multi (noPS)",
+  "source": {
+    "space": "mimbres/YourMT3",
+    "revision": "5e66c1ea173a8186e0d20432b841d3180cc015b5",
+    "url": "https://huggingface.co/spaces/mimbres/YourMT3/tree/5e66c1ea173a8186e0d20432b841d3180cc015b5/amt/src",
+    "licence": "Apache-2.0"
+  },
+  "github": {
+    "repo": "mimbres/YourMT3",
+    "commit": "8a4fbcabdf660f9f06bcb6f12bbf00d9b3139b98",
+    "licence": "GPL-3.0"
+  },
+  "patch": "patches/yourmt3-space-5e66c1e.patch",
+  "patch_sha256": "6d1c2344eff156f60128a4515080f498dc5143006c3a6f174b41951ce86839fe",
+  "patched": [
+    "src/model/ymt3.py",
+    "src/utils/utils.py"
+  ],
+  "files": {
+    "src/config/config.py": {
+      "upstream": "amt/src/config/config.py",
+      "git_blob": "0a8d68698649beb7e48d61f5b55cc880205de579",
+      "upstream_sha256": "6803e1479c77a9c5f5ddec145291ee9b17cd9a15fbcd5f1bcf7ba39297218838",
+      "sha256": "6803e1479c77a9c5f5ddec145291ee9b17cd9a15fbcd5f1bcf7ba39297218838"
+    },
+    "src/config/task.py": {
+      "upstream": "amt/src/config/task.py",
+      "git_blob": "aca181f3461b1ff06d87b13937358338f5dd0503",
+      "upstream_sha256": "b04b75554de2771c9787e9d74b2d8b7d93707117c16be8814a18c7abf590b93c",
+      "sha256": "b04b75554de2771c9787e9d74b2d8b7d93707117c16be8814a18c7abf590b93c"
+    },
+    "src/config/vocabulary.py": {
+      "upstream": "amt/src/config/vocabulary.py",
+      "git_blob": "55de16d21e35652e1ca80ffdbe97dda69d00b4e7",
+      "upstream_sha256": "9d693c320d6d912f4e756b90c132a0999aa1aaf8a75fcb627a69935cf63aea36",
+      "sha256": "9d693c320d6d912f4e756b90c132a0999aa1aaf8a75fcb627a69935cf63aea36"
+    },
+    "src/model/conv_block.py": {
+      "upstream": "amt/src/model/conv_block.py",
+      "git_blob": "383e93e46951a859139b0276d12fc69ff61b6a58",
+      "upstream_sha256": "f99cb054e1772c5c8ad882284c60ebdbdd196314f45129d496e277c9606ad0c4",
+      "sha256": "f99cb054e1772c5c8ad882284c60ebdbdd196314f45129d496e277c9606ad0c4"
+    },
+    "src/model/ff_layer.py": {
+      "upstream": "amt/src/model/ff_layer.py",
+      "git_blob": "8595eb09535864f7e77470bed59b5be9e6d2d4da",
+      "upstream_sha256": "b098073babb815634f36587a7a944edf6b755c2b3bac11ba574a172cc09643e0",
+      "sha256": "b098073babb815634f36587a7a944edf6b755c2b3bac11ba574a172cc09643e0"
+    },
+    "src/model/lm_head.py": {
+      "upstream": "amt/src/model/lm_head.py",
+      "git_blob": "7a12b17c0f225dad545d3c9c03cd81565094924f",
+      "upstream_sha256": "458891fcc0620c4b2b6aea1ed91d9dbb020f5dcb53aa09cbefa7a10cabb651f0",
+      "sha256": "458891fcc0620c4b2b6aea1ed91d9dbb020f5dcb53aa09cbefa7a10cabb651f0"
+    },
+    "src/model/ops.py": {
+      "upstream": "amt/src/model/ops.py",
+      "git_blob": "d11fb7d93b17318ea30b60e8f7012e1faa90f8de",
+      "upstream_sha256": "c169ce23fcd0251354786313ba8409aaba918fcecf15cec8a94f7889916e6cc3",
+      "sha256": "c169ce23fcd0251354786313ba8409aaba918fcecf15cec8a94f7889916e6cc3"
+    },
+    "src/model/perceiver_helper.py": {
+      "upstream": "amt/src/model/perceiver_helper.py",
+      "git_blob": "fb52f1f9e71514aca2df338b5cf209fdbd6cc115",
+      "upstream_sha256": "c23aa7ec1fa368a0a17ed318891ae3967d798fcde9d210bd10fe864b1af17d4f",
+      "sha256": "c23aa7ec1fa368a0a17ed318891ae3967d798fcde9d210bd10fe864b1af17d4f"
+    },
+    "src/model/perceiver_mod.py": {
+      "upstream": "amt/src/model/perceiver_mod.py",
+      "git_blob": "749d9cd5e5b62c76671dfcdbf1cb078c372c7a2a",
+      "upstream_sha256": "68e899abc3d620d5913b0f0d336a8494b8211d0577e432386799b072ad5f1e2e",
+      "sha256": "68e899abc3d620d5913b0f0d336a8494b8211d0577e432386799b072ad5f1e2e"
+    },
+    "src/model/positional_encoding.py": {
+      "upstream": "amt/src/model/positional_encoding.py",
+      "git_blob": "bb6723f226882a666ce5c2385b28ec0801ccde8f",
+      "upstream_sha256": "f2edca87fdc418bc48bad1105733a56dea5d940f064d074db0b5fa19544b87fe",
+      "sha256": "f2edca87fdc418bc48bad1105733a56dea5d940f064d074db0b5fa19544b87fe"
+    },
+    "src/model/projection_layer.py": {
+      "upstream": "amt/src/model/projection_layer.py",
+      "git_blob": "f19dcc2f5998e671e52b9bc9d786a533f6eb295b",
+      "upstream_sha256": "cedc45baec4e112fc6f64d081aaf8cfe8764a5d767eaa07defc9c988dba1da1a",
+      "sha256": "cedc45baec4e112fc6f64d081aaf8cfe8764a5d767eaa07defc9c988dba1da1a"
+    },
+    "src/model/RoPE/RoPE.py": {
+      "upstream": "amt/src/model/RoPE/RoPE.py",
+      "git_blob": "0884d027c25393e76ac9ff292c162abc9e4fcbbc",
+      "upstream_sha256": "b8046efd8f898b1c3cc157819b0371e7823d447cf506bc68d7692bc9a7ce008a",
+      "sha256": "b8046efd8f898b1c3cc157819b0371e7823d447cf506bc68d7692bc9a7ce008a"
+    },
+    "src/model/spectrogram.py": {
+      "upstream": "amt/src/model/spectrogram.py",
+      "git_blob": "fb4b38373f9d73c63535df407007c956c3a49e7c",
+      "upstream_sha256": "772c8e32855ce9bc5990dec310cfdc35505629ce4f91da4d4276a1bed01216f6",
+      "sha256": "772c8e32855ce9bc5990dec310cfdc35505629ce4f91da4d4276a1bed01216f6"
+    },
+    "src/model/t5mod.py": {
+      "upstream": "amt/src/model/t5mod.py",
+      "git_blob": "523a26019c0af5716428b1df9abd9449a6ffddb4",
+      "upstream_sha256": "2cedcbdc4d0abef869f99bff624508ca7e90a20f585f59f418af5ff19e25f147",
+      "sha256": "2cedcbdc4d0abef869f99bff624508ca7e90a20f585f59f418af5ff19e25f147"
+    },
+    "src/model/t5mod_helper.py": {
+      "upstream": "amt/src/model/t5mod_helper.py",
+      "git_blob": "65468f316efcc8910f7cd1deb3b44db974990c3c",
+      "upstream_sha256": "118d9aff99511d0e706d55eec27795c5fdaa84c6e62587377d4c982097e47dea",
+      "sha256": "118d9aff99511d0e706d55eec27795c5fdaa84c6e62587377d4c982097e47dea"
+    },
+    "src/model/ymt3.py": {
+      "upstream": "amt/src/model/ymt3.py",
+      "git_blob": "89d27654191f5c0de6d9599a1fb9a2626bbd258a",
+      "upstream_sha256": "a7c83aa71ddfa0ac3b51fc7e98606a7416715a053f02c118a6c957dff4079c61",
+      "sha256": "07ab699808c03b60afe1a4acb672fc5402e09c984f8943b085b415b51f116a04"
+    },
+    "src/utils/event2note.py": {
+      "upstream": "amt/src/utils/event2note.py",
+      "git_blob": "9df38be5093ea2c41aa2232a2b777a15173a278d",
+      "upstream_sha256": "039ff94e2b7cd022a1ac09dc215fccf6280cf656c1bce0fd16fbd63db187efea",
+      "sha256": "039ff94e2b7cd022a1ac09dc215fccf6280cf656c1bce0fd16fbd63db187efea"
+    },
+    "src/utils/event_codec.py": {
+      "upstream": "amt/src/utils/event_codec.py",
+      "git_blob": "a0915e39cbaf960b43851a6e400f93527b0a05e5",
+      "upstream_sha256": "c487e6c7ac855146dc81a9192efb35a4d45fc8cd42ddaa24a958c4675acbfe48",
+      "sha256": "c487e6c7ac855146dc81a9192efb35a4d45fc8cd42ddaa24a958c4675acbfe48"
+    },
+    "src/utils/note2event.py": {
+      "upstream": "amt/src/utils/note2event.py",
+      "git_blob": "6ed2ce770795c0dc3a3eaaa9788d6054da542b8c",
+      "upstream_sha256": "7aea803c628f98a26b248f8c6b886db48717aa8b0e68c89293b6bd6dfb94c7ed",
+      "sha256": "7aea803c628f98a26b248f8c6b886db48717aa8b0e68c89293b6bd6dfb94c7ed"
+    },
+    "src/utils/note_event_dataclasses.py": {
+      "upstream": "amt/src/utils/note_event_dataclasses.py",
+      "git_blob": "f98ebf41c4a634af48fff2ed9bce514804bcafeb",
+      "upstream_sha256": "6ce49b909191178255fffcf539c01f1c8ec0e4f1adcb207cfd0c811a52bc1f40",
+      "sha256": "6ce49b909191178255fffcf539c01f1c8ec0e4f1adcb207cfd0c811a52bc1f40"
+    },
+    "src/utils/task_manager.py": {
+      "upstream": "amt/src/utils/task_manager.py",
+      "git_blob": "5911b621a244039127028083b917d2444a7a9303",
+      "upstream_sha256": "5e480366febd0250e92eb25ca78f906cc0d61144814adce18ecce642412e5669",
+      "sha256": "5e480366febd0250e92eb25ca78f906cc0d61144814adce18ecce642412e5669"
+    },
+    "src/utils/tokenizer.py": {
+      "upstream": "amt/src/utils/tokenizer.py",
+      "git_blob": "cdc309601e3f0f82503ccb5b0154b9cfe652a552",
+      "upstream_sha256": "81c691cdc49084b3e65f5a722686a61b769a2d3169830cf04c1fe6bbc97fa8a8",
+      "sha256": "81c691cdc49084b3e65f5a722686a61b769a2d3169830cf04c1fe6bbc97fa8a8"
+    },
+    "src/utils/utils.py": {
+      "upstream": "amt/src/utils/utils.py",
+      "git_blob": "ae6ce712694e7c5dd3ea461b8d4958a933e5a7aa",
+      "upstream_sha256": "eb9412923ea9a7a194ab38d433f2f00b017daf1ac1181b3162a8d3bfe8c18872",
+      "sha256": "00524213ee04a5fc1c6c2295a7c960dc4390d86456ad89b1ec391c36ffbfd1a7"
+    }
+  },
+  "added": {
+    "src/config/__init__.py": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "src/model/__init__.py": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "src/model/RoPE/__init__.py": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "src/utils/__init__.py": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "shim": {
+    "transformers": {
+      "version": "4.45.1",
+      "wheel": "transformers-4.45.1-py3-none-any.whl",
+      "wheel_sha256": "21e3f47aa7256dbbfb5215937a3168a984c94432ce3a16b7908265807d62aee8",
+      "url": "https://files.pythonhosted.org/packages/17/f2/f01ea29c8eff8e749d96525a17c2d3ec02656cec9a80c20fb3e74dba4b04/transformers-4.45.1-py3-none-any.whl",
+      "licence": "Apache-2.0",
+      "copied_from_record": {
+        "transformers/models/t5/modeling_t5.py": "sha256=rnNdmL94boIKm2hxUuN32xu2_5MyCIk7KedWkdLn0RU",
+        "transformers/activations.py": "sha256=EMN-kVzitS1TmltS7Kr2ROKwxW0oLbAHeAmNdDQuvu4",
+        "transformers/pytorch_utils.py": "sha256=Hg_mMP2EIBn5pyiTKnUz1yF_z61KSyLqxwy91Q8HRKk"
+      }
+    },
+    "files": {
+      "shim/pytorch_lightning/__init__.py": {
+        "sha256": "dee022bbdbbb24de7602a6b2d0e399ead5411f3b0a8fa012849404567daa4a61"
+      },
+      "shim/transformers/__init__.py": {
+        "sha256": "ab50c8063a5fc081cc786ee35862469cf46ac52e710b1f69a1ae78d625cd76f2"
+      },
+      "shim/transformers/activations.py": {
+        "sha256": "23c83dcb87510d828d3d21ee4c42ba0fe4eb977feb77700fd464fa7e1df493b9"
+      },
+      "shim/transformers/configuration_utils.py": {
+        "sha256": "587b3265fec7aea44ce03f7e4aa8922121baced6b13c19504fd5c2397026f2d5"
+      },
+      "shim/transformers/modeling_outputs.py": {
+        "sha256": "dab252134253f57b0130d57568d7902607793d2f7a0c4eae44dc4fe304f622f2"
+      },
+      "shim/transformers/modeling_utils.py": {
+        "sha256": "5ae5f0f3a62c9948af9b9fe799309ce4688542f91d10739d10657414f98ad482"
+      },
+      "shim/transformers/models/__init__.py": {
+        "sha256": "87a5110f00b04576aab6629422d4e75799d793bed8b64e094338dd5f2bd6f29d"
+      },
+      "shim/transformers/models/perceiver/__init__.py": {
+        "sha256": "87a5110f00b04576aab6629422d4e75799d793bed8b64e094338dd5f2bd6f29d"
+      },
+      "shim/transformers/models/perceiver/modeling_perceiver.py": {
+        "sha256": "0d00b94f2a7869e1697ecbc71b3f9a74f84475e6471b72a8ee5df752fd3bc2fc"
+      },
+      "shim/transformers/models/t5/__init__.py": {
+        "sha256": "87a5110f00b04576aab6629422d4e75799d793bed8b64e094338dd5f2bd6f29d"
+      },
+      "shim/transformers/models/t5/configuration_t5.py": {
+        "sha256": "46b291e45211587fcb40cf4ec9ab2fb98a4e518022fbe6624c3ea9d871b59ff3"
+      },
+      "shim/transformers/models/t5/modeling_t5.py": {
+        "sha256": "e72d71117a917920ac4b4603a11ade310e561abe1474062d72f2138063d9dea5"
+      },
+      "shim/transformers/pytorch_utils.py": {
+        "sha256": "0c4cde434c940a572c9b19678d099748e91ca3a359af2ada74f7c20536deac49"
+      },
+      "shim/transformers/utils/__init__.py": {
+        "sha256": "160c468b5b069f3eeb47eda399708827f7555f27d3e03fb24029c8928534c337"
+      },
+      "shim/transformers/utils/logging.py": {
+        "sha256": "c1f23c9c861cfc7d9307f29eaf2e638ebaf550b15caa45576d92189659e5df0c"
+      },
+      "shim/transformers/utils/model_parallel_utils.py": {
+        "sha256": "a6dc5cc2e8d559c2c034397a187ba48895198e6657d3483aadbc4e0d9a7a14c3"
+      }
+    }
+  },
+  "licences": {
+    "LICENSE.rotary-embedding-torch": {
+      "sha256": "fe74654058fe2ba069808dbf36defd6e207baf8859f36366a6a3ceae5aa6ecc5"
+    },
+    "LICENSE.transformers": {
+      "sha256": "77fd4710def9ec3c0f6225800e0235f15a425abd4a8b03559127fcd782612049"
+    },
+    "LICENSE.x-transformers": {
+      "sha256": "02cf6ed7df17f94fafa61e67a089ee51faac006db35ffa173c70e6763c253cf6"
+    },
+    "LICENSE.yourmt3": {
+      "sha256": "9a2459deba1997e0e8ee8b7100d088e3bccc51e6f433a96e8e28e79c959cbcfb"
+    }
+  },
+  "licence_sources": {
+    "LICENSE.transformers": "transformers-4.45.1.dist-info/LICENSE in the wheel above",
+    "LICENSE.rotary-embedding-torch": "https://github.com/lucidrains/rotary-embedding-torch/blob/6d7071e10d8aefa651526b797c00d33d106f1473/LICENSE",
+    "LICENSE.x-transformers": "https://github.com/lucidrains/x-transformers/blob/dea3de2d0d8e642de6c6b1bb697d76777288e3ce/LICENSE",
+    "LICENSE.yourmt3": "the Apache-2.0 text of LICENSE.transformers under a note of where the YourMT3 licence is stated"
+  }
+}

@@ -1,4 +1,4 @@
-"""MIDI from a finished song's piano or bass stem (app/pipeline/midi.py).
+"""MIDI from a finished song's stems (app/pipeline/midi.py).
 
     GET    /api/transcribe/status
     POST   /api/jobs/{id}/midi                  {"stem", "detail"?}  -> 202
@@ -11,8 +11,8 @@ Its own router rather than more of jobs.py (2900 lines): the five routes, the
 refusal table and the run task are one feature. Every refusal is
 {"detail": <fixed sentence>, "code": <code>}, checked in this order: the job
 (404 job_not_found), the body (400 stem_not_supported, bad_detail), whether
-the stem's engine can run here at all (503 engine_unavailable: the piano's
-is the one Settings picks, the bass's always Basic Pitch), the setting (403
+the stem's engine can run here at all (503 engine_unavailable: the one
+Settings picks for the stem, transcribe_<stem>_engine), the setting (403
 disabled), whether anything holds the song or the server's one MIDI slot (409
 busy), the stem (409 no_stem), its length (413 too_long). docs/api.md has
 the contract.
@@ -35,7 +35,7 @@ from app.core.models import FINISHED_STATUSES, Job, clean_midi
 from app.core.registry import get as registry_get
 from app.core.registry import operation as registry_operation
 from app.core.registry import persist as registry_persist
-from app.core.settings import get_transcribe_detail, get_transcribe_piano_engine, midi_stem_enabled
+from app.core.settings import get_transcribe_detail, midi_stem_enabled
 from app.core.stem_files import stem_path
 from app.core.stems_location import is_relocating
 from app.pipeline import jobqueue, midi_file
@@ -47,7 +47,7 @@ router = APIRouter()
 
 _REFUSALS: dict[str, tuple[int, str]] = {
     "job_not_found": (404, "job not found"),
-    "stem_not_supported": (400, "MIDI can be made from the piano and bass stems only"),
+    "stem_not_supported": (400, "MIDI cannot be made from this stem"),
     "bad_detail": (400, "detail must be one of: " + ", ".join(MIDI_DETAILS)),
     "disabled": (403, "MIDI from this stem is turned off in Settings"),
     "busy": (
@@ -151,14 +151,15 @@ _tasks: set[asyncio.Task] = set()
 
 @router.get("/transcribe/status")
 async def transcribe_status() -> dict:
-    """Whether MIDI can be made here, with what, from which stems. Cheap and
-    cached: it never loads the engine (app/pipeline/midi.py availability)."""
-    return midi_run.status()
+    """Whether MIDI can be made here, with what, from which stems. Cheap: it
+    never loads an engine (app/pipeline/midi.py availability); in the thread
+    pool, because the device a run would use is probed with torch."""
+    return await asyncio.to_thread(midi_run.status)
 
 
 @router.post("/jobs/{job_id}/midi", status_code=202)
 async def start_midi(job_id: str, body: MidiBody) -> JSONResponse:
-    """Make MIDI from the song's piano or bass stem. Answers at once with
+    """Make MIDI from one of the song's stems. Answers at once with
     {"state": "running"}; the run's progress and outcome are in the song's
     state, midi.<stem>."""
     job, job_dir = _job(job_id)
@@ -171,7 +172,7 @@ async def start_midi(job_id: str, body: MidiBody) -> JSONResponse:
     if detail not in MIDI_DETAILS:
         return _refusal("bad_detail")
     # Read per request: a change in Settings applies to the next run.
-    engine = midi_run.engine_for(stem, get_transcribe_piano_engine())
+    engine = midi_run.engine_for(stem)
     if not midi_run.engine_availability(engine)[0]:
         return _refusal("engine_unavailable")
     if not midi_stem_enabled(stem):

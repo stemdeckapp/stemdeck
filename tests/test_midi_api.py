@@ -1,4 +1,4 @@
-"""MIDI from the piano and bass stems: the routes (app/api/midi.py), the run
+"""MIDI from a song's stems: the routes (app/api/midi.py), the run
 (app/pipeline/midi.py), the settings, the zip option and the job lifecycle.
 
 The worker is a stand-in script here (test_midi_worker.py runs the real one),
@@ -23,6 +23,7 @@ import pytest
 import soundfile as sf
 
 from app.api import midi as midi_api  # noqa: F401 -- imported before JOBS_DIR is patched
+from app.core.config import YMT3_SECONDS_PER_MINUTE
 from app.core.models import Job, clean_midi
 from app.core.process import process_exists
 from app.core.registry import _jobs, _procs
@@ -36,8 +37,7 @@ OTHER = "fedcba654321"
 def _fresh_runs():
     midi_run._current = None
     midi_run._engine_broken.clear()
-    midi_run._installed.cache_clear()
-    midi_run._piano_hr_installed.cache_clear()
+    midi_run.forget_installed()
     yield
     run = midi_run._current
     if run is not None:
@@ -47,8 +47,7 @@ def _fresh_runs():
             time.sleep(0.05)
     midi_run._current = None
     midi_run._engine_broken.clear()
-    midi_run._installed.cache_clear()
-    midi_run._piano_hr_installed.cache_clear()
+    midi_run.forget_installed()
 
 
 @pytest.fixture
@@ -120,6 +119,12 @@ def worker(tmp_path, monkeypatch):
         return [sys.executable, str(script), Stub.mode, str(out), str(Stub.pid_file)]
 
     monkeypatch.setattr(midi_run, "_spawn_worker_cmd", cmd)
+    # The stand-in plays Basic Pitch: the piano's and the bass's default is
+    # YourMT3+, whose first run would download its model first.
+    from app.core.settings import set_midi_setting
+
+    set_midi_setting("transcribe_piano_engine", "basic_pitch")
+    set_midi_setting("transcribe_bass_engine", "basic_pitch")
     return Stub
 
 
@@ -174,10 +179,12 @@ def _refused(r: httpx.Response, status: int, code: str) -> None:
 # -- status
 
 
-async def test_status_describes_the_engine(client):
+async def test_status_describes_the_engines(client):
     async with client as c:
         r = await c.get("/api/transcribe/status")
     assert r.status_code == 200
+    # The device a torch engine would ask for here (no CUDA in CI).
+    device = midi_run.torch_engine_device()
     assert r.json() == {
         "available": True,
         "reason": None,
@@ -188,11 +195,16 @@ async def test_status_describes_the_engine(client):
                 "version": "0.4.0",
                 "licence": "Apache-2.0",
                 "model_licence": "Apache-2.0",
-                "stems": ["piano", "bass"],
+                "stems": ["vocals", "bass", "guitar", "piano", "other"],
                 "available": True,
                 "reason": None,
+                "source": "built_in",
                 "model": "built_in",
                 "download_bytes": None,
+                "disk_bytes": None,
+                "device": "cpu",
+                "seconds_per_minute": None,
+                "uses_detail": True,
             },
             {
                 "id": "piano_hr",
@@ -203,14 +215,51 @@ async def test_status_describes_the_engine(client):
                 "stems": ["piano"],
                 "available": True,
                 "reason": None,
+                "source": "built_in",
                 # The test library's models folder never has it.
                 "model": "not_downloaded",
                 "download_bytes": 171_966_578,
+                "disk_bytes": 171_966_578,
+                "device": device,
+                "seconds_per_minute": None,
+                "uses_detail": True,
+            },
+            {
+                "id": "ymt3",
+                "label": "YourMT3+",
+                "version": "5e66c1e",
+                "licence": "Apache-2.0",
+                "model_licence": "Apache-2.0",
+                "stems": ["drums", "bass", "guitar", "piano", "other"],
+                "available": True,
+                "reason": None,
+                "source": "built_in",
+                "model": "not_downloaded",
+                # The checkpoint as published; what stays is its weights.
+                "download_bytes": 561_544_628,
+                "disk_bytes": 188_412_704,
+                "device": device,
+                "seconds_per_minute": dict(YMT3_SECONDS_PER_MINUTE),
+                "uses_detail": False,
             },
         ],
-        "piano_engine": "basic_pitch",
-        "piano_engines": ["basic_pitch", "piano_hr"],
-        "stems": ["piano", "bass"],
+        "stem_engines": {
+            "vocals": ["basic_pitch"],
+            "drums": ["ymt3"],
+            "bass": ["basic_pitch", "ymt3"],
+            "guitar": ["basic_pitch", "ymt3"],
+            "piano": ["basic_pitch", "piano_hr", "ymt3"],
+            "other": ["basic_pitch", "ymt3"],
+        },
+        "default_engines": {
+            "vocals": "basic_pitch",
+            "drums": "ymt3",
+            "bass": "ymt3",
+            "guitar": "basic_pitch",
+            "piano": "ymt3",
+            "other": "ymt3",
+        },
+        "stems": ["vocals", "drums", "bass", "guitar", "piano", "other"],
         "max_seconds": 1200,
         "details": ["balanced", "detailed", "clean"],
     }
@@ -219,13 +268,13 @@ async def test_status_describes_the_engine(client):
 async def test_status_on_intel_macos_is_unsupported(client, monkeypatch):
     monkeypatch.setattr(midi_run.sys, "platform", "darwin")
     monkeypatch.setattr(midi_run.platform, "machine", lambda: "x86_64")
-    midi_run._installed.cache_clear()
+    midi_run.forget_installed()
     async with client as c:
         body = (await c.get("/api/transcribe/status")).json()
     assert (body["available"], body["reason"]) == (False, "unsupported_platform")
     # Apple Silicon is not Intel.
     monkeypatch.setattr(midi_run.platform, "machine", lambda: "arm64")
-    midi_run._installed.cache_clear()
+    midi_run.forget_installed()
     assert midi_run.availability() == (True, None)
 
 
@@ -236,7 +285,7 @@ async def test_status_without_onnxruntime_is_no_runtime(client, monkeypatch):
         "find_spec",
         lambda name, *a: None if name == "onnxruntime" else real(name, *a),
     )
-    midi_run._installed.cache_clear()
+    midi_run.forget_installed()
     async with client as c:
         body = (await c.get("/api/transcribe/status")).json()
     assert (body["available"], body["reason"]) == (False, "no_runtime")
@@ -244,7 +293,7 @@ async def test_status_without_onnxruntime_is_no_runtime(client, monkeypatch):
 
 def test_status_never_imports_the_engine_or_onnxruntime():
     before = set(sys.modules)
-    midi_run._installed.cache_clear()
+    midi_run.forget_installed()
     midi_run.status()
     assert not {
         "onnxruntime",
@@ -252,6 +301,9 @@ def test_status_never_imports_the_engine_or_onnxruntime():
         "mido",
         "piano_transcription_inference",
         "torchlibrosa",
+        "model.ymt3",
+        "transformers",
+        "pytorch_lightning",
     } & (set(sys.modules) - before)
 
 
@@ -371,7 +423,7 @@ async def test_refusals(jobs_dir, client, worker, monkeypatch):
                 404,
                 "job_not_found",
             )
-        for stem in ("vocals", "drums", "Piano", "../piano", "piano.mid"):
+        for stem in ("lead_backing", "mix", "Piano", "../piano", "piano.mid", "DRUMS"):
             _refused(
                 await c.post(f"/api/jobs/{JOB}/midi", json={"stem": stem}),
                 400,
@@ -544,12 +596,15 @@ def test_a_run_saved_while_running_comes_back_interrupted():
             "piano": {"state": "running", "pct": 40, "notes": 9, "detail": "balanced",
                       "tempo_source": "song", "at": "2026-11-25T10:00:00Z", "has_file": True},
             "bass": {"state": "done", "pct": 100, "notes": 3, "has_file": True},
-            "drums": {"state": "done"},
+            "drums": {"state": "done", "engine": "ymt3"},
             "vocals": "nonsense",
+            "lead_backing": {"state": "done"},
         },
     }  # fmt: skip
     job = Job.from_record(record)
-    assert set(job.midi) == {"piano", "bass"}
+    # Every stem of htdemucs_6s, and only those.
+    assert set(job.midi) == {"piano", "bass", "drums"}
+    assert job.midi["drums"]["engine"] == "ymt3"
     piano = job.midi["piano"]
     assert (piano["state"], piano["error_code"], piano["pct"]) == ("error", "interrupted", 0)
     assert piano["has_file"] is True and piano["notes"] == 9
@@ -614,7 +669,7 @@ async def test_traversal_and_unknown_names(jobs_dir, client, worker):
             assert b"secret" not in r.content
         for url in (
             f"/api/jobs/{JOB}/midi/..%2Fpiano",
-            f"/api/jobs/{JOB}/midi/vocals",
+            f"/api/jobs/{JOB}/midi/lead_backing",
         ):
             # Refused, by the stem whitelist or by no route matching at all
             # (405 when the decoded path lands on another route's shape).
@@ -631,7 +686,9 @@ async def test_cancel_with_nothing_running(jobs_dir, client, worker):
         await _settled(c)
         assert (await c.post(f"/api/jobs/{JOB}/midi/piano/cancel")).json() == {"state": "done"}
         _refused(await c.post("/api/jobs/ffffffffffff/midi/piano/cancel"), 404, "job_not_found")
-        _refused(await c.post(f"/api/jobs/{JOB}/midi/drums/cancel"), 400, "stem_not_supported")
+        _refused(
+            await c.post(f"/api/jobs/{JOB}/midi/lead_backing/cancel"), 400, "stem_not_supported"
+        )
 
 
 # -- the stems zip
@@ -913,7 +970,7 @@ def fetch(tmp_path, monkeypatch, pinned):
         mode = "ok"
         calls: list = []
 
-    def cmd(dst):
+    def cmd(dst, *pinned):
         Stub.calls.append(dst)
         return [sys.executable, str(script), Stub.mode, str(dst), str(body)]
 
@@ -959,13 +1016,14 @@ def hr_worker(tmp_path, monkeypatch):
         return [sys.executable, str(script), Stub.modes[device], str(out), device]
 
     monkeypatch.setattr(midi_run, "_spawn_worker_cmd", cmd)
-    monkeypatch.setattr(midi_run, "piano_hr_device", lambda: "cpu")
+    monkeypatch.setattr(midi_run, "torch_engine_device", lambda: "cpu")
     return Stub
 
 
 async def test_the_piano_engine_setting(client):
     async with client as c:
-        assert (await c.get("/api/settings")).json()["transcribe_piano_engine"] == "basic_pitch"
+        # YourMT3+ until the person picks another (config.MIDI_DEFAULT_ENGINES).
+        assert (await c.get("/api/settings")).json()["transcribe_piano_engine"] == "ymt3"
         r = await c.post("/api/settings", json={"transcribe_piano_engine": "piano_hr"})
         assert r.status_code == 200 and r.json()["transcribe_piano_engine"] == "piano_hr"
         for bad in (
@@ -980,9 +1038,7 @@ async def test_the_piano_engine_setting(client):
             assert r.status_code == 422, bad
             assert "must be one of" in r.json()["detail"]
         body = (await c.get("/api/settings")).json()
-        status = (await c.get("/api/transcribe/status")).json()
     assert body["transcribe_piano_engine"] == "piano_hr"
-    assert status["piano_engine"] == "piano_hr"
 
 
 async def test_the_status_says_whether_the_checkpoint_is_there(client, pinned):
@@ -1111,7 +1167,7 @@ async def test_a_gpu_failure_is_run_again_whole_on_the_cpu(
     _song(jobs_dir)
     pinned.parent.mkdir(parents=True)
     pinned.write_bytes(CKPT)
-    monkeypatch.setattr(midi_run, "piano_hr_device", lambda: "cuda")
+    monkeypatch.setattr(midi_run, "torch_engine_device", lambda: "cuda")
     hr_worker.modes = {"cuda": "engine", "cpu": "ok"}
     async with client as c:
         await c.post("/api/settings", json={"transcribe_piano_engine": "piano_hr"})
@@ -1130,7 +1186,7 @@ async def test_a_failure_on_the_cpu_the_worker_chose_is_not_run_again(
     _song(jobs_dir)
     pinned.parent.mkdir(parents=True)
     pinned.write_bytes(CKPT)
-    monkeypatch.setattr(midi_run, "piano_hr_device", lambda: "cuda")
+    monkeypatch.setattr(midi_run, "torch_engine_device", lambda: "cuda")
     hr_worker.modes = {"cuda": "cpu_engine", "cpu": "ok"}
     async with client as c:
         await c.post("/api/settings", json={"transcribe_piano_engine": "piano_hr"})
@@ -1140,10 +1196,13 @@ async def test_a_failure_on_the_cpu_the_worker_chose_is_not_run_again(
     assert [call[2] for call in hr_worker.calls] == ["cuda"]
 
 
-async def test_the_bass_is_always_basic_pitch(jobs_dir, client, hr_worker, fetch):
+async def test_each_stem_runs_its_own_engine(jobs_dir, client, hr_worker, fetch):
     _song(jobs_dir)
     async with client as c:
-        await c.post("/api/settings", json={"transcribe_piano_engine": "piano_hr"})
+        await c.post(
+            "/api/settings",
+            json={"transcribe_piano_engine": "piano_hr", "transcribe_bass_engine": "basic_pitch"},
+        )
         await c.post(f"/api/jobs/{JOB}/midi", json={"stem": "bass"})
         entry = (await _settled(c, "bass"))["midi"]["bass"]
     assert entry["engine"] == "basic_pitch"
@@ -1156,7 +1215,7 @@ async def test_piano_hr_unavailable_refuses_the_piano_only(
 ):
     _song(jobs_dir)
     monkeypatch.setattr(midi_run, "_PIANO_HR_MODULES", ("torch", "no_such_module_for_this_test"))
-    midi_run._piano_hr_installed.cache_clear()
+    midi_run.forget_installed()
     async with client as c:
         await c.post("/api/settings", json={"transcribe_piano_engine": "piano_hr"})
         status = (await c.get("/api/transcribe/status")).json()
@@ -1167,6 +1226,7 @@ async def test_piano_hr_unavailable_refuses_the_piano_only(
         )
         r = await c.post(f"/api/jobs/{JOB}/midi", json={"stem": "piano"})
         _refused(r, 503, "engine_unavailable")
+        await c.post("/api/settings", json={"transcribe_bass_engine": "basic_pitch"})
         assert (await c.post(f"/api/jobs/{JOB}/midi", json={"stem": "bass"})).status_code == 202
         await _settled(c, "bass")
 
@@ -1174,13 +1234,13 @@ async def test_piano_hr_unavailable_refuses_the_piano_only(
 def test_the_device_piano_hr_asks_for(monkeypatch):
     for resolved, asked in (("cuda", "cuda"), ("mps", "cpu"), ("cpu", "cpu")):
         monkeypatch.setattr(midi_run, "get_demucs_device", lambda r=resolved: r)
-        assert midi_run.piano_hr_device() == asked
+        assert midi_run.torch_engine_device() == asked
 
     def broken():
         raise RuntimeError("probe failed")
 
     monkeypatch.setattr(midi_run, "get_demucs_device", broken)
-    assert midi_run.piano_hr_device() == "cpu"
+    assert midi_run.torch_engine_device() == "cpu"
 
 
 def test_an_entry_names_its_engine_and_its_phase_only_while_running():
@@ -1194,3 +1254,279 @@ def test_an_entry_names_its_engine_and_its_phase_only_while_running():
         assert clean_midi({"piano": {"state": "done", "engine": engine}})["piano"]["engine"] == (
             "basic_pitch"
         )
+
+
+# -- the third engine (ymt3): every stem's setting, its weights, its run
+
+YMT3_CKPT = b"a stand-in for YourMT3's published checkpoint " * 16
+YMT3_WEIGHTS = b"the weights-only file made from it " * 8
+
+CONVERT_STUB = textwrap.dedent(
+    """
+    import json, sys, time
+    mode, out, body = sys.argv[1], sys.argv[2], sys.argv[3]
+    def emit(**e):
+        print(json.dumps(e), flush=True)
+    emit(event="progress", pct=0)
+    if mode == "ok":
+        open(out, "wb").write(open(body, "rb").read())
+        emit(event="progress", pct=100)
+        emit(event="done", tensors=655)
+    elif mode == "wrong":
+        open(out, "wb").write(b"x" * 7)
+        emit(event="done", tensors=1)
+    elif mode == "fail":
+        print("conversion failed: not this model", file=sys.stderr, flush=True)
+        emit(event="error", code="convert")
+        sys.exit(3)
+    elif mode == "sleep":
+        time.sleep(60)
+    """
+)
+
+
+@pytest.fixture
+def ymt3_files(tmp_path, monkeypatch):
+    """The pinned checkpoint is YMT3_CKPT and the pinned weights YMT3_WEIGHTS
+    (their sizes and SHA-256 are what a run checks); the download and the
+    conversion are stand-ins. Set .fetch and .convert before a run; .calls
+    has ("fetch" | "convert", path) per step started."""
+    from app.core.pinned_file import PinnedFile
+    from app.pipeline import ymt3
+
+    checkpoint = PinnedFile(
+        ymt3.CHECKPOINT.url,
+        hashlib.sha256(YMT3_CKPT).hexdigest(),
+        len(YMT3_CKPT),
+        ymt3.CHECKPOINT.relpath,
+    )
+    weights = PinnedFile(
+        None, hashlib.sha256(YMT3_WEIGHTS).hexdigest(), len(YMT3_WEIGHTS), ymt3.WEIGHTS.relpath
+    )
+    monkeypatch.setattr(ymt3, "CHECKPOINT", checkpoint)
+    monkeypatch.setattr(ymt3, "WEIGHTS", weights)
+    monkeypatch.setattr(midi_run, "YMT3_CHECKPOINT_SHA256", checkpoint.sha256)
+    monkeypatch.setattr(midi_run, "YMT3_CHECKPOINT_SIZE", checkpoint.size)
+    monkeypatch.setattr(midi_run, "YMT3_WEIGHTS_SHA256", weights.sha256)
+    fetch_script = tmp_path / "stub_fetch.py"
+    fetch_script.write_text(FETCH_STUB, encoding="utf-8")
+    convert_script = tmp_path / "stub_convert.py"
+    convert_script.write_text(CONVERT_STUB, encoding="utf-8")
+    ckpt_body = tmp_path / "ckpt.bin"
+    ckpt_body.write_bytes(YMT3_CKPT)
+    weights_body = tmp_path / "weights.bin"
+    weights_body.write_bytes(YMT3_WEIGHTS)
+
+    class Stub:
+        fetch = "ok"
+        convert = "ok"
+        calls: list = []
+
+    def fetch_cmd(dst, url, sha256, size):
+        Stub.calls.append(("fetch", dst, url, sha256, size))
+        return [sys.executable, str(fetch_script), Stub.fetch, str(dst), str(ckpt_body)]
+
+    def convert_cmd(ckpt, out):
+        Stub.calls.append(("convert", ckpt))
+        return [sys.executable, str(convert_script), Stub.convert, str(out), str(weights_body)]
+
+    monkeypatch.setattr(midi_run, "_spawn_fetch_cmd", fetch_cmd)
+    monkeypatch.setattr(midi_run, "_spawn_convert_cmd", convert_cmd)
+    Stub.checkpoint = checkpoint
+    Stub.weights = weights
+    return Stub
+
+
+async def test_every_stem_has_its_setting_and_its_engine(client):
+    async with client as c:
+        body = (await c.get("/api/settings")).json()
+        assert {s: body[f"transcribe_{s}"] for s in midi_run.MIDI_STEMS} == dict.fromkeys(
+            midi_run.MIDI_STEMS, "auto"
+        )
+        # Each stem's measured winner (config.MIDI_DEFAULT_ENGINES).
+        assert {s: body[f"transcribe_{s}_engine"] for s in midi_run.MIDI_STEMS} == {
+            "vocals": "basic_pitch",
+            "drums": "ymt3",
+            "bass": "ymt3",
+            "guitar": "basic_pitch",
+            "piano": "ymt3",
+            "other": "ymt3",
+        }
+        r = await c.post(
+            "/api/settings",
+            json={"transcribe_guitar_engine": "ymt3", "transcribe_drums": "off"},
+        )
+        assert r.status_code == 200
+        assert (r.json()["transcribe_guitar_engine"], r.json()["transcribe_drums"]) == (
+            "ymt3",
+            "off",
+        )
+        for bad in (
+            # An engine that cannot take the stem.
+            {"transcribe_drums_engine": "basic_pitch"},
+            {"transcribe_vocals_engine": "ymt3"},
+            {"transcribe_bass_engine": "piano_hr"},
+            {"transcribe_other_engine": "whisper"},
+            {"transcribe_vocals": "on"},
+            # One bad value and nothing in the request is written.
+            {"transcribe_guitar_engine": "basic_pitch", "transcribe_drums_engine": "nope"},
+        ):
+            r = await c.post("/api/settings", json=bad)
+            assert r.status_code == 422, bad
+            assert "must be one of" in r.json()["detail"]
+        body = (await c.get("/api/settings")).json()
+    assert body["transcribe_guitar_engine"] == "ymt3"
+
+
+def test_a_stored_engine_that_cannot_take_the_stem_reads_as_its_default():
+    """A settings file written by hand, or naming an engine that is gone."""
+    from app.core import settings
+
+    with settings._LOCK:
+        settings._ensure()["transcribe_drums_engine"] = "basic_pitch"
+        settings._ensure()["transcribe_piano_engine"] = "piano_hr"
+    assert settings.get_transcribe_engine("drums") == "ymt3"
+    # The piano's key predates the others and keeps its stored choice.
+    assert settings.get_transcribe_engine("piano") == "piano_hr"
+
+
+async def test_a_first_ymt3_run_downloads_prepares_then_transcribes(
+    jobs_dir, client, hr_worker, ymt3_files, monkeypatch
+):
+    _song(jobs_dir)
+    phases: list = []
+    real = midi_run._update
+
+    def watch(job, stem, **fields):
+        if "phase" in fields:
+            phases.append(fields["phase"])
+        real(job, stem, **fields)
+
+    monkeypatch.setattr(midi_run, "_update", watch)
+    async with client as c:
+        r = await c.post(f"/api/jobs/{JOB}/midi", json={"stem": "piano"})
+        assert r.status_code == 202, r.text
+        entry = (await _settled(c))["midi"]["piano"]
+    assert (entry["state"], entry["engine"], entry["notes"]) == ("done", "ymt3", 11)
+    assert phases == ["download", "prepare", "transcribe", None]
+    kinds = [call[0] for call in ymt3_files.calls]
+    assert kinds == ["fetch", "convert"]
+    assert ymt3_files.calls[0][3:] == (ymt3_files.checkpoint.sha256, ymt3_files.checkpoint.size)
+    # The weights stay; the checkpoint they were made from is gone.
+    assert ymt3_files.weights.path().read_bytes() == YMT3_WEIGHTS
+    assert not ymt3_files.checkpoint.path().exists()
+    stem, engine, device, params = hr_worker.calls[-1]
+    assert (stem, engine, device, params) == ("piano", "ymt3", "cpu", {"class_filter": "piano"})
+    piano = json.loads((jobs_dir / JOB / "midi.json").read_text(encoding="utf-8"))["stems"]["piano"]
+    assert (piano["engine"], piano["engine_version"]) == ("ymt3", "5e66c1e")
+    assert piano["model_sha256"] == ymt3_files.weights.sha256
+    assert piano["vendor_id"] == midi_run.ymt3.vendor_id()
+
+
+async def test_the_weights_are_made_once(jobs_dir, client, hr_worker, ymt3_files):
+    _song(jobs_dir)
+    async with client as c:
+        for stem in ("piano", "bass"):
+            await c.post(f"/api/jobs/{JOB}/midi", json={"stem": stem})
+            assert (await _settled(c, stem))["midi"][stem]["state"] == "done"
+    assert [call[0] for call in ymt3_files.calls] == ["fetch", "convert"]
+    assert [call[:2] for call in hr_worker.calls] == [("piano", "ymt3"), ("bass", "ymt3")]
+
+
+@pytest.mark.parametrize("mode", ["fail", "wrong"])
+async def test_weights_that_cannot_be_made_are_never_used(
+    jobs_dir, client, hr_worker, ymt3_files, mode, caplog
+):
+    _song(jobs_dir)
+    ymt3_files.convert = mode
+    async with client as c:
+        await c.post(f"/api/jobs/{JOB}/midi", json={"stem": "piano"})
+        entry = (await _settled(c))["midi"]["piano"]
+    assert (entry["state"], entry["error_code"], entry["has_file"]) == ("error", "prepare", False)
+    assert not ymt3_files.weights.path().exists() and hr_worker.calls == []
+    # The checkpoint stays for the next try: only made weights replace it.
+    assert ymt3_files.checkpoint.path().read_bytes() == YMT3_CKPT
+    if mode == "fail":
+        assert "not this model" in caplog.text
+
+
+async def test_a_cancel_stops_the_conversion(jobs_dir, client, hr_worker, ymt3_files):
+    _song(jobs_dir)
+    ymt3_files.convert = "sleep"
+    async with client as c:
+        await c.post(f"/api/jobs/{JOB}/midi", json={"stem": "piano"})
+        procs: list = []
+        for _ in range(200):
+            entry = (await c.get(f"/api/jobs/{JOB}")).json()["midi"]["piano"]
+            procs = [p for key, p in list(_procs.items()) if key[0] == JOB]
+            if entry["phase"] == "prepare" and procs:
+                break
+            await asyncio.sleep(0.05)
+        assert entry["phase"] == "prepare" and len(procs) == 1
+        proc = procs[0]
+        r = await c.post(f"/api/jobs/{JOB}/midi/piano/cancel")
+        assert r.json() == {"state": "cancelled"}
+    assert proc.poll() is not None
+    assert not ymt3_files.weights.path().exists() and hr_worker.calls == []
+
+
+async def test_a_ymt3_gpu_failure_is_run_again_whole_on_the_cpu(
+    jobs_dir, client, hr_worker, ymt3_files, monkeypatch
+):
+    _song(jobs_dir)
+    ymt3_files.weights.path().parent.mkdir(parents=True)
+    ymt3_files.weights.path().write_bytes(YMT3_WEIGHTS)
+    monkeypatch.setattr(midi_run, "torch_engine_device", lambda: "cuda")
+    hr_worker.modes = {"cuda": "engine", "cpu": "ok"}
+    async with client as c:
+        await c.post(f"/api/jobs/{JOB}/midi", json={"stem": "bass"})
+        entry = (await _settled(c, "bass"))["midi"]["bass"]
+    assert entry["state"] == "done"
+    assert [call[2] for call in hr_worker.calls] == ["cuda", "cpu"]
+    bass = json.loads((jobs_dir / JOB / "midi.json").read_text(encoding="utf-8"))["stems"]["bass"]
+    assert (bass["device"], bass["gpu_fallback"]) == ("cpu", True)
+    assert ymt3_files.calls == []
+
+
+async def test_the_drums_and_every_other_stem_can_be_transcribed(
+    jobs_dir, client, hr_worker, monkeypatch
+):
+    """Every stem of htdemucs_6s, each with its own engine: the drums with
+    YourMT3+ (its weights taken as made here), the vocals with Basic Pitch."""
+    job = _song(jobs_dir)
+    for stem in ("drums", "guitar", "other"):
+        _wav(jobs_dir / JOB / "stems" / f"{stem}.wav")
+    job.stems = [{"name": n, "url": ""} for n in midi_run.MIDI_STEMS]
+    monkeypatch.setattr(midi_run._Ymt3, "prepare", lambda self, job, run: None)
+    async with client as c:
+        for stem in midi_run.MIDI_STEMS:
+            r = await c.post(f"/api/jobs/{JOB}/midi", json={"stem": stem})
+            assert r.status_code == 202, (stem, r.text)
+            entry = (await _settled(c, stem))["midi"][stem]
+            assert entry["state"] == "done", stem
+            assert (jobs_dir / JOB / "midi" / f"{stem}.mid").is_file()
+    engines = {call[0]: call[1] for call in hr_worker.calls}
+    assert engines == {
+        "vocals": "basic_pitch",
+        "drums": "ymt3",
+        "bass": "ymt3",
+        "guitar": "basic_pitch",
+        "piano": "ymt3",
+        "other": "ymt3",
+    }
+
+
+async def test_the_zip_carries_the_midi_of_every_stem(jobs_dir, client, worker):
+    _song(jobs_dir)
+    midi = jobs_dir / JOB / "midi"
+    midi.mkdir()
+    for stem in ("drums", "vocals", "piano"):
+        (midi / f"{stem}.mid").write_bytes(b"MThd " + stem.encode())
+    async with client as c:
+        r = await c.get(f"/api/jobs/{JOB}/stems/all.zip?format=wav&midi=1")
+    assert r.status_code == 200
+    names = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
+    mids = [n for n in names if n.endswith(".mid")]
+    assert len(mids) == 3
+    for stem in ("drums", "vocals", "piano"):
+        assert any(stem in n for n in mids), (stem, mids)
