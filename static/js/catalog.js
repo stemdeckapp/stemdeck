@@ -26,6 +26,7 @@ import { notifyFailure, setReleasePending, dismissFailuresByJobId, dismissFailur
 import { wireVideoEncoderSetting } from "./videoEncoderSettings.js";
 import { SETTINGS_ANSWER_EVENT, SETTINGS_APPLIED_EVENT, wireSeparationSettings } from "./separationSettings.js";
 import { wireTranscriptionSettings } from "./transcriptionSettings.js";
+import { ENGINES, MIDI_LANES } from "./laneMidiView.js";
 import { wireModelsSettings } from "./modelsSettings.js";
 import { wireDonateDialog } from "./donate.js";
 import { isDevVersion, isNewerRelease } from "./releaseVersion.js";
@@ -6072,6 +6073,29 @@ function settingsNavHtml() {
 // and stays so if they never do; a language switch rebuilds the dialog.
 const IDLE_UNLOAD_MAX_DEFAULT = 1440;
 
+// Settings > Transcription: a row per lane (laneMidiView.MIDI_LANES) with its
+// Auto or Off and its engine. Every built-in engine is an option;
+// transcriptionSettings.js leaves only those that can take the lane, and
+// writes each lane's sentence and the engine select's name with the lane in it.
+function transcriptionLaneRows() {
+  const engines = ENGINES.map((id) => `<option value="${id}" data-i18n="settings.midi.engineName.${id}">${id}</option>`).join("");
+  return MIDI_LANES.map((lane) => `
+            <div class="settings-row transcription-lane" data-lane="${lane}">
+              <div class="settings-row-text">
+                <div class="settings-row-title" data-i18n="stem.${lane}">${lane}</div>
+                <div class="settings-row-desc transcription-lane-desc" data-lane="${lane}"></div>
+                <p class="settings-row-desc transcription-engine-note" data-lane="${lane}" role="status" hidden></p>
+              </div>
+              <div class="transcription-lane-controls">
+                <select class="settings-select set-transcribe-lane" data-field="transcribe_${lane}" aria-label="${lane}" data-i18n-aria-label="stem.${lane}">
+                  <option value="auto" data-i18n="settings.midi.auto">Auto</option>
+                  <option value="off" data-i18n="settings.midi.off">Off</option>
+                </select>
+                <select class="settings-select settings-select-wide set-transcribe-engine" data-field="transcribe_${lane}_engine" aria-label="${lane} engine">${engines}</select>
+              </div>
+            </div>`).join("");
+}
+
 const unitField = (input, unitKey, unitText) =>
   `<span class="settings-unit-field">${input}<span class="settings-unit" data-i18n="${unitKey}">${unitText}</span></span>`;
 
@@ -6257,13 +6281,14 @@ function openLibraryEditor() {
           </div>
         </div>
       </div>
-      <!-- MIDI from the Piano and Bass lanes, wired by static/js/transcriptionSettings.js.
-           The notice is always on show. The engine line and the reason it cannot
-           run here come from GET /api/transcribe/status. -->
+      <!-- MIDI from every lane, wired by static/js/transcriptionSettings.js.
+           The notice is always on show. The engine lines, the reason it cannot
+           run here and each lane's engine list come from GET /api/transcribe/status. -->
       <div class="settings-pane hidden" data-pane="transcription" id="settings-pane-transcription" role="tabpanel" aria-labelledby="settings-tab-transcription">
         <div class="settings-group">
-          <h4 class="settings-group-title" data-i18n="settings.group.midi">MIDI from keys and bass</h4>
-          <p class="settings-group-desc models-open-line"><button class="models-open" type="button" data-open-tab="models" data-i18n="settings.models.openTranscription">See the transcription model in Models</button></p>
+          <h4 class="settings-group-title" data-i18n="settings.group.midi">MIDI from the lanes</h4>
+          <p class="settings-group-desc" data-i18n="settings.midi.enginesDesc">Each lane has its own engine. Basic Pitch comes with StemDeck and is quick. YourMT3+ hears which instrument plays each note and keeps only the lane's own: it was the most accurate on the drums, bass, piano and other lanes, and downloads its model the first time. ByteDance Piano Transcription is best for solo piano.</p>
+          <p class="settings-group-desc models-open-line"><button class="models-open" type="button" data-open-tab="models" data-i18n="settings.models.openTranscription">See the transcription models in Models</button></p>
           <div class="settings-section">
             <div class="settings-row settings-row-stack transcription-notice">
               <div class="settings-row-text">
@@ -6273,43 +6298,14 @@ function openLibraryEditor() {
                 <p class="settings-row-desc transcription-unavailable" role="status" hidden></p>
               </div>
             </div>
-            <div class="settings-row">
-              <div class="settings-row-text">
-                <div class="settings-row-title" data-i18n="settings.midi.keys.title">Keys</div>
-                <div class="settings-row-desc" data-i18n="settings.midi.keys.desc">The MIDI button on the Piano lane, in Advanced mode. Off hides it.</div>
-              </div>
-              <select class="settings-select settings-select-wide set-transcribe-piano" data-field="transcribe_piano" aria-label="Keys" data-i18n-aria-label="settings.midi.keys.title">
-                <option value="auto" data-i18n="settings.midi.autoKeys">Auto</option>
-                <option value="off" data-i18n="settings.midi.off">Off</option>
-              </select>
-            </div>
-            <div class="settings-row">
-              <div class="settings-row-text">
-                <div class="settings-row-title" data-i18n="settings.midi.pianoEngine.title">Keys engine</div>
-                <div class="settings-row-desc" data-i18n="settings.midi.pianoEngine.desc">Which model writes the Piano lane's notes. ByteDance Piano Transcription is best for solo or clearly audible piano; on piano separated from a busy mix, Basic Pitch may be better.</div>
-                <p class="settings-row-desc transcription-piano-engine-note" role="status" hidden></p>
-              </div>
-              <select class="settings-select settings-select-wide set-transcribe-piano-engine" data-field="transcribe_piano_engine" aria-label="Keys engine" data-i18n-aria-label="settings.midi.pianoEngine.title">
-                <option value="basic_pitch" data-i18n="settings.midi.pianoEngine.basicPitch">Basic Pitch</option>
-                <option value="piano_hr" data-i18n="settings.midi.pianoEngine.pianoHr">ByteDance Piano Transcription</option>
-              </select>
-            </div>
-            <div class="settings-row">
-              <div class="settings-row-text">
-                <div class="settings-row-title" data-i18n="settings.midi.bass.title">Bass</div>
-                <div class="settings-row-desc" data-i18n="settings.midi.bass.desc">The MIDI button on the Bass lane, in Advanced mode. Off hides it.</div>
-              </div>
-              <select class="settings-select settings-select-wide set-transcribe-bass" data-field="transcribe_bass" aria-label="Bass" data-i18n-aria-label="settings.midi.bass.title">
-                <option value="auto" data-i18n="settings.midi.auto">Auto (Basic Pitch)</option>
-                <option value="off" data-i18n="settings.midi.off">Off</option>
-              </select>
-            </div>
+${transcriptionLaneRows()}
             <div class="settings-row">
               <div class="settings-row-text">
                 <div class="settings-row-title" data-i18n="settings.midi.detail.title">Detail</div>
                 <p class="settings-row-desc transcription-detail-desc" data-detail="balanced" data-i18n="settings.midi.detail.balancedDesc">Balanced: the notes most songs need, with few stray ones.</p>
                 <p class="settings-row-desc transcription-detail-desc" data-detail="detailed" data-i18n="settings.midi.detail.detailedDesc">Detailed: quiet and short notes too, with more stray ones to delete.</p>
                 <p class="settings-row-desc transcription-detail-desc" data-detail="clean" data-i18n="settings.midi.detail.cleanDesc">Clean: only clear notes, so some quiet ones are left out.</p>
+                <p class="settings-row-desc transcription-detail-not-for" hidden></p>
               </div>
               <select class="settings-select settings-select-wide set-transcribe-detail" data-field="transcribe_detail" aria-label="Detail" data-i18n-aria-label="settings.midi.detail.title">
                 <option value="balanced" data-i18n="settings.midi.detail.balanced">Balanced</option>

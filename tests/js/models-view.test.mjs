@@ -85,8 +85,11 @@ eq("the stems a model separates for the next job", usedForStems(SETTINGS, "htdem
 eq("a model of the person's own", usedForStems(SETTINGS, "user_aaaaaaaaaaaa"), ["piano"]);
 eq("a model used for nothing", usedForStems(SETTINGS, "htdemucs_ft"), []);
 eq("no plan, no stems", usedForStems({}, "htdemucs_6s"), []);
-eq("Basic Pitch: the lanes not turned off", usedForLanes(SETTINGS), ["piano"]);
-eq("Basic Pitch: both on by default", usedForLanes({}), ["piano", "bass"]);
+// With no engine set, each lane has its default: Basic Pitch for the vocals
+// and the guitar, YourMT3+ for the rest.
+eq("Basic Pitch: its lanes not turned off", usedForLanes({ ...SETTINGS, transcribe_guitar: "off" }), ["vocals"]);
+eq("Basic Pitch: the vocals and the guitar by default", usedForLanes({}), ["vocals", "guitar"]);
+eq("YourMT3+: the drums, the bass, the piano and the other lane by default", usedForLanes({}, "ymt3"), ["drums", "bass", "piano", "other"]);
 
 const [six, , bp, kim, karaoke, beats] = modelEntries(ANSWER);
 eq("Used for, in words", usedForLine(six, SETTINGS, t, "en"), "Used for: Drums, Bass, and Guitar.");
@@ -94,15 +97,21 @@ eq("Used for one stem", usedForLine(kim, SETTINGS, t, "en"), "Used for: Vocals."
 eq("Used for nothing", usedForLine(entry("htdemucs_ft", "separation", "stems"), SETTINGS, t, "en"), "Not used for any stem now.");
 eq("before the settings come, nothing is claimed", usedForLine(six, null, t, "en"), "");
 eq("the Karaoke split is always for Lead + Backing", usedForLine(karaoke, null, t, "en"), "Used for: Lead + Backing.");
-eq("Basic Pitch names the Transcription tab's lanes", usedForLine(bp, SETTINGS, t, "en"), "Used for: Keys.");
-eq("Basic Pitch with both off", usedForLine(bp, { transcribe_piano: "off", transcribe_bass: "off" }, t, "en"), "Not used now: MIDI is off for Keys and for Bass.");
+eq("Basic Pitch names its lanes", usedForLine(bp, SETTINGS, t, "en"), "Used for: Vocals and Guitar.");
+const ALL_OFF = Object.fromEntries(["vocals", "drums", "bass", "guitar", "piano", "other"].map((l) => [`transcribe_${l}`, "off"]));
+eq("Basic Pitch with every lane off", usedForLine(bp, ALL_OFF, t, "en"), "Not used now: MIDI is off for every lane.");
 eq("the beat model has no choice to follow", usedForLine(beats, SETTINGS, t, "en"), "");
 const hr = entry("piano_hr", "transcription", "midi_piano", { license: "CC BY 4.0", download_bytes: 171_966_578 });
-const HR_ON = { transcribe_piano: "auto", transcribe_bass: "auto", transcribe_piano_engine: "piano_hr" };
-eq("ByteDance Piano Transcription is used for Keys when it is the Keys engine", usedForLine(hr, HR_ON, t, "en"), "Used for: Keys.");
-eq("and Basic Pitch then for Bass only", usedForLine(bp, HR_ON, t, "en"), "Used for: Bass.");
-eq("not the Keys engine: not used", usedForLine(hr, { transcribe_piano: "auto", transcribe_bass: "auto" }, t, "en"), "Not used for any stem now.");
-eq("its purpose", purposeLine(hr, t, "en"), "Makes MIDI notes from the Piano lane when the Keys engine is ByteDance Piano Transcription.");
+const HR_ON = { transcribe_piano: "auto", transcribe_bass: "auto", transcribe_piano_engine: "piano_hr", transcribe_bass_engine: "basic_pitch" };
+eq("ByteDance Piano Transcription is used for Piano when it is its engine", usedForLine(hr, HR_ON, t, "en"), "Used for: Piano.");
+eq("and Basic Pitch then for Vocals, Bass and Guitar", usedForLine(bp, HR_ON, t, "en"), "Used for: Vocals, Bass, and Guitar.");
+eq("not the piano's engine: not used", usedForLine(hr, { transcribe_piano: "auto", transcribe_bass: "auto" }, t, "en"), "Not used for any stem now.");
+eq("its purpose", purposeLine(hr, t, "en"), "Makes MIDI notes from the Piano lane when ByteDance Piano Transcription is its engine.");
+const ym = entry("ymt3", "transcription", "midi_multi", { license: "Apache-2.0", download_bytes: 561_544_628 });
+eq("YourMT3+ is used for the lanes whose engine it is", usedForLine(ym, { transcribe_piano: "auto" }, t, "en"), "Used for: Drums, Bass, Piano, and Other.");
+eq("YourMT3+'s purpose", purposeLine(ym, t, "en"), "Makes MIDI notes from the Drums, Bass, Guitar, Piano and Other lanes when YourMT3+ is their engine, each keeping only its own instrument.");
+eq("YourMT3+'s download size before it is there", stateView(ym, t, "en").text, "Not downloaded, 562 MB to download");
+check("an engine choice carries the plan", hasPlan({ transcribe_drums_engine: "ymt3" }));
 eq("its download size before it is there", stateView(hr, t, "en").text, "Not downloaded, 172 MB to download");
 eq("a model of yours, by id", usedForLine({ id: "user_aaaaaaaaaaaa", use: "stems" }, SETTINGS, t, "en"), "Used for: Piano.");
 check("a settings answer with the plan carries it", hasPlan(SETTINGS));

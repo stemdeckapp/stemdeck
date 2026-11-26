@@ -718,7 +718,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     },
     setGain,
     setMasterGain,
-    // A lane's alternate source (the MIDI of a Piano or Bass lane,
+    // A lane's alternate source (the MIDI of a lane,
     // laneMidiRows.js). The streaming engine has none.
     supportsAltSource: true,
     addAltSource,

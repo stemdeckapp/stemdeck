@@ -7,18 +7,18 @@
 //     download_bytes, available }], remove: false }
 // group is separation, transcription or analysis; use is stems,
 // lead_backing, midi (Basic Pitch), midi_piano (ByteDance Piano
-// Transcription), lyrics, lyrics_gpu, lyrics_cpu or beats; state is
-// downloaded, partial, not_downloaded, built_in or unknown.
+// Transcription), midi_multi (YourMT3+), lyrics, lyrics_gpu, lyrics_cpu or
+// beats; state is downloaded, partial, not_downloaded, built_in or unknown.
 //
 // "Used for" comes from a settings answer the page already has, never from
 // this route: stem_models_resolved (what the next job runs for each stem) for
-// a separation model, including one the person added, and transcribe_piano /
-// transcribe_bass / transcribe_piano_engine for the two MIDI engines. So it
-// follows a choice the moment the Separation or Transcription tab saves one.
+// a separation model, including one the person added, and transcribe_<lane>
+// with transcribe_<lane>_engine for the MIDI engines. So it follows a choice
+// the moment the Separation or Transcription tab saves one.
 
 import { formatSize, listText } from "./myModelsView.js";
 import { STEM_LABEL } from "./stemModelsView.js";
-import { PIANO_ENGINE_FIELD, SETTING_FIELDS, laneChoice, laneEngine } from "./laneMidiView.js";
+import { ENGINE_FIELDS, MIDI_LANES, SETTING_FIELDS, laneChoice, laneEngine, laneNameKey } from "./laneMidiView.js";
 
 /** The groups, in the order the tab lists them, each with its title key. */
 export const GROUPS = [
@@ -29,10 +29,8 @@ export const GROUPS = [
 
 /** The stems a separation model can be chosen for, in Settings' order. */
 export const PLAN_STEMS = ["vocals", "drums", "bass", "guitar", "piano"];
-/** The stems MIDI is made from. */
-export const MIDI_LANES = ["piano", "bass"];
-// The Transcription tab calls the Piano lane "Keys".
-const MIDI_LABEL = { piano: "settings.midi.keys.title", bass: "settings.midi.bass.title" };
+/** The stems MIDI is made from (laneMidiView.MIDI_LANES). */
+export { MIDI_LANES };
 
 const STATES = ["downloaded", "partial", "not_downloaded", "built_in", "unknown"];
 const USES = {
@@ -40,6 +38,7 @@ const USES = {
   lead_backing: "settings.models.purpose.leadBacking",
   midi: "settings.models.purpose.midi",
   midi_piano: "settings.models.purpose.midiPiano",
+  midi_multi: "settings.models.purpose.midiMulti",
   lyrics: "settings.models.purpose.lyrics",
   lyrics_gpu: "settings.models.purpose.lyricsGpu",
   lyrics_cpu: "settings.models.purpose.lyricsCpu",
@@ -80,7 +79,7 @@ export function usedForStems(settings, modelId) {
 }
 
 /** The engine id each MIDI model entry is ("midi" is Basic Pitch). */
-const MIDI_ENGINE_OF_USE = { midi: "basic_pitch", midi_piano: "piano_hr" };
+const MIDI_ENGINE_OF_USE = { midi: "basic_pitch", midi_piano: "piano_hr", midi_multi: "ymt3" };
 
 /** The lanes an engine makes MIDI for: the ones not turned Off whose engine
  *  it is (Basic Pitch when `engine` is left out). */
@@ -90,8 +89,8 @@ export function usedForLanes(settings, engine = "basic_pitch") {
 
 /** Whether a settings answer carries what "Used for" is worked out from. */
 export function hasPlan(settings) {
-  return isObj(settings) && (isObj(settings.stem_models_resolved) || SETTING_FIELDS.piano in settings
-    || SETTING_FIELDS.bass in settings || PIANO_ENGINE_FIELD in settings);
+  return isObj(settings) && (isObj(settings.stem_models_resolved)
+    || MIDI_LANES.some((l) => SETTING_FIELDS[l] in settings || ENGINE_FIELDS[l] in settings));
 }
 
 /**
@@ -111,7 +110,7 @@ export function usedForLine(entry, settings, t, locale) {
       const allOff = MIDI_LANES.every((lane) => laneChoice(settings, lane) === "off");
       return t(allOff ? "settings.models.usedForNoneMidi" : "settings.models.usedForNone");
     }
-    return t("settings.models.usedFor", { stems: listText(lanes.map((l) => t(MIDI_LABEL[l])), locale) });
+    return t("settings.models.usedFor", { stems: listText(lanes.map((l) => t(laneNameKey(l))), locale) });
   }
   if (entry.use !== "stems") return "";
   if (!isObj(settings) || !isObj(settings.stem_models_resolved)) return "";

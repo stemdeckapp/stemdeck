@@ -1,6 +1,8 @@
 // The sound of a lane's MIDI notes, computed sample by sample into a mono
 // Float32Array: the voice of midiNotesView.voiceFor, an envelope per note,
-// and for Bass one low-pass over the whole line. Pure, so
+// and a low-pass over the whole line where the voice has one. The Drums
+// lane's hits are drum sounds instead (renderDrums): a falling sine for a
+// kick or a tom, filtered noise for a hi-hat or a cymbal, both for a snare. Pure, so
 // tests/js/midi-render.test.mjs runs it in node; midiSynth.js copies the
 // result into an AudioBuffer of the playing context.
 //
@@ -10,7 +12,7 @@
 // plus its release, for each partial): measured in Chromium at 44.1 kHz, the
 // same 551 bass notes take 277 ms and 594 piano notes 325 ms, peak 0.86.
 
-import { levelOf, levelScale, pitchHz, renderSeconds, velocityGain } from "./midiNotesView.js";
+import { drumRow, levelOf, levelScale, pitchHz, renderSeconds, velocityGain } from "./midiNotesView.js";
 
 /** One partial of one note, added into `out` from sample `a` to `b`. */
 function addPartial(out, a, b, type, hz, gain, rate, env) {
@@ -88,6 +90,7 @@ export function lowpassInPlace(x, cutoff, rate, q = 0.7) {
  * `onNote(i)` is called after each note (a caller may yield there).
  */
 export async function renderVoice(notes, voice, { duration, rate, onNote = null }) {
+  if (voice.kind === "drums") return renderDrums(notes, voice, { duration, rate, onNote });
   const length = Math.max(1, Math.ceil(renderSeconds(notes, duration, voice) * rate));
   const out = new Float32Array(length);
   for (let k = 0; k < notes.length; k++) {
@@ -111,6 +114,87 @@ export async function renderVoice(notes, voice, { duration, rate, onNote = null 
     if (onNote) await onNote(k);
   }
   if (voice.lowpass > 0) lowpassInPlace(out, voice.lowpass, rate);
+  return out;
+}
+
+// ─── The drums ───
+
+/**
+ * A drum hit's sound by its row (midiNotesView.drumRow): `decay` is the
+ * time constant of its fall (s), `body` a sine gliding from `from` to `to`
+ * Hz over its first 40 ms, `noise` the share of white noise and `bright` how
+ * much of it is high-passed (0 dull, 1 a hiss). An open hi-hat (General MIDI
+ * 46) rings longer than a closed one.
+ */
+export function drumSound(pitch) {
+  const row = drumRow(pitch);
+  if (row === "kick") return { decay: 0.12, body: { from: 120, to: 45, gain: 1 }, noise: 0.05, bright: 0.2 };
+  if (row === "snare") return { decay: 0.07, body: { from: 210, to: 170, gain: 0.45 }, noise: 0.8, bright: 0.5 };
+  if (row === "hihat") return { decay: pitch === 46 ? 0.12 : 0.025, body: null, noise: 0.5, bright: 0.95 };
+  if (row === "tom") {
+    // Floor tom (41) to high tom (50), 70 to 196 Hz.
+    const hz = 70 + Math.max(0, Math.min(9, pitch - 41)) * 14;
+    return { decay: 0.11, body: { from: hz * 1.5, to: hz, gain: 0.9 }, noise: 0.08, bright: 0.3 };
+  }
+  if (row === "cymbal") return { decay: 0.45, body: null, noise: 0.45, bright: 0.9 };
+  return { decay: 0.03, body: { from: 900, to: 650, gain: 0.35 }, noise: 0.3, bright: 0.7 };
+}
+
+/** How long a hit sounds: five time constants of its fall, about 43 dB down. */
+export const DRUM_TAIL = 5;
+
+/**
+ * The Drums lane's hits ([start s, end s, General MIDI note, velocity]) as
+ * drum sounds into a mono buffer of `rate` samples a second, `duration`
+ * seconds long at least. The noise is a fixed sequence (xorshift), so the
+ * same file always sounds the same. `onNote(i)` as renderVoice's.
+ */
+export async function renderDrums(notes, voice, { duration, rate, onNote = null }) {
+  let end = Number.isFinite(duration) && duration > 0 ? duration : 0;
+  for (const n of notes) end = Math.max(end, n[0] + drumSound(n[2]).decay * DRUM_TAIL + 0.05);
+  const length = Math.max(1, Math.ceil(end * rate));
+  const out = new Float32Array(length);
+  let seed = 0x9e3779b9;
+  const noise = () => {
+    seed ^= seed << 13;
+    seed ^= seed >>> 17;
+    seed ^= seed << 5;
+    return ((seed >>> 0) / 4294967296) * 2 - 1;
+  };
+  for (let k = 0; k < notes.length; k++) {
+    const [start, , pitch, velocity] = notes[k];
+    const peak = velocityGain(velocity) * voice.gain;
+    if (peak > 0) {
+      const sound = drumSound(pitch);
+      const a = Math.max(0, Math.floor(start * rate));
+      const n = Math.min(length - a, Math.ceil(sound.decay * DRUM_TAIL * rate));
+      const fall = Math.exp(-1 / Math.max(1, sound.decay * rate));
+      const glide = Math.exp(-1 / Math.max(1, 0.04 * rate));
+      let env = peak;
+      let phase = 0;
+      let bend = 1;
+      let last = 0;
+      for (let i = 0; i < n; i++) {
+        let v = 0;
+        if (sound.body) {
+          const hz = sound.body.to + (sound.body.from - sound.body.to) * bend;
+          phase += (2 * Math.PI * hz) / rate;
+          v += Math.sin(phase) * sound.body.gain;
+          bend *= glide;
+        }
+        if (sound.noise > 0) {
+          const x = noise();
+          v += (sound.bright * (x - last) * 0.5 + (1 - sound.bright) * x) * sound.noise;
+          last = x;
+        }
+        // A 1 ms attack, so a hit does not click.
+        const attack = Math.min(1, (i + 1) / Math.max(1, 0.001 * rate));
+        out[a + i] += v * env * attack;
+        env *= fall;
+      }
+    }
+    if (onNote) await onNote(k);
+  }
   return out;
 }
 

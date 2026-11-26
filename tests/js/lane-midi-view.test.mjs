@@ -1,4 +1,4 @@
-// MIDI from the Piano and Bass lanes (Advanced mode), the pure part
+// MIDI from every lane (Advanced mode), the pure part
 // (static/js/laneMidiView.js): which lanes get a chip and when it shows, what
 // the row offers and says in each state, what a refusal or a failure says,
 // the .mid file's name and URL, the Settings > Transcription rules and the
@@ -13,9 +13,11 @@ import {
   DETAILS,
   DETAIL_FIELD,
   ERROR_CODES,
+  DEFAULT_ENGINES,
+  ENGINES,
+  ENGINE_FIELDS,
+  LANE_ENGINES,
   MIDI_LANES,
-  PIANO_ENGINES,
-  PIANO_ENGINE_FIELD,
   REFUSAL_CODES,
   SETTING_FIELDS,
   anyRunning,
@@ -25,8 +27,12 @@ import {
   detailChoice,
   detailDescKey,
   detailNameKey,
+  defaultEngine,
   engineAvailable,
   engineLine,
+  engineName,
+  engineNotes,
+  engineNoteText,
   engineOf,
   engineReady,
   errorKey,
@@ -35,26 +41,29 @@ import {
   hintLine,
   laneChoice,
   laneEngine,
+  laneEngines,
   laneHasMidi,
+  laneNameKey,
   maxMinutes,
   midiFilename,
   midiOf,
   midiPct,
   midiUrl,
   notesText,
+  needsDownload,
   parseExportMidi,
-  pianoEngineChoice,
-  pianoEngineNote,
   progressText,
   refusalCode,
   refusalKey,
   refusalNote,
+  rowNoteText,
   rowView,
   safeTitle,
   settingsPatch,
   songDone,
   transcriptionFields,
   unavailableKey,
+  usesDetail,
   zipWantsMidi,
 } from "../../static/js/laneMidiView.js";
 
@@ -87,9 +96,10 @@ const job = (midi, over = {}) => ({ job_id: "abc123", status: "done", midi, ...o
 
 // ─── Lanes and settings ───
 
-eq("the MIDI lanes are Piano and Bass", [...MIDI_LANES], ["piano", "bass"]);
-check("piano and bass have a chip", laneHasMidi("piano") && laneHasMidi("bass"));
-check("vocals, drums, guitar and other have none", !["vocals", "drums", "guitar", "other"].some(laneHasMidi));
+eq("the MIDI lanes are every stem, in Settings' order", [...MIDI_LANES], ["vocals", "drums", "bass", "guitar", "piano", "other"]);
+check("every stem has a chip", MIDI_LANES.every(laneHasMidi));
+check("the Lead and Backing split and a take have none", !["lead_backing", "take_1", ""].some(laneHasMidi));
+eq("each lane is named by its stem", MIDI_LANES.map(laneNameKey), MIDI_LANES.map((l) => "stem." + l));
 
 eq("a lane's setting defaults to auto", laneChoice({}, "piano"), "auto");
 eq("no settings answer is auto", laneChoice(null, "bass"), "auto");
@@ -97,6 +107,8 @@ eq("off is read", laneChoice({ transcribe_bass: "off" }, "bass"), "off");
 eq("an unknown value is auto", laneChoice({ transcribe_piano: "maybe" }, "piano"), "auto");
 eq("the piano field is transcribe_piano", SETTING_FIELDS.piano, "transcribe_piano");
 eq("the bass field is transcribe_bass", SETTING_FIELDS.bass, "transcribe_bass");
+eq("each lane's field", MIDI_LANES.map((l) => SETTING_FIELDS[l]), MIDI_LANES.map((l) => "transcribe_" + l));
+eq("each lane's engine field", MIDI_LANES.map((l) => ENGINE_FIELDS[l]), MIDI_LANES.map((l) => "transcribe_" + l + "_engine"));
 eq("detail defaults to balanced", detailChoice({}), "balanced");
 eq("detail reads clean", detailChoice({ transcribe_detail: "clean" }), "clean");
 eq("an unknown detail is balanced", detailChoice({ transcribe_detail: "loud" }), "balanced");
@@ -136,54 +148,91 @@ eq("the longest song in minutes", maxMinutes(STATUS_OK), 20);
 eq("an odd number of seconds rounds down", maxMinutes(status({ max_seconds: 1500 })), 25);
 eq("no status is 20 minutes", maxMinutes(null), 20);
 
-// ─── The Keys engine ───
+// ─── Each lane's engine ───
 
-const HR = { id: "piano_hr", label: "ByteDance Piano Transcription", version: "0.0.6", licence: "MIT", model_licence: "CC BY 4.0", stems: ["piano"], available: true, reason: null, model: "not_downloaded", download_bytes: 171_966_578 };
-const BP = { id: "basic_pitch", label: "Basic Pitch", version: "0.4.0", licence: "Apache-2.0", model_licence: "Apache-2.0", stems: ["piano", "bass"], available: true, reason: null, model: "built_in", download_bytes: null };
-const TWO = status({ engines: [BP, HR] });
+const HR = { id: "piano_hr", label: "ByteDance Piano Transcription", version: "0.0.6", licence: "MIT", model_licence: "CC BY 4.0", stems: ["piano"], available: true, reason: null, model: "not_downloaded", download_bytes: 171_966_578, disk_bytes: 171_966_578, device: "cpu", seconds_per_minute: null, uses_detail: true };
+const BP = { id: "basic_pitch", label: "Basic Pitch", version: "0.4.0", licence: "Apache-2.0", model_licence: "Apache-2.0", stems: ["vocals", "bass", "guitar", "piano", "other"], available: true, reason: null, model: "built_in", download_bytes: null, disk_bytes: null, device: "cpu", seconds_per_minute: null, uses_detail: true };
+const YM = { id: "ymt3", label: "YourMT3+", version: "5e66c1e", licence: "Apache-2.0", model_licence: "Apache-2.0", stems: ["drums", "bass", "guitar", "piano", "other"], available: true, reason: null, model: "not_downloaded", download_bytes: 561_544_628, disk_bytes: 188_412_704, device: "cpu", seconds_per_minute: { cuda: 12, cpu: 69 }, uses_detail: false };
+const STEM_ENGINES = { vocals: ["basic_pitch"], drums: ["ymt3"], bass: ["basic_pitch", "ymt3"], guitar: ["basic_pitch", "ymt3"], piano: ["basic_pitch", "piano_hr", "ymt3"], other: ["basic_pitch", "ymt3"] };
+const DEFAULTS = { vocals: "basic_pitch", drums: "ymt3", bass: "ymt3", guitar: "basic_pitch", piano: "ymt3", other: "ymt3" };
+const ALL = status({ engines: [BP, HR, YM], stem_engines: STEM_ENGINES, default_engines: DEFAULTS });
 const MB = (b) => `${Math.round(b / 1e6)} MB`;
 const HR_SET = { transcribe_piano_engine: "piano_hr" };
-const noteText = (note) => t(note.key, note.vars);
-eq("the engines in order", [...PIANO_ENGINES], ["basic_pitch", "piano_hr"]);
-eq("the field", PIANO_ENGINE_FIELD, "transcribe_piano_engine");
-eq("the Keys engine defaults to Basic Pitch", pianoEngineChoice({}), "basic_pitch");
-eq("piano_hr is read", pianoEngineChoice(HR_SET), "piano_hr");
-eq("an unknown engine is Basic Pitch", pianoEngineChoice({ transcribe_piano_engine: "auto" }), "basic_pitch");
-eq("the piano lane takes the Keys engine", laneEngine(HR_SET, "piano"), "piano_hr");
-eq("the bass lane is always Basic Pitch", laneEngine(HR_SET, "bass"), "basic_pitch");
-eq("an engine patch posts its field", settingsPatch(PIANO_ENGINE_FIELD, "piano_hr"), HR_SET);
-eq("a bad engine is never posted", settingsPatch(PIANO_ENGINE_FIELD, "auto"), null);
-eq("the engine field is a transcription field", transcriptionFields({ ...HR_SET, port: 1 }), HR_SET);
-eq("one engine by id", engineOf(TWO, "piano_hr").label, "ByteDance Piano Transcription");
-check("an engine that can run is ready", engineReady(TWO, "piano_hr"));
-check("one that cannot is not", !engineReady(status({ engines: [BP, { ...HR, available: false }] }), "piano_hr"));
-check("nothing is ready when transcription cannot run", !engineReady(status({ available: false, engines: [BP, HR] }), "basic_pitch"));
-check("an older server's one engine is ready", engineReady(STATUS_OK, "basic_pitch"));
-eq("both engine lines, with the model's licence where it differs", engineLine(TWO, t),
-  "Engine: Basic Pitch 0.4.0, licence Apache-2.0. Engine: ByteDance Piano Transcription 0.0.6, licence MIT, model licence CC BY 4.0.");
-eq("Basic Pitch: no note under the Keys engine", pianoEngineNote(TWO, {}, MB), null);
-eq("piano_hr not downloaded: when it downloads", noteText(pianoEngineNote(TWO, HR_SET, MB)),
-  "Its model (172 MB) downloads the first time you transcribe the Piano lane, then stays on this computer.");
-eq("a partial download reads as not downloaded", pianoEngineNote(status({ engines: [BP, { ...HR, model: "partial" }] }), HR_SET, MB).key, "settings.midi.pianoEngine.model.notDownloaded");
-eq("downloaded: its size", noteText(pianoEngineNote(status({ engines: [BP, { ...HR, model: "downloaded" }] }), HR_SET, MB)), "Its model is on this computer (172 MB).");
-eq("cannot run here: says so", pianoEngineNote(status({ engines: [BP, { ...HR, available: false }] }), HR_SET, MB).key, "settings.midi.pianoEngine.unavailable");
-eq("an older server without it: cannot run here", pianoEngineNote(STATUS_OK, HR_SET, MB).key, "settings.midi.pianoEngine.unavailable");
-eq("no status yet: nothing", pianoEngineNote(null, HR_SET, MB), null);
-const hrOff = status({ engines: [BP, { ...HR, available: false }] });
-const offHr = chipState({ lane: "piano", settings: HR_SET, status: hrOff, job: job(null) });
-eq("the piano chip is off when its engine cannot run", [offHr.show, offHr.off, offHr.reasonKey], [true, true, "settings.midi.pianoEngine.unavailable"]);
-const bassOn = chipState({ lane: "bass", settings: HR_SET, status: hrOff, job: job(null) });
-eq("the bass chip is not", [bassOn.show, bassOn.off], [true, false]);
-const oldServer = chipState({ lane: "piano", settings: HR_SET, status: STATUS_OK, job: job(null) });
-eq("an older server: the piano chip follows transcription itself", [oldServer.show, oldServer.off], [true, false]);
+eq("the engines in order", [...ENGINES], ["basic_pitch", "piano_hr", "ymt3"]);
+eq("this release's lane engines match the server's", LANE_ENGINES, STEM_ENGINES);
+eq("and its defaults", DEFAULT_ENGINES, DEFAULTS);
+eq("a lane's engines come from the status", laneEngines(status({ stem_engines: { bass: ["ymt3", "mine_2"] } }), "bass"), ["ymt3", "mine_2"]);
+eq("without a status, this release's", laneEngines(null, "drums"), ["ymt3"]);
+eq("a status's bad ids are left out", laneEngines(status({ stem_engines: { bass: ["Bad Id", "ymt3"] } }), "bass"), ["ymt3"]);
+eq("the default comes from the status", defaultEngine(status({ default_engines: { guitar: "ymt3" } }), "guitar"), "ymt3");
+eq("a default the lane cannot take is this release's", defaultEngine(status({ default_engines: { vocals: "ymt3" } }), "vocals"), "basic_pitch");
+eq("each lane's engine with nothing set", MIDI_LANES.map((l) => laneEngine({}, l, ALL)), MIDI_LANES.map((l) => DEFAULTS[l]));
+eq("the piano's setting is read", laneEngine(HR_SET, "piano", ALL), "piano_hr");
+eq("an engine the lane cannot take reads as its default", laneEngine({ transcribe_drums_engine: "basic_pitch" }, "drums", ALL), "ymt3");
+eq("an engine patch posts its field", settingsPatch(ENGINE_FIELDS.piano, "piano_hr", ALL), HR_SET);
+eq("an engine the lane cannot take is never posted", settingsPatch(ENGINE_FIELDS.bass, "piano_hr", ALL), null);
+eq("nor one the status does not list", settingsPatch(ENGINE_FIELDS.vocals, "ymt3", ALL), null);
+eq("an engine field is a transcription field", transcriptionFields({ ...HR_SET, port: 1 }), HR_SET);
+eq("one engine by id", engineOf(ALL, "piano_hr").label, "ByteDance Piano Transcription");
+eq("an engine's name", engineName(ALL, "ymt3", t), "YourMT3+");
+eq("a name the page does not know is the status's label", engineName(status({ engines: [{ id: "mine", label: "My model" }] }), "mine", t), "My model");
+check("an engine that can run is ready", engineReady(ALL, "ymt3"));
+check("one that cannot is not", !engineReady(status({ engines: [BP, { ...YM, available: false }] }), "ymt3"));
+check("nothing is ready when transcription cannot run", !engineReady(status({ available: false, engines: [BP, YM] }), "basic_pitch"));
+check("an engine the status does not list is not ready", !engineReady(STATUS_OK, "ymt3"));
+check("YourMT3+ has no Detail", !usesDetail(ALL, "ymt3") && usesDetail(ALL, "basic_pitch"));
+check("an engine the status does not describe uses Detail", usesDetail(null, "basic_pitch"));
+eq("every engine line, with the model's licence where it differs", engineLine(ALL, t),
+  "Engine: Basic Pitch 0.4.0, licence Apache-2.0. Engine: ByteDance Piano Transcription 0.0.6, licence MIT, model licence CC BY 4.0. Engine: YourMT3+ 5e66c1e, licence Apache-2.0.");
+
+const noteTexts = (st, settings, lane) => engineNotes(st, settings, lane, t, MB).map((n) => t(n.key, n.vars));
+eq("Basic Pitch: nothing to say", noteTexts(ALL, {}, "vocals"), []);
+eq("YourMT3+ before its first run on a computer without a GPU: its download and its speed", noteTexts(ALL, {}, "drums"), [
+  "The first time, YourMT3+ downloads its model (562 MB) and then keeps it on this computer.",
+  "On this computer it runs on the processor, which is slow: about 69 seconds of work per minute of song, so a 4 minute song takes about 5 minutes.",
+]);
+const onGpu = status({ ...ALL, engines: [BP, HR, { ...YM, device: "cuda", model: "downloaded" }] });
+eq("downloaded, on a GPU: what it keeps and its speed", noteTexts(onGpu, {}, "piano"), [
+  "The model of YourMT3+ is on this computer (188 MB).",
+  "On this computer it runs on the graphics card: about 12 seconds of work per minute of song.",
+]);
+eq("a partial download reads as not downloaded", engineNotes(status({ ...ALL, engines: [BP, HR, { ...YM, model: "partial" }] }), {}, "bass", t, MB)[0].key, "settings.midi.engineModel.notDownloaded");
+eq("piano_hr: its download, no speed measured", noteTexts(ALL, HR_SET, "piano"), ["The first time, ByteDance Piano Transcription downloads its model (172 MB) and then keeps it on this computer."]);
+eq("cannot run here: says so, and nothing else", noteTexts(status({ ...ALL, engines: [BP, HR, { ...YM, available: false }] }), {}, "other"), ["YourMT3+ cannot run on this computer."]);
+eq("no status yet: nothing", engineNotes(null, {}, "drums", t, MB), []);
+eq("the notes as one line", engineNoteText(onGpu, {}, "piano", t, MB), "The model of YourMT3+ is on this computer (188 MB). On this computer it runs on the graphics card: about 12 seconds of work per minute of song.");
+check("a first YourMT3+ run downloads", needsDownload(ALL, {}, "drums"));
+check("Basic Pitch never does", !needsDownload(ALL, {}, "vocals"));
+check("a downloaded model does not", !needsDownload(onGpu, {}, "piano"));
+eq("the row warns of the download and the processor's speed before a first run", rowNoteText(ALL, {}, "drums", t, MB),
+  "The first time, YourMT3+ downloads its model (562 MB) and then keeps it on this computer. On this computer it runs on the processor, which is slow: about 69 seconds of work per minute of song, so a 4 minute song takes about 5 minutes.");
+eq("and says nothing once the model is here on a GPU", rowNoteText(onGpu, {}, "piano", t, MB), "");
+eq("and nothing for Basic Pitch", rowNoteText(ALL, {}, "vocals", t, MB), "");
+
+const ymOff = status({ ...ALL, engines: [BP, HR, { ...YM, available: false }] });
+const offDrums = chipState({ lane: "drums", settings: {}, status: ymOff, job: job(null) });
+eq("the drums chip is off when its engine cannot run", [offDrums.show, offDrums.off, offDrums.reasonKey, offDrums.engine], [true, true, "laneMidi.engineUnavailable", "ymt3"]);
+eq("and its tooltip names the engine and the lane", chipLabel(null, { name: "Drums", off: true, reasonKey: offDrums.reasonKey, engine: offDrums.engine }, t),
+  "YourMT3+ cannot run on this computer, so Drums cannot be transcribed with it.");
+const vocalsOn = chipState({ lane: "vocals", settings: {}, status: ymOff, job: job(null) });
+eq("the vocals chip, on Basic Pitch, is not", [vocalsOn.show, vocalsOn.off], [true, false]);
+const unlisted = chipState({ lane: "drums", settings: {}, status: STATUS_OK, job: job(null) });
+eq("an engine the server does not list: shown, off", [unlisted.show, unlisted.off], [true, true]);
 const downloading = midiOf(job({ piano: M({ state: "running", pct: 40, phase: "download", has_file: false }) }), "piano");
 eq("a running download is its phase", downloading.phase, "download");
+eq("making the weights is its phase", midiOf(job({ piano: M({ state: "running", phase: "prepare", has_file: false }) }), "piano").phase, "prepare");
 eq("a run without a phase transcribes", midiOf(job({ piano: M({ state: "running", has_file: false }) }), "piano").phase, "transcribe");
 eq("a finished run has none", midiOf(job({ piano: M() }), "piano").phase, null);
 const dlView = rowView(downloading, { name: "Piano" }, t, plural);
 eq("the row says the model downloads, with its percent", [dlView.status.text, dlView.pct, dlView.run],
-  ["Downloading the piano model. This happens only the first time.", 40, true]);
-eq("a failed download has its sentence", t(errorKey("download")), "The piano model could not be downloaded. Check the internet connection and try again.");
+  ["Downloading the transcription model. This happens only the first time.", 40, true]);
+const prepView = rowView(midiOf(job({ piano: M({ state: "running", phase: "prepare", has_file: false }) }), "piano"), { name: "Piano" }, t, plural);
+eq("and that it is prepared", prepView.status.text, "Preparing the transcription model. This happens only the first time.");
+eq("a failed download has its sentence", t(errorKey("download")), "The transcription model could not be downloaded. Check the internet connection and try again.");
+eq("a failed preparation has its sentence", t(errorKey("prepare")), "The transcription model could not be prepared from its download. Try again.");
+const first = rowView(null, { name: "Drums", firstRun: "The first time, YourMT3+ downloads its model (562 MB)." }, t, plural);
+eq("an idle row says the first run's download after what it does", first.status.text, "Turns Drums into MIDI notes that a music program can open. The first time, YourMT3+ downloads its model (562 MB).");
+eq("a YourMT3+ file's hint has no Detail", rowView(M({ engine: "ymt3" }), { name: "Piano", detail: false }, t, plural).hint, "Timed to the song's tempo.");
 
 // ─── A lane's state ───
 
@@ -213,16 +262,16 @@ check("no job is not done", !songDone(null));
 // ─── When the chip shows ───
 
 const chip = (over = {}) => chipState({ lane: "bass", settings: {}, status: STATUS_OK, job: job(null), ...over });
-eq("auto, done song, engine here: shown", chip(), { show: true, off: false, reasonKey: "" });
+eq("auto, done song, engine here: shown", chip({ status: ALL }), { show: true, off: false, reasonKey: "", engine: "ymt3" });
 eq("off in Settings: hidden", chip({ settings: { transcribe_bass: "off" } }).show, false);
 eq("the other lane's off does not hide it", chip({ settings: { transcribe_piano: "off" } }).show, true);
 eq("a song still separating: hidden", chip({ job: job(null, { status: "running" }) }).show, false);
 eq("no song read yet: hidden", chip({ job: null }).show, false);
 eq("no transcription on the server: hidden", chip({ status: null }).show, false);
-eq("vocals never has one", chip({ lane: "vocals" }).show, false);
+eq("a lead and backing split never has one", chip({ lane: "lead_backing" }).show, false);
 eq("the engine cannot run: shown, off, with the reason",
   chip({ status: status({ available: false, reason: "unsupported_platform" }) }),
-  { show: true, off: true, reasonKey: "settings.midi.reason.unsupported_platform" });
+  { show: true, off: true, reasonKey: "settings.midi.reason.unsupported_platform", engine: "ymt3" });
 
 eq("no state, no mark", chipMark(null), "");
 eq("running: the percent", chipMark(M({ state: "running", has_file: false })), "run");
@@ -245,6 +294,7 @@ const shown = (v) => Object.entries(v.buttons).filter(([, b]) => b.show).map(([k
 let v = view(null);
 eq("idle offers Transcribe only", shown(v), ["transcribe"]);
 eq("idle says what it does", v.status, { kind: "idle", text: "Turns Bass into MIDI notes that a music program can open." });
+eq("with nothing to warn of, that alone", view(null, { firstRun: "" }).status.text, "Turns Bass into MIDI notes that a music program can open.");
 eq("idle has no progress", v.run, false);
 eq("idle has no hint", v.hint, "");
 

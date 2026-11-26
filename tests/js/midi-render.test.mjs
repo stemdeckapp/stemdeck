@@ -5,7 +5,7 @@
 //
 // Run:  node tests/js/midi-render.test.mjs
 
-import { envelope, fitLevel, lowpassInPlace, renderVoice } from "../../static/js/midiRender.js";
+import { drumSound, envelope, fitLevel, lowpassInPlace, renderDrums, renderVoice } from "../../static/js/midiRender.js";
 import { levelOf, levelScale, voiceFor } from "../../static/js/midiNotesView.js";
 
 let pass = 0,
@@ -99,6 +99,27 @@ check("never more than 4", levelScale(0.001, 1, 0.01) === 4);
 check("never under 0.05", levelScale(1, 0.0001, 1) === 0.05);
 const lv = levelOf(new Float32Array([0.5, -0.5, 0.5, -0.5]), 1);
 check("levelOf gives RMS and peak", Math.abs(lv.rms - 0.5) < 1e-9 && lv.peak === 0.5);
+
+// ─── The drums ───
+
+{
+  const drums = voiceFor("drums");
+  const hits = [[0.5, 0.51, 36, 127], [1.0, 1.01, 38, 127], [1.5, 1.51, 42, 127], [2.0, 2.01, 49, 127]];
+  const out = await renderVoice(hits, drums, { duration: 4, rate: RATE });
+  const again = await renderDrums(hits, drums, { duration: 4, rate: RATE });
+  check("the drums are rendered as drum sounds", out.length >= 4 * RATE);
+  check("the same hits always sound the same", out.every((x, i) => x === again[i]));
+  check("silent before the first hit", rms(out, 0, Math.floor(0.49 * RATE)) === 0);
+  check("each hit sounds at its time", [0.5, 1.0, 1.5, 2.0].every((s) => rms(out, Math.floor(s * RATE), Math.floor((s + 0.02) * RATE)) > 0.01));
+  const kick = hzByLag(out, Math.floor(0.56 * RATE), Math.floor(0.66 * RATE), 30, 200);
+  check("the kick is low (under 100 Hz once it has fallen)", kick > 30 && kick < 100, String(kick));
+  check("a closed hi-hat is short, a cymbal rings", drumSound(42).decay < 0.05 && drumSound(49).decay > 0.3);
+  check("an open hi-hat rings longer than a closed one", drumSound(46).decay > drumSound(42).decay);
+  check("toms go up with their note", drumSound(50).body.to > drumSound(41).body.to);
+  let peak = 0;
+  for (const x of out) peak = Math.max(peak, Math.abs(x));
+  check("four full hits stay under clipping", peak < 1, String(peak));
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

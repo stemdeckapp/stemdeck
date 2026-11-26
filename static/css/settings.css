@@ -340,6 +340,19 @@
 .transcription-unavailable { margin: 8px 0 0; color: var(--danger); }
 .transcription-detail-desc { margin: 4px 0 0; }
 .transcription-detail-desc.is-current { color: var(--fg-2); }
+.transcription-detail-not-for { margin: 8px 0 0; }
+/* A lane's row: its Auto or Off beside its engine; under the text, what the
+   engine needs said before it runs (its download, its speed here). */
+.transcription-lane-controls { display: flex; flex: 0 0 auto; gap: 10px; align-items: center; }
+/* Two selects beside the text leave it too narrow in a small window: below
+   280px of text they go under it instead. */
+.settings-row.transcription-lane { flex-wrap: wrap; row-gap: 12px; }
+.transcription-lane > .settings-row-text { flex: 1 1 280px; }
+@media (max-width: 560px) {
+  .transcription-lane-controls { flex-wrap: wrap; }
+  .transcription-lane-controls > .settings-select { flex: 1 1 140px; }
+}
+.transcription-engine-note { margin: 6px 0 0; color: var(--fg-2); }
 .transcription-msg { padding: 0 0 18px; font-size: 13px; line-height: 1.45; color: var(--muted); }
 .transcription-msg:empty { display: none; }
 .transcription-msg.error { color: var(--danger); }

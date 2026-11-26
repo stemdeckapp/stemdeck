@@ -560,6 +560,37 @@
 }
 .midi-roll rect { fill: var(--stem-color); }
 body.help-mode .midi-roll { pointer-events: auto; }
+/* The Drums lane's row names (Kick, Snare, ...), at the left of the lane,
+   each beside its row of hits. */
+.midi-roll-labels {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  pointer-events: none;
+}
+.midi-roll-label {
+  position: absolute;
+  left: 4px;
+  display: flex;
+  align-items: center;
+  font-size: 9px;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--fg);
+}
+/* A dark backing behind each name, so it reads over the hits. */
+.midi-roll-label::before {
+  content: "";
+  position: absolute;
+  inset: 50% -3px auto -3px;
+  height: min(100%, 11px);
+  transform: translateY(-50%);
+  border-radius: 2px;
+  background: var(--bg);
+  opacity: 0.75;
+  z-index: -1;
+}
+.midi-roll-labels { z-index: 1; }
 .stem-waveform-row.midi-view > .stem-waveform-svg rect { opacity: 0.3; filter: none; }
 
 .stem-waveform-svg path,

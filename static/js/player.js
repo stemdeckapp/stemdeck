@@ -2321,8 +2321,8 @@ function _stemsZipRequest(format, reaper) {
   // before them for a count-in to go.
   _clickParams(q);
   if (reaper) q.set("reaper", "1");
-  // Include MIDI in the Export menu: the .mid files of the Piano and Bass
-  // lanes go in the zip too, shown only while the song has one (laneMidiRows.js).
+  // Include MIDI in the Export menu: the .mid files of every lane that has
+  // one go in the zip too, shown only while the song has one (laneMidiRows.js).
   if (exportMidiWanted(currentJobId)) q.set("midi", "1");
   return { url: `/api/jobs/${currentJobId}/stems/all.zip?${q}`, filename };
 }

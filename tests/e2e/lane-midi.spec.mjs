@@ -1,4 +1,4 @@
-// The MIDI chip on the Bass lane and its row (static/js/laneMidiRows.js,
+// The MIDI chip on every lane and its row (static/js/laneMidiRows.js,
 // Advanced mode), and the Export menu's Include MIDI, on the real backend with
 // the transcription routes answered here.
 //
@@ -6,10 +6,12 @@
 // the Transcription fields of GET /api/settings, POST .../midi, its cancel and
 // DELETE are answered by a small fake that also rewrites what
 // GET /api/jobs/<fixture> says (`midi`). Nothing writes to the shared backend.
-// The fixture song has no Piano stem, so only the Bass lane is driven here;
-// the rules for both lanes are pinned in tests/js/lane-midi-view.test.mjs.
+// The fixture song has Vocals, Drums, Bass and Other: the Bass lane (Basic
+// Pitch here) is driven through a whole run, the Drums lane (YourMT3+) for
+// its named rows and what it says before its first run; the rules for every
+// lane are pinned in tests/js/lane-midi-view.test.mjs.
 //
-// 1. The chip sits under the Model chip on Bass only, and adding it changes
+// 1. The chip sits under the Model chip on every lane, and adding it changes
 //    no lane row's height and no column's place (measured before and after).
 // 2. Transcribe sends the stem, shows the percent and Cancel, then the note
 //    count, a Download link with the .mid URL and the song's name, Re-run
@@ -24,16 +26,36 @@
 //    midi=1 to the stems zip when ticked.
 // 10. The Guide explains the chip and the row's controls (help-mode.spec
 //     covers Include MIDI and the Transcription tab).
+// 11. The Drums lane's roll names its rows (Kick, Snare, Hi-hat).
+// 12. Before YourMT3+'s first run, the row says its download and its speed.
 
 import { test, expect } from "@playwright/test";
 import { openStudio, exportUi, JOB_ID } from "./helpers.mjs";
 
 test.use({ viewport: { width: 1600, height: 900 } });
 
-const STATUS = {
-  available: true, reason: null, stems: ["piano", "bass"], max_seconds: 1200, details: ["balanced", "detailed", "clean"],
-  engines: [{ id: "basic_pitch", label: "Basic Pitch", version: "0.4.0", licence: "Apache-2.0" }],
+const LANES = ["vocals", "drums", "bass", "guitar", "piano", "other"];
+const YM = {
+  id: "ymt3", label: "YourMT3+", version: "5e66c1e", licence: "Apache-2.0", available: true, model: "downloaded",
+  download_bytes: 561_544_628, disk_bytes: 188_412_704, device: "cuda", seconds_per_minute: { cuda: 12, cpu: 69 }, uses_detail: false,
 };
+const STATUS = {
+  available: true, reason: null, stems: LANES, max_seconds: 1200, details: ["balanced", "detailed", "clean"],
+  engines: [{ id: "basic_pitch", label: "Basic Pitch", version: "0.4.0", licence: "Apache-2.0", available: true, model: "built_in" }, YM],
+  stem_engines: {
+    vocals: ["basic_pitch"], drums: ["ymt3"], bass: ["basic_pitch", "ymt3"], guitar: ["basic_pitch", "ymt3"],
+    piano: ["basic_pitch", "ymt3"], other: ["basic_pitch", "ymt3"],
+  },
+  default_engines: { vocals: "basic_pitch", drums: "ymt3", bass: "ymt3", guitar: "basic_pitch", piano: "ymt3", other: "ymt3" },
+};
+// Every lane on, the Bass lane on Basic Pitch, the others on their defaults.
+const SETTINGS = {
+  transcribe_detail: "balanced",
+  ...Object.fromEntries(LANES.map((l) => [`transcribe_${l}`, "auto"])),
+  ...Object.fromEntries(LANES.map((l) => [`transcribe_${l}_engine`, STATUS.default_engines[l]])),
+  transcribe_bass_engine: "basic_pitch",
+};
+const LANE_RE = LANES.join("|");
 const DONE = {
   state: "done", pct: 100, notes: 312, engine: "basic_pitch", detail: "balanced", tempo_source: "song",
   at: "2026-11-25T10:00:00Z", error_code: null, has_file: true,
@@ -47,10 +69,12 @@ const DONE = {
 async function stubServer(page, { midi = {}, settings = {}, status = STATUS, refuse = null } = {}) {
   const state = {
     midi: { ...midi },
-    settings: { transcribe_piano: "auto", transcribe_bass: "auto", transcribe_detail: "balanced", ...settings },
+    settings: { ...SETTINGS, ...settings },
     calls: [],
     // Inside the 6 s fixture song: three bass notes.
     notes: [[1, 1.5, 40, 127], [2, 3, 45, 64], [4, 4.5, 52, 100]],
+    // And the drums: kicks, a snare and a hi-hat, General MIDI percussion.
+    drumNotes: [[0.5, 0.51, 36, 120], [1, 1.01, 42, 80], [1.5, 1.51, 38, 110], [2, 2.01, 36, 120]],
   };
   await page.route("**/api/transcribe/status", (route) => route.fulfill({ json: status }));
   await page.route("**/api/settings", async (route) => {
@@ -72,7 +96,7 @@ async function stubServer(page, { midi = {}, settings = {}, status = STATUS, ref
     const res = await route.fetch();
     return route.fulfill({ response: res, json: { ...(await res.json()), midi: state.midi } });
   });
-  await page.route(new RegExp(`/api/jobs/${JOB_ID}/midi(/(piano|bass)(/cancel)?)?$`), async (route) => {
+  await page.route(new RegExp(`/api/jobs/${JOB_ID}/midi(/(${LANE_RE})(/cancel)?)?$`), async (route) => {
     const req = route.request();
     const path = new URL(req.url()).pathname;
     const body = req.postData() ? JSON.parse(req.postData()) : null;
@@ -92,13 +116,14 @@ async function stubServer(page, { midi = {}, settings = {}, status = STATUS, ref
     state.midi[body.stem] = { ...DONE, ...prev, state: "running", pct: 42, notes: null, has_file: prev.has_file === true, error_code: null };
     return route.fulfill({ status: 202, json: { state: "running" } });
   });
-  await page.route(new RegExp(`/api/jobs/${JOB_ID}/stems/(piano|bass)\\.mid`), (route) =>
+  await page.route(new RegExp(`/api/jobs/${JOB_ID}/stems/(${LANE_RE})\\.mid`), (route) =>
     route.fulfill({ status: 200, contentType: "audio/midi", body: Buffer.from("MThd") }));
   // The notes of the file, for the piano roll and the MIDI sound.
-  await page.route(new RegExp(`/api/jobs/${JOB_ID}/midi/(piano|bass)/notes`), (route) => {
+  await page.route(new RegExp(`/api/jobs/${JOB_ID}/midi/(${LANE_RE})/notes`), (route) => {
     const stem = new URL(route.request().url()).pathname.split("/")[5];
     if (!state.midi[stem]?.has_file) return route.fulfill({ status: 404, json: { detail: "no", code: "no_midi" } });
-    return route.fulfill({ json: { notes: state.notes, bpm: 120, tempo_source: "song" } });
+    const notes = stem === "drums" ? state.drumNotes : state.notes;
+    return route.fulfill({ json: { notes, bpm: 120, tempo_source: "song" } });
   });
   return state;
 }
@@ -145,19 +170,20 @@ const announce = (page, detail) => page.evaluate((d) => {
   document.dispatchEvent(new CustomEvent("stemdeck:settings-applied", { detail: d }));
 }, detail);
 
-test("the chip sits under the Model chip on Bass only, and moves nothing", async ({ page }) => {
-  await stubServer(page, { settings: { transcribe_bass: "off" } });
+test("the chip sits under the Model chip on every lane, and moves nothing", async ({ page }) => {
+  const off = Object.fromEntries(LANES.map((l) => [`transcribe_${l}`, "off"]));
+  await stubServer(page, { settings: off });
   await openStudio(page);
   await expect(page.locator(".midi-tab")).toHaveCount(0);
   const before = await measure(page);
-  await announce(page, { transcribe_bass: "auto" });
+  await announce(page, Object.fromEntries(LANES.map((l) => [`transcribe_${l}`, "auto"])));
   await expect(chip(page, "bass")).toBeVisible();
   const after = await measure(page);
   expect(after.rows, "lane header rows").toEqual(before.rows);
   expect(after.waves, "waveform rows").toEqual(before.waves);
   expect(after.cols, "the bass header's columns").toEqual(before.cols);
-  // Bass only: the other lanes have no chip.
-  for (const lane of ["vocals", "drums", "other"]) await expect(chip(page, lane)).toHaveCount(0);
+  // Every lane the fixture song has: Vocals, Drums, Bass and Other.
+  for (const lane of ["vocals", "drums", "other"]) await expect(chip(page, lane)).toHaveCount(1);
   // Two notes, drawn in the rail's line style, not a word.
   await expect(chip(page, "bass").locator(".midi-tab-face svg")).toHaveCount(1);
   await expect(chip(page, "bass")).toHaveAttribute("aria-label", "MIDI from Bass");
@@ -271,10 +297,10 @@ test("Off in Settings hides the chip at once", async ({ page }) => {
   await expect(chip(page, "bass")).toBeVisible();
   await page.locator("#settingsBtn").click();
   await page.locator('.settings-tab[data-tab="transcription"]').click();
-  await page.locator(".set-transcribe-bass").selectOption("off");
+  await page.locator('select[data-field="transcribe_bass"]').selectOption("off");
   await expect.poll(() => server.calls.find((c) => c.path === "/api/settings")?.body).toEqual({ transcribe_bass: "off" });
   await expect(chip(page, "bass")).toHaveCount(0);
-  await page.locator(".set-transcribe-bass").selectOption("auto");
+  await page.locator('select[data-field="transcribe_bass"]').selectOption("auto");
   await expect(chip(page, "bass")).toHaveCount(1);
 });
 
@@ -496,4 +522,29 @@ test("the Guide explains the icon, the source switch, the roll and the download 
     await expect(tip).toBeVisible();
     await expect(tip).toContainText(words);
   }
+});
+
+test("the Drums lane's roll names its rows", async ({ page }) => {
+  await stubServer(page, { midi: { drums: { ...DONE, engine: "ymt3", notes: 4 } } });
+  await openStudio(page);
+  await chip(page, "drums").click();
+  await expect(mixRow(page, "drums")).toBeVisible();
+  const wave = page.locator('.stem-waveform-layer > .stem-waveform-row[data-stem="drums"]');
+  await expect(wave.locator("svg.midi-roll")).toHaveCount(1);
+  await expect(wave.locator("svg.midi-roll")).toHaveAttribute("aria-label", "Drum hits of Drums");
+  // A row per kind of drum the file has, top to bottom: hi-hat, snare, kick.
+  await expect(wave.locator(".midi-roll-label")).toHaveText(["Hi-hat", "Snare", "Kick"]);
+  // A YourMT3+ file has no Detail: the hint says the tempo only.
+  await expect(waveRow(page, "drums").locator(".midi-hint")).toHaveText("Timed to the song's tempo.");
+});
+
+test("before YourMT3+'s first run the row says its download and its speed here", async ({ page }) => {
+  const firstRun = { ...STATUS, engines: [STATUS.engines[0], { ...YM, model: "not_downloaded", device: "cpu" }] };
+  await stubServer(page, { status: firstRun });
+  await openStudio(page);
+  await openMidiRow(page, "drums");
+  const status = waveRow(page, "drums").locator(".midi-status");
+  await expect(status).toContainText("Turns Drums into MIDI notes that a music program can open.");
+  await expect(status).toContainText("The first time, YourMT3+ downloads its model (562 MB) and then keeps it on this computer.");
+  await expect(status).toContainText("On this computer it runs on the processor, which is slow");
 });

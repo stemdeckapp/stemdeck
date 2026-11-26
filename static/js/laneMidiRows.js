@@ -1,4 +1,4 @@
-// The MIDI chip on the Piano and Bass lanes and the MIDI row it opens
+// The MIDI chip on every lane and the MIDI row it opens
 // (Advanced mode only), and the Export menu's Include MIDI. The piano roll,
 // the lane's source switch and the download button's choices are in
 // laneMidiPlay.js, called from here.
@@ -35,14 +35,15 @@
 import { getMode } from "./mode.js";
 import { STEM_COLORS, STEM_DISPLAY } from "./constants.js";
 import { mixerEl } from "./state.js";
-import { t, plural, onLanguageChange } from "./i18n.js";
+import { t, plural, onLanguageChange, getLanguage } from "./i18n.js";
 import { openKey, parseOpenStore, withOpenChoice } from "./eq/eqPanelKinds.js";
 import {
   EXPORT_MIDI_STORE_KEY, POLL_FAIL_LIMIT, POLL_MS, REMOVE_ARM_MS,
   anyRunning, chipLabel, chipMark, chipState, hasFinishedMidi, hasTranscriptionFields, isStatus,
   laneHasMidi, maxMinutes, midiFilename, midiOf, midiUrl, parseExportMidi, progressText, refusalNote,
-  rowView, transcriptionFields, zipWantsMidi,
+  rowNoteText, rowView, transcriptionFields, usesDetail, zipWantsMidi,
 } from "./laneMidiView.js";
+import { formatSize } from "./myModelsView.js";
 import {
   buildSourceSwitch, checkEngine, paintDownloads, paintSourceSwitch, setPlayContext, soundNote, syncRolls,
 } from "./laneMidiPlay.js";
@@ -482,7 +483,7 @@ function paintTab(tab, lane) {
   tab.setAttribute("aria-expanded", String(open));
   if (open) tab.setAttribute("aria-controls", `midi-panel-${lane}`);
   else tab.removeAttribute("aria-controls");
-  const label = chipLabel(m, { name: displayName(lane), off: chip.off, reasonKey: chip.reasonKey }, t);
+  const label = chipLabel(m, { name: displayName(lane), off: chip.off, reasonKey: chip.reasonKey, engine: chip.engine }, t);
   tab.setAttribute("aria-label", label);
   tab.title = label;
 }
@@ -590,8 +591,13 @@ function paintRow(lane) {
   const m = midiOf(_job, lane);
   const otherRunning = _lanes.some((l) => l !== lane && midiOf(_job, l)?.state === "running")
     || _job?.stem_reextract?.state === "running";
+  const locale = getLanguage();
   const v = rowView(m, {
     name, sending: _sending !== null, otherRunning, removeArmed: r.removeArmed, maxMin: maxMinutes(_status),
+    // Before a run: the model its engine downloads the first time, and how
+    // long it takes on this computer's processor.
+    firstRun: rowNoteText(_status, _settings, lane, t, (b) => formatSize(b, t, locale)),
+    detail: usesDetail(_status, m?.engine),
   }, t, plural);
   if (!v.buttons.remove.show) r.removeArmed = false;
 

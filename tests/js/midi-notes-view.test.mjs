@@ -1,4 +1,4 @@
-// Seeing, hearing and downloading a Piano or Bass lane's MIDI, the pure part
+// Seeing, hearing and downloading a lane's MIDI, the pure part
 // (static/js/midiNotesView.js): the notes answer, the piano roll's
 // rectangles, the source switch, the download choices and the synth voice.
 // tests/e2e/lane-midi.spec.mjs checks the drawing and the sound being added.
@@ -15,8 +15,14 @@ import {
   bothZipName,
   bothZipUrl,
   cleanNotes,
+  DRUM_HIT_MIN_SEC,
+  DRUM_ROWS,
   downloadChoices,
+  drumGeometry,
+  drumRow,
+  drumRowKey,
   engineSource,
+  laneGeometry,
   needsMidiSound,
   normalSource,
   pitchHz,
@@ -109,7 +115,28 @@ check("Bass is a sine and a quieter saw through a low-pass", bass.partials.map((
 check("both start fast (under 10 ms)", keys.attack < 0.01 && bass.attack < 0.01);
 check("both release short (under 0.3 s)", keys.release <= 0.3 && bass.release <= 0.3);
 check("Keys sustains lower than Bass (a piano decays)", keys.sustain < bass.sustain);
-check("an unknown lane gets the Keys voice", JSON.stringify(voiceFor("other")) === JSON.stringify(keys));
+check("an unknown lane gets the Keys voice", JSON.stringify(voiceFor("lead_backing")) === JSON.stringify(keys));
+for (const lane of ["vocals", "guitar", "other"]) {
+  const v = voiceFor(lane);
+  check(`${lane} has a voice of its own`, JSON.stringify(v) !== JSON.stringify(keys) && v.partials.length > 0);
+  check(`${lane} starts within 50 ms and releases within 0.3 s`, v.attack <= 0.05 && v.release <= 0.3);
+}
+eq("the drums are not a pitched voice", voiceFor("drums").kind, "drums");
+
+// ─── The drums' roll ───
+
+eq("the drum rows, top to bottom", [...DRUM_ROWS], ["cymbal", "hihat", "tom", "snare", "kick", "perc"]);
+eq("General MIDI kicks, snares, hats, toms and cymbals", [36, 38, 42, 46, 45, 49, 51, 56].map(drumRow), ["kick", "snare", "hihat", "hihat", "tom", "cymbal", "cymbal", "perc"]);
+eq("each row is named", DRUM_ROWS.map(drumRowKey), DRUM_ROWS.map((r) => `laneMidi.drum.${r}`));
+check("every row's name is in the English table", DRUM_ROWS.every((r) => drumRowKey(r) in TRANSLATIONS.en));
+const dg = drumGeometry([[1, 1.01, 36, 127], [1.5, 1.51, 42, 64], [2, 2.01, 38, 127], [3, 3.01, 36, 100]], 10);
+eq("only the rows the file has, in order", dg.rows.map((r) => [r.row, r.y]), [["hihat", 0], ["snare", 1], ["kick", 2]]);
+eq("one row tall each", dg.height, 3);
+eq("each hit in its row", dg.rects.map((r) => Math.floor(r.y)), [2, 0, 1, 2]);
+check("a 10 ms hit is drawn wide enough to see", dg.rects.every((r) => near(r.w, DRUM_HIT_MIN_SEC)));
+check("no hits, no roll", drumGeometry([], 10) === null);
+check("the Drums lane uses the drum rows", laneGeometry("drums", [[1, 1.01, 36, 127]], 10).rows.length === 1);
+check("any other lane uses pitch rows", !laneGeometry("bass", [[1, 2, 40, 127]], 10).rows);
 check("A4 is 440 Hz", near(pitchHz(69), 440));
 check("an octave doubles", near(pitchHz(81), 880));
 eq("velocity 127 is full", velocityGain(127), 1);

@@ -21,8 +21,9 @@ const MODELS = {
     entry("htdemucs_ft", "separation", "stems", { name: "HT Demucs fine-tuned", stems: ["vocals", "drums", "bass", "other"], state: "partial", size_bytes: 84_141_271, download_bytes: 336_565_084 }),
     entry("kim_mel_roformer", "separation", "stems", { name: "Mel-Band RoFormer (Kim)", stems: ["vocals"], download_bytes: 913_106_900, available: false }),
     entry("uvr_karaoke_2", "separation", "lead_backing", { name: "UVR-MDX-NET Karaoke 2", stems: ["lead_backing"] }),
-    entry("basic_pitch", "transcription", "midi", { name: "Basic Pitch", stems: ["piano", "bass"], license: "Apache-2.0", state: "built_in", size_bytes: 230_000 }),
+    entry("basic_pitch", "transcription", "midi", { name: "Basic Pitch", stems: ["vocals", "bass", "guitar", "piano", "other"], license: "Apache-2.0", state: "built_in", size_bytes: 230_000 }),
     entry("piano_hr", "transcription", "midi_piano", { name: "ByteDance Piano Transcription", stems: ["piano"], license: "CC BY 4.0", download_bytes: 171_966_578 }),
+    entry("ymt3", "transcription", "midi_multi", { name: "YourMT3+", stems: ["drums", "bass", "guitar", "piano", "other"], license: "Apache-2.0", download_bytes: 561_544_628 }),
     entry("whisper_turbo", "analysis", "lyrics_gpu", { name: "Whisper turbo", download_bytes: 1_617_941_637 }),
     entry("whisper_small", "analysis", "lyrics_cpu", { name: "Whisper small", state: "downloaded", size_bytes: 483_617_219 }),
     entry("beat_this", "analysis", "beats", { name: "Beat This! (final0)", license: null, state: "unknown" }),
@@ -32,7 +33,12 @@ const MODELS = {
 const STEMS5 = ["vocals", "drums", "bass", "guitar", "piano"];
 
 async function stubServer(page, { models = MODELS } = {}) {
-  const state = { plan: Object.fromEntries(STEMS5.map((s) => [s, "htdemucs_6s"])), midi: { transcribe_piano: "auto", transcribe_bass: "off" } };
+  const state = { plan: Object.fromEntries(STEMS5.map((s) => [s, "htdemucs_6s"])), midi: {
+    transcribe_vocals: "auto", transcribe_drums: "auto", transcribe_bass: "off", transcribe_guitar: "auto",
+    transcribe_piano: "auto", transcribe_other: "auto",
+    transcribe_vocals_engine: "basic_pitch", transcribe_drums_engine: "ymt3", transcribe_bass_engine: "ymt3",
+    transcribe_guitar_engine: "basic_pitch", transcribe_piano_engine: "ymt3", transcribe_other_engine: "ymt3",
+  } };
   await page.route("**/api/models", (route) =>
     models ? route.fulfill({ json: models }) : route.fulfill({ status: 404, json: { detail: "Not Found" } }));
   await page.route(/\/api\/my-models(\/.*)?$/, (route) => route.fulfill({ status: 404, json: { detail: "Not Found" } }));
@@ -78,7 +84,12 @@ test("the built-in models are grouped by purpose, each with its state and size",
   await expect(row(page, "uvr_karaoke_2").locator(".models-state")).toHaveText("Not downloaded");
   await expect(row(page, "basic_pitch").locator(".models-state")).toHaveText("Built in");
   await expect(row(page, "piano_hr").locator(".models-state")).toHaveText("Not downloaded, 172 MB to download");
-  await expect(row(page, "piano_hr").locator(".models-purpose")).toHaveText("Makes MIDI notes from the Piano lane when the Keys engine is ByteDance Piano Transcription.");
+  await expect(row(page, "piano_hr").locator(".models-purpose")).toHaveText("Makes MIDI notes from the Piano lane when ByteDance Piano Transcription is its engine.");
+  await expect(row(page, "ymt3").locator(".models-state")).toHaveText("Not downloaded, 562 MB to download");
+  await expect(row(page, "ymt3").locator(".models-purpose")).toHaveText(
+    "Makes MIDI notes from the Drums, Bass, Guitar, Piano and Other lanes when YourMT3+ is their engine, each keeping only its own instrument.",
+  );
+  await expect(row(page, "ymt3").locator(".models-licence")).toHaveText("Licence: Apache-2.0.");
   await expect(row(page, "piano_hr").locator(".models-licence")).toHaveText("Licence: CC BY 4.0.");
   await expect(row(page, "whisper_turbo").locator(".models-state")).toHaveText("Not downloaded, 1,618 MB to download");
   await expect(row(page, "beat_this").locator(".models-state")).toHaveText("Not known");
@@ -96,8 +107,10 @@ test("Used for follows the per-stem choices and the MIDI lanes", async ({ page }
   await expect(row(page, "htdemucs_6s").locator(".models-used")).toHaveText("Used for: Vocals, Drums, Bass, Guitar, and Piano.");
   await expect(row(page, "htdemucs_ft").locator(".models-used")).toHaveText("Not used for any stem now.");
   await expect(row(page, "uvr_karaoke_2").locator(".models-used")).toHaveText("Used for: Lead + Backing.");
-  await expect(row(page, "basic_pitch").locator(".models-used")).toHaveText("Used for: Keys.");
-  // The Keys engine is Basic Pitch, the default: the second engine makes nothing now.
+  // Each lane's engine: Basic Pitch for the vocals and the guitar, YourMT3+
+  // for the rest but the bass, which is off; ByteDance's is no lane's.
+  await expect(row(page, "basic_pitch").locator(".models-used")).toHaveText("Used for: Vocals and Guitar.");
+  await expect(row(page, "ymt3").locator(".models-used")).toHaveText("Used for: Drums, Piano, and Other.");
   await expect(row(page, "piano_hr").locator(".models-used")).toHaveText("Not used for any stem now.");
   await expect(row(page, "whisper_turbo").locator(".models-used")).toBeHidden();
 });
@@ -119,7 +132,7 @@ test("a server without the route shows no built-in group and no error", async ({
 test("the links in Separation and Transcription open the Models tab", async ({ page }) => {
   await stubServer(page);
   await openModels(page);
-  for (const [tab, text] of [["separation", "Add or remove models in Models"], ["transcription", "See the transcription model in Models"]]) {
+  for (const [tab, text] of [["separation", "Add or remove models in Models"], ["transcription", "See the transcription models in Models"]]) {
     await page.locator(`.settings-tab[data-tab="${tab}"]`).click();
     const link = page.locator(`.settings-pane[data-pane="${tab}"] .models-open`);
     await expect(link).toHaveText(text);

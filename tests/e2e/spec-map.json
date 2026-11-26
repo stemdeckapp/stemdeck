@@ -363,12 +363,12 @@
       "specs": ["mobile-transpose", "mobile-vocal-mode", "network-transpose-warning", "library-order", "online-sources"]
     },
     {
-      "why": "The MIDI chip on the Piano and Bass lanes and its row (Advanced mode): the chip under the Model chip in the lane header's Model column, the row laid out after the EQ, effects and model rows, and its pure rules (when the chip shows, what each state offers and says, the refusals, the .mid name and URL)",
+      "why": "The MIDI chip on every lane and its row (Advanced mode): the chip under the Model chip in the lane header's Model column, the row laid out after the EQ, effects and model rows, and its pure rules (when the chip shows, what each state offers and says, the refusals, the .mid name and URL)",
       "paths": ["static/js/laneMidiRows.js", "static/js/laneMidiView.js", "static/js/eq/eqRows.js", "static/css/eq.css", "static/css/daw.css"],
       "specs": ["lane-midi", "lane-model", "eq-panels", "lane-alignment", "help-mode", "track-header"]
     },
     {
-      "why": "Settings > Transcription: the Keys, Keys engine, Bass and Detail selects, the Keys engine's model state, the notice and the engine lines from /api/transcribe/status, and the settings-applied event the lanes' MIDI chips follow",
+      "why": "Settings > Transcription: each lane's Auto or Off and engine selects (only the engines that can take the lane), the engine's download, size and speed note, the Detail select and the engines it does not change, the notice and the engine lines from /api/transcribe/status, and the settings-applied event the lanes' MIDI chips follow",
       "paths": ["static/js/transcriptionSettings.js", "static/js/laneMidiView.js", "static/js/catalog.js", "static/css/settings.css"],
       "specs": ["transcription-settings", "lane-midi", "settings-nav", "settings-scroll", "help-mode"]
     },
@@ -378,12 +378,12 @@
       "specs": ["lane-midi", "export-menu", "export-all-stems", "reaper-export"]
     },
     {
-      "why": "The transcription routes, the two engines' worker (Basic Pitch; ByteDance Piano Transcription and its checkpoint download) behind the MIDI chip, the Transcription tab and the zip's .mid files",
-      "paths": ["app/api/midi.py", "app/pipeline/midi*.py", "app/pipeline/piano_hr.py", "app/core/model_fetch.py", "app/_vendor/transcribe/**", "app/_vendor/piano_hr/**", "app/api/stems.py"],
+      "why": "The transcription routes, the engines' worker (Basic Pitch; ByteDance Piano Transcription and its checkpoint download; YourMT3+, its checkpoint download and the conversion to its weights) behind the MIDI chip, the Transcription tab and the zip's .mid files",
+      "paths": ["app/api/midi.py", "app/pipeline/midi*.py", "app/pipeline/piano_hr.py", "app/pipeline/ymt3*.py", "app/core/model_fetch.py", "app/core/midi_engines.py", "app/core/tensor_file.py", "app/core/pinned_file.py", "app/_vendor/transcribe/**", "app/_vendor/piano_hr/**", "app/_vendor/ymt3/**", "app/api/stems.py"],
       "specs": ["lane-midi", "transcription-settings", "export-all-stems"]
     },
     {
-      "why": "Seeing, hearing and downloading a Piano or Bass lane's MIDI: the piano roll over the waveform, the Stem/MIDI/Both switch and its sound rendered into the engine as the lane's alternate source (audioEngine.addAltSource), and the download button's Audio, MIDI, Audio and MIDI choice",
+      "why": "Seeing, hearing and downloading a lane's MIDI: the piano roll over the waveform (the Drums lane's named rows), the Stem/MIDI/Both switch and its sound rendered into the engine as the lane's alternate source (audioEngine.addAltSource), and the download button's Audio, MIDI, Audio and MIDI choice",
       "paths": ["static/js/laneMidiPlay.js", "static/js/midiNotesView.js", "static/js/midiSynth.js", "static/js/midiRender.js", "static/js/audioEngine.js", "static/css/waves.css"],
       "specs": ["lane-midi", "help-mode", "lane-alignment", "track-header", "eq-panels", "transpose", "speed-control"]
     },

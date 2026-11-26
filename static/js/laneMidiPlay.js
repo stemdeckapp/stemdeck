@@ -1,6 +1,6 @@
-// Seeing, hearing and downloading the MIDI of a Piano or Bass lane (Advanced
-// mode for the first two, every mode for the download), on top of the MIDI
-// row of laneMidiRows.js, which calls in here.
+// Seeing, hearing and downloading the MIDI of a lane (Advanced mode for the
+// first two, every mode for the download), on top of the MIDI row of
+// laneMidiRows.js, which calls in here.
 //
 // SEE: while a lane's MIDI row is open and the lane has a MIDI file, its notes
 // (GET /api/jobs/{id}/midi/{stem}/notes, read once per file) are drawn over
@@ -8,8 +8,10 @@
 // its viewBox in seconds and stretched over the row like the waveform's own
 // SVG, so the timeline, the zoom (the --zoom width of the canvas), the scroll
 // and the playhead line are the waveform's without a render loop of its own.
-// The waveform stays under it, dimmed. A redraw of the lanes rewrites the
-// row, and syncMidiRows (called after every redraw) puts the roll back.
+// The waveform stays under it, dimmed. On the Drums lane each row is a kind
+// of drum, named at the row's left (midiNotesView.drumGeometry). A redraw of
+// the lanes rewrites the row, and syncMidiRows (called after every redraw)
+// puts the roll back.
 //
 // HEAR: the row's source switch (Stem, MIDI, Both). MIDI renders the notes
 // once to a mono buffer (midiSynth.js, midiRender.js) and hands it to the engine as the
@@ -27,10 +29,10 @@
 import { mixerEl, audioEngine } from "./state.js";
 import { STEM_DISPLAY } from "./constants.js";
 import { t } from "./i18n.js";
-import { midiFilename, midiOf, midiUrl, safeTitle } from "./laneMidiView.js";
+import { MIDI_LANES, midiFilename, midiOf, midiUrl, safeTitle } from "./laneMidiView.js";
 import {
-  bothZipName, bothZipUrl, cleanNotes, downloadChoices, engineSource, needsMidiSound, normalSource,
-  rollGeometry, rollRects, sourceSwitch,
+  bothZipName, bothZipUrl, cleanNotes, downloadChoices, engineSource, laneGeometry, needsMidiSound, normalSource,
+  rollRects, sourceSwitch,
 } from "./midiNotesView.js";
 import { canRender, forgetSounds, laneSound } from "./midiSynth.js";
 
@@ -47,8 +49,10 @@ const _soundNote = new Map();
 // in it: lane -> the file time ("at") of the rendering added.
 let _engine = null;
 const _added = new Map();
-// lane -> the roll's SVG, kept across the redraws that rewrite the row.
+// lane -> the roll's SVG, kept across the redraws that rewrite the row; and
+// the Drums lane's row names beside it.
 const _rolls = new Map();
+const _rollLabels = new Map();
 let _onChange = () => {};
 
 const sourceKey = (lane) => `${_jobId}:${lane}`;
@@ -65,6 +69,8 @@ export function setPlayContext({ jobId, job, onChange }) {
     _added.clear();
     for (const svg of _rolls.values()) svg.remove();
     _rolls.clear();
+    for (const el of _rollLabels.values()) el.remove();
+    _rollLabels.clear();
     forgetSounds(_jobId);
   }
   _job = job || null;
@@ -134,6 +140,8 @@ function waveRowOf(lane) {
 function dropRoll(lane) {
   _rolls.get(lane)?.remove();
   _rolls.delete(lane);
+  _rollLabels.get(lane)?.remove();
+  _rollLabels.delete(lane);
   waveRowOf(lane)?.classList.remove("midi-view");
 }
 
@@ -157,7 +165,9 @@ export function syncRolls(lanes, viewOn) {
     const sig = `${m.at}|${duration}|${notes.length}`;
     if (!svg || svg.dataset.sig !== sig) {
       svg?.remove();
-      const g = rollGeometry(notes, duration);
+      _rollLabels.get(lane)?.remove();
+      _rollLabels.delete(lane);
+      const g = laneGeometry(lane, notes, duration);
       if (!g) continue;
       svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       svg.setAttribute("class", "midi-roll");
@@ -170,11 +180,37 @@ export function syncRolls(lanes, viewOn) {
       svg.dataset.hi = String(g.hi);
       svg.innerHTML = rollRects(g);
       _rolls.set(lane, svg);
+      if (g.rows) _rollLabels.set(lane, rollLabels(g));
     }
-    svg.setAttribute("aria-label", t("laneMidi.roll.aria", { name: display(lane) }));
+    svg.setAttribute(
+      "aria-label",
+      t(lane === "drums" ? "laneMidi.roll.drumsAria" : "laneMidi.roll.aria", { name: display(lane) }),
+    );
     if (svg.parentElement !== row) row.append(svg);
+    const labels = _rollLabels.get(lane);
+    if (labels) {
+      for (const [i, el] of [...labels.children].entries()) el.textContent = t(labels.dataset.keys.split(",")[i]);
+      if (labels.parentElement !== row) row.append(labels);
+    }
     row.classList.add("midi-view");
   }
+}
+
+/** The Drums lane's row names, one per row of its roll, each at its row's height. */
+function rollLabels(g) {
+  const box = document.createElement("div");
+  box.className = "midi-roll-labels";
+  box.setAttribute("aria-hidden", "true");
+  box.dataset.keys = g.rows.map((r) => r.key).join(",");
+  for (const r of g.rows) {
+    const el = document.createElement("span");
+    el.className = "midi-roll-label";
+    el.dataset.row = r.row;
+    el.style.top = `${(r.y / g.height) * 100}%`;
+    el.style.height = `${100 / g.height}%`;
+    box.append(el);
+  }
+  return box;
 }
 
 // ─── HEAR: the source switch ───
@@ -253,7 +289,7 @@ async function syncPass() {
     _added.clear();
   }
   if (!engine?.supportsAltSource || !_jobId) return;
-  for (const lane of ["piano", "bass"]) {
+  for (const lane of MIDI_LANES) {
     const m = fileOf(lane);
     const source = m ? laneSource(lane) : "stem";
     if (!m) {
@@ -320,7 +356,7 @@ function laneDl(lane) {
 
 /** Mark the buttons that offer a choice (aria-haspopup), for the Guide and assistive tech. */
 export function paintDownloads() {
-  for (const lane of ["piano", "bass"]) {
+  for (const lane of MIDI_LANES) {
     const a = laneDl(lane);
     if (!a) continue;
     if (downloadChoices({ hasMidi: !!fileOf(lane) }).length) {

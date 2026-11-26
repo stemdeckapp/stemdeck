@@ -241,7 +241,7 @@ const HELP = [
   [".lane-key-value", "help.laneKey", laneName, "help.laneKeyTitle"],
   [".mx-btn.mute", "help.mute", laneName],
   [".mx-btn.solo", "help.solo", laneName],
-  // The MIDI chip under the Model chip on the Piano and Bass lanes, and the
+  // The MIDI chip under the Model chip on every lane, and the
   // MIDI row it opens (laneMidiRows.js, Advanced mode). Its Download link is
   // an a.lane-dl and the chip an .eq-tab, so these come before both entries.
   [".midi-tab", "help.midiTab"],
@@ -513,11 +513,11 @@ const SETTINGS = [
     ["settings.speedTest.apply", "help.set.speedTestApply"],
     ["settings.models.open", "help.set.modelsOpen"],
   ]],
-  // MIDI from the Piano and Bass lanes (transcriptionSettings.js).
+  // MIDI from every lane (transcriptionSettings.js): each lane's Auto or
+  // Off, then its engine.
   ["settings.tab.transcription", [
-    ["settings.midi.keys.title", "help.set.midiKeys"],
-    ["settings.midi.pianoEngine.title", "help.set.midiPianoEngine"],
-    ["settings.midi.bass.title", "help.set.midiBass"],
+    ["settings.midi.laneTitle", "help.set.midiLane"],
+    ["settings.midi.engineTitle", "help.set.midiEngine"],
     ["settings.midi.detail.title", "help.set.midiDetail"],
     ["settings.models.openTranscription", "help.set.modelsOpenTranscription"],
   ]],

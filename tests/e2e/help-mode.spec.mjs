@@ -176,8 +176,15 @@ test.describe("help mode", () => {
   // song has a MIDI file and the engine can run.
   test("the MIDI chip, its row and Include MIDI explain themselves", async ({ page }) => {
     await page.route("**/api/transcribe/status", (route) => route.fulfill({ json: {
-      available: true, reason: null, stems: ["piano", "bass"], max_seconds: 1200, details: ["balanced", "detailed", "clean"],
-      engines: [{ id: "basic_pitch", label: "Basic Pitch", version: "0.4.0", licence: "Apache-2.0" }],
+      available: true, reason: null, max_seconds: 1200, details: ["balanced", "detailed", "clean"],
+      stems: ["vocals", "drums", "bass", "guitar", "piano", "other"],
+      engines: [
+        { id: "basic_pitch", label: "Basic Pitch", version: "0.4.0", licence: "Apache-2.0", available: true, model: "built_in" },
+        { id: "ymt3", label: "YourMT3+", version: "5e66c1e", licence: "Apache-2.0", available: true, model: "downloaded",
+          download_bytes: 561_544_628, disk_bytes: 188_412_704, device: "cuda", seconds_per_minute: { cuda: 12, cpu: 69 }, uses_detail: false },
+      ],
+      stem_engines: { vocals: ["basic_pitch"], drums: ["ymt3"], bass: ["basic_pitch", "ymt3"], guitar: ["basic_pitch", "ymt3"], piano: ["basic_pitch", "ymt3"], other: ["basic_pitch", "ymt3"] },
+      default_engines: { vocals: "basic_pitch", drums: "ymt3", bass: "ymt3", guitar: "basic_pitch", piano: "ymt3", other: "ymt3" },
     } }));
     await page.route(new RegExp(`/api/jobs/${JOB_ID}$`), async (route) => {
       if (route.request().method() !== "GET") return route.continue();
@@ -197,7 +204,7 @@ test.describe("help mode", () => {
     await page.locator("#t-export-btn").click();
     await expect(page.locator("#t-export-panel")).toBeVisible();
     await page.locator("#t-export-midi-wrap").hover();
-    await expect(tip(page)).toContainText("adds the MIDI files of the Piano and Bass lanes");
+    await expect(tip(page)).toContainText("adds the MIDI files of its lanes");
     // Every MIDI control on screen, the row's buttons included.
     expect((await unexplained(page)).filter((c) => /midi/i.test(c))).toEqual([]);
   });
@@ -221,7 +228,7 @@ test.describe("help mode", () => {
     await openStudio(page);
     await helpOn(page);
     await page.locator("#settingsBtn").hover();
-    for (const text of ["General", "Separation", "Transcription", "Keys", "Shows or hides the MIDI button on the Piano lane.", "Keys engine", "Chooses the model that writes the MIDI notes of the Piano lane", "Shows or hides the MIDI button on the Bass lane.", "How many notes a transcription keeps", "Library", "Song details", "Network", "Export", "Recording", "Experimental", "Privacy", "Send crash reports", "Example report", "Last report", "Logs", "Registry", "Port", "Online search and link import", "YouTube cookies", "Compute device", "Make StemDeck available on your network", "Video encoder", "Microphone", "Which REAPER Open in REAPER launches", "Use recommended", "Picks the model that separates the vocals.", "Run benchmark", "Apply recommendation", "Stops a running benchmark.", "Show all devices", "Shows the times for every device this computer has, not only the recommended one.", "Advanced: My models", "Option 1: a Hugging Face link", "Adds the model. StemDeck checks it with a short test run before it can be used.", "Check again", "Removes a model and its files. A stem that used it goes back to the recommended model.", "Models", "Built-in models", "Lists the models StemDeck comes with, grouped by what they do, with whether each one is downloaded, the space it takes and what it is used for now.", "Add or remove models in Models", "See the transcription model in Models"]) {
+    for (const text of ["General", "Separation", "Transcription", "Each lane", "For each lane: Auto shows its MIDI button in Advanced mode, Off hides it.", "Engine", "For each lane: the engine that writes its MIDI notes.", "How many notes a transcription keeps", "Library", "Song details", "Network", "Export", "Recording", "Experimental", "Privacy", "Send crash reports", "Example report", "Last report", "Logs", "Registry", "Port", "Online search and link import", "YouTube cookies", "Compute device", "Make StemDeck available on your network", "Video encoder", "Microphone", "Which REAPER Open in REAPER launches", "Use recommended", "Picks the model that separates the vocals.", "Run benchmark", "Apply recommendation", "Stops a running benchmark.", "Show all devices", "Shows the times for every device this computer has, not only the recommended one.", "Advanced: My models", "Option 1: a Hugging Face link", "Adds the model. StemDeck checks it with a short test run before it can be used.", "Check again", "Removes a model and its files. A stem that used it goes back to the recommended model.", "Models", "Built-in models", "Lists the models StemDeck comes with, grouped by what they do, with whether each one is downloaded, the space it takes and what it is used for now.", "Add or remove models in Models", "See the transcription models in Models"]) {
       await expect(tip(page)).toContainText(text);
     }
   });

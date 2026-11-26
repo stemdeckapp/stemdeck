@@ -1,49 +1,72 @@
-// MIDI from the Piano and Bass lanes (Advanced mode), the pure part: which
-// lanes get a MIDI chip and when it shows, what its row says and offers in
-// each state, what a refusal or a failure says, the .mid file's name and URL,
-// the Settings > Transcription rules and the Export menu's Include MIDI. No
-// DOM, so tests/js/lane-midi-view.test.mjs runs it in node. laneMidiRows.js
-// draws the chip and the row, transcriptionSettings.js the Settings tab.
+// MIDI from a song's lanes (Advanced mode), the pure part: which lanes get
+// a MIDI chip and when it shows, what its row says and offers in each state,
+// what a refusal or a failure says, the .mid file's name and URL, the
+// Settings > Transcription rules and the Export menu's Include MIDI. No DOM,
+// so tests/js/lane-midi-view.test.mjs runs it in node. laneMidiRows.js draws
+// the chip and the row, transcriptionSettings.js the Settings tab.
 //
 // Server side (docs/api.md, the transcription routes):
-//   GET  /api/transcribe/status         { available, reason, engines, stems, max_seconds, details }
+//   GET  /api/transcribe/status         { available, reason, engines, stem_engines,
+//                                         default_engines, stems, max_seconds, details }
 //   POST /api/jobs/{id}/midi            { stem, detail? }  202 { state: "running" }
 //   POST /api/jobs/{id}/midi/{stem}/cancel
 //   DELETE /api/jobs/{id}/midi/{stem}
 //   GET  /api/jobs/{id}/stems/{stem}.mid
 //   GET  /api/jobs/{id}/stems/all.zip?midi=1   the zip carries the .mid files
 // A run is followed by reading GET /api/jobs/{id}, whose `midi` is
-// { piano?: M, bass?: M }, M = { state: running | done | error | cancelled,
-// pct 0..100, notes, engine, detail, tempo_source: song | default | null, at,
-// error_code, has_file }. The song's event stream closes at once for a
-// finished song, so it carries no progress here. A refusal is { detail, code }.
+// { <stem>?: M }, M = { state: running | done | error | cancelled, pct 0..100,
+// phase (running only): download | prepare | transcribe, notes, engine,
+// detail, tempo_source: song | default | null, at, error_code, has_file }.
+// The song's event stream closes at once for a finished song, so it carries
+// no progress here. A refusal is { detail, code }.
 //
-// Settings (GET/POST /api/settings): transcribe_piano and transcribe_bass are
-// "auto" | "off" (default "auto"), transcribe_detail is "balanced" |
-// "detailed" | "clean" (default "balanced"), transcribe_piano_engine is
-// "basic_pitch" | "piano_hr" (default "basic_pitch"): what makes the Piano
-// lane's notes. The Bass lane's are always Basic Pitch's. The status's
-// engines list each engine with { id, label, version, licence, model_licence,
-// stems, available, reason, model: built_in | downloaded | partial |
-// not_downloaded, download_bytes }. A running M has phase "download" while
-// piano_hr's model downloads, then "transcribe".
+// Settings (GET/POST /api/settings), for each of the six stems:
+// transcribe_<stem> is "auto" | "off" (default "auto") and
+// transcribe_<stem>_engine the engine that makes its notes, one of the
+// status's stem_engines[<stem>] (default its default_engines[<stem>]).
+// transcribe_detail is "balanced" | "detailed" | "clean" (default
+// "balanced"). The status's engines list each engine with { id, label,
+// version, licence, model_licence, stems, available, reason, source, model:
+// built_in | downloaded | partial | not_downloaded, download_bytes,
+// disk_bytes, device: cpu | cuda, seconds_per_minute, uses_detail }.
 
-/** The lanes with a MIDI chip, in the order Settings lists them. */
-export const MIDI_LANES = Object.freeze(["piano", "bass"]);
+/** The lanes with a MIDI chip: every stem, in the order Settings lists them. */
+export const MIDI_LANES = Object.freeze(["vocals", "drums", "bass", "guitar", "piano", "other"]);
 
 /** The Settings field that turns each lane's MIDI on or off. */
-export const SETTING_FIELDS = Object.freeze({ piano: "transcribe_piano", bass: "transcribe_bass" });
+export const SETTING_FIELDS = Object.freeze(Object.fromEntries(MIDI_LANES.map((l) => [l, `transcribe_${l}`])));
+/** The Settings field that picks each lane's engine. */
+export const ENGINE_FIELDS = Object.freeze(Object.fromEntries(MIDI_LANES.map((l) => [l, `transcribe_${l}_engine`])));
 export const DETAIL_FIELD = "transcribe_detail";
-export const PIANO_ENGINE_FIELD = "transcribe_piano_engine";
 /** Every Settings field the Transcription tab owns. */
-export const TRANSCRIPTION_FIELDS = Object.freeze([SETTING_FIELDS.piano, SETTING_FIELDS.bass, DETAIL_FIELD, PIANO_ENGINE_FIELD]);
+export const TRANSCRIPTION_FIELDS = Object.freeze([
+  ...Object.values(SETTING_FIELDS), DETAIL_FIELD, ...Object.values(ENGINE_FIELDS),
+]);
 
 export const LANE_CHOICES = Object.freeze(["auto", "off"]);
 export const DETAILS = Object.freeze(["balanced", "detailed", "clean"]);
-export const PIANO_ENGINES = Object.freeze(["basic_pitch", "piano_hr"]);
+/** The engines built in, in the order Settings lists them. */
+export const ENGINES = Object.freeze(["basic_pitch", "piano_hr", "ymt3"]);
+/**
+ * What each lane can be transcribed with, and its engine until the person
+ * picks another, when the status does not say (an older server, a failed
+ * read): config.MIDI_ENGINE_STEMS and MIDI_DEFAULT_ENGINES of this release.
+ */
+export const LANE_ENGINES = Object.freeze({
+  vocals: ["basic_pitch"],
+  drums: ["ymt3"],
+  bass: ["basic_pitch", "ymt3"],
+  guitar: ["basic_pitch", "ymt3"],
+  piano: ["basic_pitch", "piano_hr", "ymt3"],
+  other: ["basic_pitch", "ymt3"],
+});
+export const DEFAULT_ENGINES = Object.freeze({
+  vocals: "basic_pitch", drums: "ymt3", bass: "ymt3", guitar: "basic_pitch", piano: "ymt3", other: "ymt3",
+});
 export const DEFAULT_LANE_CHOICE = "auto";
 export const DEFAULT_DETAIL = "balanced";
-export const DEFAULT_PIANO_ENGINE = "basic_pitch";
+// An engine id as the server writes one (a person's own engine included).
+const ENGINE_ID_RE = /^[a-z][a-z0-9_]{0,31}$/;
 
 /** How often the page reads the song while a transcription runs, ms. */
 export const POLL_MS = 1000;
@@ -61,6 +84,11 @@ export function laneHasMidi(lane) {
   return MIDI_LANES.includes(lane);
 }
 
+/** The lane's name in the Transcription tab and the chips' sentences (the lane's own name). */
+export function laneNameKey(lane) {
+  return `stem.${lane}`;
+}
+
 // ─── Settings ───
 
 /** The lane's setting from a settings answer: "auto" or "off". */
@@ -75,15 +103,27 @@ export function detailChoice(settings) {
   return DETAILS.includes(v) ? v : DEFAULT_DETAIL;
 }
 
-/** The Keys engine setting from a settings answer. */
-export function pianoEngineChoice(settings) {
-  const v = isObj(settings) ? settings[PIANO_ENGINE_FIELD] : undefined;
-  return PIANO_ENGINES.includes(v) ? v : DEFAULT_PIANO_ENGINE;
+/** The engines a lane can be set to: the status's list, else this release's. */
+export function laneEngines(status, lane) {
+  const listed = isStatus(status) && isObj(status.stem_engines) ? status.stem_engines[lane] : null;
+  if (Array.isArray(listed)) {
+    const ids = listed.filter((id) => typeof id === "string" && ENGINE_ID_RE.test(id));
+    if (ids.length) return ids;
+  }
+  return LANE_ENGINES[lane] ? [...LANE_ENGINES[lane]] : [];
 }
 
-/** The engine that makes a lane's notes: the Keys engine for the piano, Basic Pitch for the bass. */
-export function laneEngine(settings, lane) {
-  return lane === "piano" ? pianoEngineChoice(settings) : DEFAULT_PIANO_ENGINE;
+/** The lane's engine until the person picks one: the status's, else this release's. */
+export function defaultEngine(status, lane) {
+  const said = isStatus(status) && isObj(status.default_engines) ? status.default_engines[lane] : null;
+  if (typeof said === "string" && laneEngines(status, lane).includes(said)) return said;
+  return DEFAULT_ENGINES[lane] || laneEngines(status, lane)[0] || "";
+}
+
+/** The engine that makes a lane's notes: its setting when the lane can take it, else its default. */
+export function laneEngine(settings, lane, status = null) {
+  const v = isObj(settings) ? settings[ENGINE_FIELDS[lane]] : undefined;
+  return typeof v === "string" && laneEngines(status, lane).includes(v) ? v : defaultEngine(status, lane);
 }
 
 /** Whether a settings answer says anything about transcription. */
@@ -103,10 +143,11 @@ export function transcriptionFields(settings) {
  * The POST /api/settings body for one change in the tab, or null for a
  * field or value the tab does not offer (never posted).
  */
-export function settingsPatch(field, value) {
+export function settingsPatch(field, value, status = null) {
   if (field === DETAIL_FIELD) return DETAILS.includes(value) ? { [field]: value } : null;
-  if (field === PIANO_ENGINE_FIELD) return PIANO_ENGINES.includes(value) ? { [field]: value } : null;
-  if (field === SETTING_FIELDS.piano || field === SETTING_FIELDS.bass) {
+  const engineLane = MIDI_LANES.find((l) => ENGINE_FIELDS[l] === field);
+  if (engineLane) return laneEngines(status, engineLane).includes(value) ? { [field]: value } : null;
+  if (Object.values(SETTING_FIELDS).includes(field)) {
     return LANE_CHOICES.includes(value) ? { [field]: value } : null;
   }
   return null;
@@ -184,19 +225,84 @@ export function engineLine(status, t) {
   return lines.join(" ");
 }
 
+/** The i18n key of an engine's name (a built-in one), or "" for any other. */
+export function engineNameKey(id) {
+  return ENGINES.includes(id) ? `settings.midi.engineName.${id}` : "";
+}
+
+/** An engine's name: its i18n name when it is built in, else the status's label, else its id. */
+export function engineName(status, id, t) {
+  const key = engineNameKey(id);
+  if (key) return t(key);
+  const e = engineOf(status, id);
+  return String(e?.label || id || "").trim();
+}
+
+/** Whether an engine's notes change with Detail (an older server: every engine's did). */
+export function usesDetail(status, id) {
+  const e = engineOf(status, id);
+  return !e || e.uses_detail !== false;
+}
+
+/** Seconds of work per minute of song on `device`, a whole number, or null. */
+function speedOf(e, device) {
+  const v = Number(isObj(e?.seconds_per_minute) ? e.seconds_per_minute[device] : NaN);
+  return Number.isFinite(v) && v > 0 ? Math.round(v) : null;
+}
+
 /**
- * What the Keys engine row says under its choice, as { key, vars }, or null:
- * that ByteDance Piano Transcription cannot run here, or the state of its model
- * (built in, downloaded, or downloaded the first time it is used).
+ * What a lane's engine needs said before it runs, as a list of { key, vars }
+ * ([] when nothing): that it cannot run here, or the model it downloads the
+ * first time (its size) or keeps (its size on disk), and how long it takes
+ * on this computer (the device a run would use). Under the engine's choice in
+ * Settings and in the lane's row before a first run.
  */
-export function pianoEngineNote(status, settings, sizeText = (b) => `${Math.round(b / 1e6)} MB`) {
-  if (pianoEngineChoice(settings) !== "piano_hr" || !isStatus(status)) return null;
-  const e = engineOf(status, "piano_hr");
-  if (!e || !engineReady(status, "piano_hr")) return { key: "settings.midi.pianoEngine.unavailable", vars: {} };
-  const bytes = Number(e.download_bytes);
-  const size = Number.isFinite(bytes) && bytes > 0 ? sizeText(bytes) : "?";
-  if (e.model === "downloaded") return { key: "settings.midi.pianoEngine.model.downloaded", vars: { size } };
-  return { key: "settings.midi.pianoEngine.model.notDownloaded", vars: { size } };
+export function engineNotes(status, settings, lane, t, sizeText = (b) => `${Math.round(b / 1e6)} MB`) {
+  if (!isStatus(status)) return [];
+  const id = laneEngine(settings, lane, status);
+  const e = engineOf(status, id);
+  const engine = engineName(status, id, t);
+  if (!e) return [];
+  if (!engineReady(status, id)) return [{ key: "settings.midi.engineUnavailable", vars: { engine } }];
+  const notes = [];
+  const download = Number(e.download_bytes);
+  const disk = Number(e.disk_bytes);
+  if (e.model === "downloaded" && Number.isFinite(disk) && disk > 0) {
+    notes.push({ key: "settings.midi.engineModel.downloaded", vars: { engine, size: sizeText(disk) } });
+  } else if (e.model !== "built_in" && Number.isFinite(download) && download > 0) {
+    notes.push({ key: "settings.midi.engineModel.notDownloaded", vars: { engine, size: sizeText(download) } });
+  }
+  const device = e.device === "cuda" ? "cuda" : "cpu";
+  const seconds = speedOf(e, device);
+  if (seconds !== null) {
+    const minutes = Math.max(1, Math.round((4 * seconds) / 60));
+    notes.push({ key: `settings.midi.engineSpeed.${device}`, vars: { engine, seconds, minutes } });
+  }
+  return notes;
+}
+
+/** engineNotes as one string, each sentence translated, joined by a space. */
+export function engineNoteText(status, settings, lane, t, sizeText) {
+  return engineNotes(status, settings, lane, t, sizeText).map((n) => t(n.key, n.vars)).join(" ");
+}
+
+/**
+ * What the lane's row says before a run, after its idle sentence: the model
+ * the engine downloads the first time (its size), and how long it takes when
+ * this computer runs it on the processor. "" when there is nothing to warn of.
+ */
+export function rowNoteText(status, settings, lane, t, sizeText) {
+  const said = ["settings.midi.engineModel.notDownloaded", "settings.midi.engineSpeed.cpu"];
+  return engineNotes(status, settings, lane, t, sizeText)
+    .filter((n) => said.includes(n.key))
+    .map((n) => t(n.key, n.vars))
+    .join(" ");
+}
+
+/** Whether the lane's engine still has to fetch its model (its first run). */
+export function needsDownload(status, settings, lane) {
+  const e = engineOf(status, laneEngine(settings, lane, status));
+  return !!e && e.model !== "built_in" && e.model !== "downloaded" && Number(e.download_bytes) > 0;
 }
 
 /** The longest song the engine takes, in whole minutes (20 when unknown). */
@@ -217,7 +323,7 @@ export function midiOf(job, lane) {
   return {
     state: m.state,
     pct: midiPct(m),
-    phase: m.state === "running" && m.phase === "download" ? "download" : m.state === "running" ? "transcribe" : null,
+    phase: m.state === "running" ? (["download", "prepare"].includes(m.phase) ? m.phase : "transcribe") : null,
     notes: Number.isFinite(notes) && notes >= 0 ? Math.round(notes) : null,
     engine: typeof m.engine === "string" ? m.engine : "",
     detail: DETAILS.includes(m.detail) ? m.detail : "",
@@ -267,12 +373,11 @@ export function chipState({ lane, settings, status, job }) {
     return { show: false, off: false, reasonKey: "" };
   }
   let reasonKey = unavailableKey(status);
-  const engine = laneEngine(settings, lane);
-  // An older server lists no second engine: the Keys engine is then Basic Pitch.
-  if (!reasonKey && engine !== DEFAULT_PIANO_ENGINE && engineOf(status, engine) && !engineReady(status, engine)) {
-    reasonKey = "settings.midi.pianoEngine.unavailable";
-  }
-  return { show: true, off: Boolean(reasonKey), reasonKey };
+  const engine = laneEngine(settings, lane, status);
+  // The lane's engine is not one this computer can run (or the server does
+  // not list it): the chip is off, and its tooltip names the engine.
+  if (!reasonKey && !engineReady(status, engine)) reasonKey = "laneMidi.engineUnavailable";
+  return { show: true, off: Boolean(reasonKey), reasonKey, engine };
 }
 
 /**
@@ -287,8 +392,12 @@ export function chipMark(m) {
 }
 
 /** The chip's tooltip and accessible name. `name` is the lane's display name. */
-export function chipLabel(m, { name, off = false, reasonKey = "" }, t) {
-  if (off) return reasonKey ? t(reasonKey) : t("laneMidi.tab.idle", { name });
+export function chipLabel(m, { name, off = false, reasonKey = "", engine = "" }, t) {
+  if (off) {
+    if (!reasonKey) return t("laneMidi.tab.idle", { name });
+    const key = engineNameKey(engine);
+    return t(reasonKey, { name, engine: key ? t(key) : engine });
+  }
   if (!m) return t("laneMidi.tab.idle", { name });
   if (m.state === "running") return t("laneMidi.tab.running", { name, pct: midiPct(m) });
   if (m.state === "error") return t("laneMidi.tab.error", { name });
@@ -308,7 +417,7 @@ export function chipLabel(m, { name, off = false, reasonKey = "" }, t) {
  *   status:  { kind, text }, kind idle | running | done | error | cancelled
  *   hint:    the engine's detail and tempo for a finished file, or ""
  */
-export function rowView(m, { name, sending = false, otherRunning = false, removeArmed = false, maxMin = 20 }, t, plural = null) {
+export function rowView(m, { name, sending = false, otherRunning = false, removeArmed = false, maxMin = 20, firstRun = "", detail = true }, t, plural = null) {
   const state = m?.state || "idle";
   const running = state === "running";
   const hasFile = m?.has_file === true;
@@ -326,7 +435,9 @@ export function rowView(m, { name, sending = false, otherRunning = false, remove
   };
   let status;
   if (running) {
-    const doing = m.phase === "download" ? t("laneMidi.downloadingModel") : t("laneMidi.running", { name });
+    const doing = m.phase === "download"
+      ? t("laneMidi.downloadingModel")
+      : m.phase === "prepare" ? t("laneMidi.preparingModel") : t("laneMidi.running", { name });
     const text = [doing, hasFile ? t("laneMidi.keptWhileRunning") : ""].filter(Boolean).join(" ");
     status = { kind: "running", text };
   } else if (state === "error") {
@@ -336,11 +447,13 @@ export function rowView(m, { name, sending = false, otherRunning = false, remove
   } else if (hasFile) {
     status = { kind: "done", text: m.notes === null ? t("laneMidi.doneNoCount", { name }) : notesText(m.notes, name, t, plural) };
   } else {
-    status = { kind: "idle", text: t("laneMidi.idle", { name }) };
+    // Before a first run that downloads a model: its size, and how long the
+    // engine takes on this computer, said before the person presses.
+    status = { kind: "idle", text: [t("laneMidi.idle", { name }), firstRun].filter(Boolean).join(" ") };
   }
   if (otherRunning && !running) status = { kind: "other", text: t("laneMidi.otherRunning") };
   if (removeArmed && buttons.remove.show) status = { kind: "error", text: t("laneMidi.removeAgain") };
-  return { buttons, run: running, pct: running ? midiPct(m) : 0, status, hint: hintLine(m, t) };
+  return { buttons, run: running, pct: running ? midiPct(m) : 0, status, hint: hintLine(m, t, detail) };
 }
 
 /** "312 notes from Bass." with the plural the language needs (i18n's plural()). */
@@ -348,11 +461,14 @@ export function notesText(count, name, t, plural = null) {
   return plural ? plural("laneMidi.notes", count, { name }) : t("laneMidi.notes.other", { count, name });
 }
 
-/** The line under the status for a file: the detail it was made with, and its tempo. */
-export function hintLine(m, t) {
+/**
+ * The line under the status for a file: the detail it was made with (unless
+ * its engine has none, `detail` false), and its tempo.
+ */
+export function hintLine(m, t, detail = true) {
   if (!m?.has_file) return "";
   const parts = [];
-  if (m.detail) parts.push(t("laneMidi.detailLine", { detail: t(detailNameKey(m.detail)) }));
+  if (m.detail && detail) parts.push(t("laneMidi.detailLine", { detail: t(detailNameKey(m.detail)) }));
   if (m.tempo_source === "song") parts.push(t("laneMidi.tempo.song"));
   else if (m.tempo_source === "default") parts.push(t("laneMidi.tempo.default"));
   return parts.join(" ");
@@ -363,7 +479,7 @@ export function hintLine(m, t) {
 /** The failure codes a run can end with, each with its sentence. */
 export const ERROR_CODES = Object.freeze([
   "too_long", "disk", "io", "interrupted", "engine_unavailable", "worker_failed", "no_audio", "engine", "timeout", "stalled",
-  "download",
+  "download", "prepare",
 ]);
 
 /** The i18n key for a run's error_code; one this page does not know gets the general one. */

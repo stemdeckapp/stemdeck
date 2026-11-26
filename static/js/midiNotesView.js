@@ -1,7 +1,8 @@
-// Seeing, hearing and downloading the MIDI of a Piano or Bass lane (Advanced
-// mode), the pure part: the piano roll's rectangles, the lane's source switch
-// (Stem, MIDI, Both), the download choices of the lane's download button and
-// the synth voice each lane is played with. No DOM and no Web Audio, so
+// Seeing, hearing and downloading the MIDI of a lane (Advanced mode), the
+// pure part: the piano roll's rectangles (on the Drums lane one row per kind
+// of drum, each named), the lane's source switch (Stem, MIDI, Both), the
+// download choices of the lane's download button and the synth voice each
+// lane is played with. No DOM and no Web Audio, so
 // tests/js/midi-notes-view.test.mjs runs it in node. laneMidiRows.js draws,
 // midiSynth.js renders the sound.
 //
@@ -71,6 +72,73 @@ export function rollGeometry(notes, duration) {
     });
   }
   return { width: duration, height, lo, hi, rects };
+}
+
+// ─── The drums' roll ───
+
+/**
+ * The rows of the Drums lane's roll, top to bottom: cymbals, hi-hat, toms,
+ * snare, kick, and every other General MIDI percussion sound in one row. Each
+ * with the i18n key of its name.
+ */
+export const DRUM_ROWS = Object.freeze(["cymbal", "hihat", "tom", "snare", "kick", "perc"]);
+// General MIDI percussion (channel 10) note numbers by row, as the engine
+// comparison scored them (data/midi-bench/engine-scripts/common.py).
+const GM_DRUM_ROW = {
+  35: "kick", 36: "kick",
+  37: "snare", 38: "snare", 39: "snare", 40: "snare",
+  42: "hihat", 44: "hihat", 46: "hihat",
+  41: "tom", 43: "tom", 45: "tom", 47: "tom", 48: "tom", 50: "tom",
+  49: "cymbal", 51: "cymbal", 52: "cymbal", 53: "cymbal", 55: "cymbal", 57: "cymbal", 59: "cymbal",
+};
+/** The shortest a hit is drawn, s: a hit lasts 10 ms, a hair at a song's zoom. */
+export const DRUM_HIT_MIN_SEC = 0.06;
+
+/** The row a General MIDI percussion note is drawn in. */
+export function drumRow(pitch) {
+  return GM_DRUM_ROW[pitch] || "perc";
+}
+
+/** The i18n key of a drum row's name. */
+export function drumRowKey(row) {
+  return `laneMidi.drum.${DRUM_ROWS.includes(row) ? row : "perc"}`;
+}
+
+/**
+ * The Drums lane's roll: like rollGeometry, but a row per kind of drum the
+ * file has (DRUM_ROWS order, the others left out), each hit at least
+ * DRUM_HIT_MIN_SEC wide, and `rows` naming each row and where it is:
+ * [{ row, key, y }], y its top in rows. null when there is nothing to draw.
+ */
+export function drumGeometry(notes, duration) {
+  if (!Array.isArray(notes) || !notes.length || !isNum(duration) || duration <= 0) return null;
+  const present = new Set(notes.map((n) => drumRow(n[2])));
+  const order = DRUM_ROWS.filter((r) => present.has(r));
+  const off = (1 - ROLL_NOTE_H) / 2;
+  const rects = [];
+  for (const [s, e, p, v] of notes) {
+    if (s >= duration) continue;
+    rects.push({
+      x: s,
+      y: order.indexOf(drumRow(p)) + off,
+      w: Math.min(Math.max(e, s + DRUM_HIT_MIN_SEC), duration) - s,
+      h: ROLL_NOTE_H,
+      o: Math.round((0.35 + 0.65 * (v / 127)) * 100) / 100,
+    });
+  }
+  return {
+    width: duration,
+    height: order.length,
+    lo: 0,
+    hi: order.length - 1,
+    rects,
+    rows: order.map((row, y) => ({ row, key: drumRowKey(row), y })),
+  };
+}
+
+/** The roll of a lane: the drums' rows for the Drums lane, pitch rows for any other. */
+export function laneGeometry(lane, notes, duration) {
+  return lane === "drums" ? drumGeometry(notes, duration) : rollGeometry(notes, duration);
 }
 
 const f = (n) => String(Math.round(n * 10000) / 10000);
@@ -150,11 +218,14 @@ export function bothZipName(safeTitle, stem) {
 /**
  * The voice a lane's MIDI is played with: a soft electric-piano tone for
  * Keys (a sine and a quieter octave, a quick decay to a low sustain), a round
- * bass for Bass (a sine and a quiet saw through a low-pass). Short attack and
- * release, so notes start on time and do not click. `gain` keeps a full
- * chord under clipping.
+ * bass for Bass (a sine and a quiet saw through a low-pass), a plucked tone
+ * for Guitar, a soft held tone for Vocals and a mellow pad for Other. Short
+ * attack and release, so notes start on time and do not click. `gain` keeps a
+ * full chord under clipping. The Drums lane is { kind: "drums" }: each hit
+ * is a drum sound of its own (midiRender.renderDrums), not a pitch.
  */
 export function voiceFor(stem) {
+  if (stem === "drums") return { kind: "drums", partials: [], lowpass: 0, attack: 0.001, decay: 0, sustain: 0, release: 0.5, gain: 0.5 };
   if (stem === "bass") {
     return {
       partials: [{ type: "sine", ratio: 1, gain: 1 }, { type: "sawtooth", ratio: 1, gain: 0.3 }],
@@ -164,6 +235,39 @@ export function voiceFor(stem) {
       sustain: 0.7,
       release: 0.08,
       gain: 0.5,
+    };
+  }
+  if (stem === "guitar") {
+    return {
+      partials: [{ type: "triangle", ratio: 1, gain: 1 }, { type: "sine", ratio: 2, gain: 0.35 }, { type: "sine", ratio: 3, gain: 0.12 }],
+      lowpass: 3500,
+      attack: 0.003,
+      decay: 0.6,
+      sustain: 0.25,
+      release: 0.15,
+      gain: 0.3,
+    };
+  }
+  if (stem === "vocals") {
+    return {
+      partials: [{ type: "sine", ratio: 1, gain: 1 }, { type: "sine", ratio: 2, gain: 0.2 }, { type: "sine", ratio: 3, gain: 0.08 }],
+      lowpass: 0,
+      attack: 0.03,
+      decay: 0.3,
+      sustain: 0.8,
+      release: 0.12,
+      gain: 0.35,
+    };
+  }
+  if (stem === "other") {
+    return {
+      partials: [{ type: "sawtooth", ratio: 1, gain: 0.5 }, { type: "sine", ratio: 1, gain: 0.6 }],
+      lowpass: 1800,
+      attack: 0.04,
+      decay: 0.4,
+      sustain: 0.7,
+      release: 0.3,
+      gain: 0.2,
     };
   }
   return {
