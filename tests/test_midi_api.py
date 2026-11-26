@@ -25,9 +25,9 @@ import soundfile as sf
 from app.api import midi as midi_api  # noqa: F401 -- imported before JOBS_DIR is patched
 from app.core.config import YMT3_SECONDS_PER_MINUTE
 from app.core.models import Job, clean_midi
-from app.core.process import process_exists
 from app.core.registry import _jobs, _procs
 from app.pipeline import midi as midi_run
+from tests.process_gone import is_gone
 
 JOB = "abcdef123456"
 OTHER = "fedcba654321"
@@ -539,10 +539,11 @@ async def test_cancel_keeps_the_previous_file_and_kills_the_tree(jobs_dir, clien
     assert (JOB, "midi") not in _procs
     child = int(worker.pid_file.read_text())
     for _ in range(100):
-        if not process_exists(child):
+        if is_gone(child):
             break
         time.sleep(0.1)
-    assert not process_exists(child), "the worker's child outlived the cancel"
+    # A zombie counts as gone: see tests/process_gone.py.
+    assert is_gone(child), "the worker's child outlived the cancel"
 
 
 @pytest.mark.parametrize(
