@@ -231,6 +231,73 @@ export function buildRenderRequest({
   return body;
 }
 
+// ── The Export Performance menu ──
+
+// What the menu makes: one MP4, or a package for DaVinci Resolve (.otioz).
+export const EXPORT_FORMATS = ["mp4", "resolve"];
+
+/** A stored format choice made safe: "mp4" unless it is a known one. */
+export function exportFormatOf(v) {
+  return EXPORT_FORMATS.includes(v) ? v : "mp4";
+}
+
+/** Each format's file extension. */
+export const EXPORT_EXT = { mp4: "mp4", resolve: "otioz" };
+
+/**
+ * The body of POST /takes/{id}/resolve: the render's request
+ * (buildRenderRequest) with the backing always in, since the package is for
+ * editing (also when "Record mixed audio" is off: the take is on a track of
+ * its own, so it can still be heard alone), no master (one chain over every
+ * track cannot be split per track), and the package's own choices:
+ * `backing` "mix" (one track) or "stems" (one per lane as heard), the click
+ * as a track, and the timeline's `name`.
+ */
+export function buildPackageRequest({
+  mix, exclude = [], aspect = "16:9", resolution = "1080", fps = 30, range, fx = "",
+  remove = "", takeGain = 1, backing = "mix", click = false, clickSound = "", name = "",
+}) {
+  const body = buildRenderRequest({
+    mix, exclude, mixedAudio: true, aspect, resolution, fps, range, fx, master: "", remove, takeGain,
+  });
+  body.backing = backing === "stems" ? "stems" : "mix";
+  body.click = Boolean(click);
+  if (body.click && clickSound) body.click_sound = String(clickSound);
+  const title = String(name || "").trim();
+  if (title) body.name = Array.from(title).slice(0, 200).join("");
+  return body;
+}
+
+/**
+ * What the Export Performance menu shows for `format`:
+ * - runKey/descKey: the action row's title and line ("Try again" after this
+ *   format's export failed in a way trying again can fix);
+ * - options: whether the Resolve options show; clickOff: the click option
+ *   disabled (the song has no beat grid);
+ * - reasons: i18n keys of the lines saying why the action is disabled;
+ * - runOff: the action disabled (no take, a transposed mix this ffmpeg
+ *   cannot export, a take without a picture). `hasCamera` null: not known,
+ *   the server says.
+ */
+export function exportMenuState({
+  format = "mp4", hasTake = false, hasCamera = null, transposeBlocked = false, hasGrid = true, error = null,
+}) {
+  const resolve = format === "resolve";
+  const reasons = [];
+  if (transposeBlocked) reasons.push("export.transposeUnavailable");
+  if (hasCamera === false) reasons.push("streamer.export.noCamera");
+  const retry = Boolean(error && error.kind === format && !["no-encoder", "no-camera"].includes(error.code));
+  return {
+    format: resolve ? "resolve" : "mp4",
+    runKey: retry ? "streamer.export.retry" : resolve ? "streamer.export.resolveTitle" : "streamer.export.go",
+    descKey: resolve ? "streamer.export.resolveDesc" : "streamer.export.mp4Desc",
+    options: resolve,
+    clickOff: !hasGrid,
+    reasons,
+    runOff: !hasTake || transposeBlocked || hasCamera === false,
+  };
+}
+
 /** The raw recording's file extension from its Content-Type ("webm" when
  * unknown): Chromium records MP4 where it can, WebM elsewhere. */
 export function rawExtension(contentType) {

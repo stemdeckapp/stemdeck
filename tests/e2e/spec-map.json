@@ -248,7 +248,7 @@
     {
       "why": "Recording: capture, takes, take folders, track inputs, meters",
       "paths": ["static/js/capture/**", "static/js/vuScale.js", "static/css/recording.css", "app/api/takes.py", "app/pipeline/take_render.py", "tests/e2e/recording-helpers.mjs"],
-      "specs": ["recording", "recording-no-peaks", "recording-real-audio", "recording-tracks", "take-folders", "take-folders-live", "live-wave", "video-take", "track-header", "composer-arming", "drag-out", "eq-panels", "streamer-media", "streamer", "video-sync", "error-box-narrow"]
+      "specs": ["recording", "recording-no-peaks", "recording-real-audio", "recording-tracks", "take-folders", "take-folders-live", "live-wave", "video-take", "track-header", "composer-arming", "drag-out", "eq-panels", "streamer-media", "streamer", "video-sync", "error-box-narrow", "performance-export-menu"]
     },
     {
       "why": "Lane headers are built by the take lanes and the record UI, so every lane spec reads them",
@@ -300,7 +300,12 @@
     {
       "why": "Performance (streamer) mode",
       "paths": ["static/js/streamer/**", "static/css/streamer.css"],
-      "specs": ["streamer", "streamer-media", "modes", "help-mode", "karaoke", "performance-record-support", "performance-input-fx", "performance-tabs", "performance-layout", "performance-volume", "performance-speed"]
+      "specs": ["streamer", "streamer-media", "modes", "help-mode", "karaoke", "performance-record-support", "performance-input-fx", "performance-tabs", "performance-layout", "performance-volume", "performance-speed", "performance-export-menu"]
+    },
+    {
+      "why": "The shared export menu (Performance's Export Performance and the Studio's Export Mix), the take export clients and the DaVinci Resolve package",
+      "paths": ["static/js/exportMenu.js", "static/js/video/videoRender.js", "app/pipeline/resolve_package.py", "app/pipeline/resolve_timeline.py"],
+      "specs": ["performance-export-menu", "export-menu", "export-ogg", "export-transpose", "export-all-stems", "reaper-export", "footer-no-clip", "master-live", "streamer", "streamer-media", "video-take", "help-mode"]
     },
     {
       "why": "Sound and picture sync of a take with a camera: the export step's state in words and its nudge (syncControl.js, video/avSync.js), the sync route and the one picture placement on the server, and the loaded take it updates (takeLanes.js updateTakeEntry)",

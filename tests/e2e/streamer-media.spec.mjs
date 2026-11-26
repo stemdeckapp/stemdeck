@@ -201,7 +201,10 @@ test.describe("Streamer Mode: recording and export", () => {
     await expect.poll(() => recording(page), { timeout: 20000 }).toBe(false);
     await expect(sm(page, ".sm-export-go")).toBeEnabled({ timeout: 30000 });
     const download = page.waitForEvent("download", { timeout: 120000 });
+    // Export Performance opens its menu; the MP4 row exports.
     await sm(page, ".sm-export-go").click();
+    await sm(page, '.sm-export-fmt[data-format="mp4"]').click();
+    await sm(page, ".sm-export-run").click();
     const file = await download;
     // Streamer is called Performance now, in the file name too.
     expect(file.suggestedFilename()).toMatch(/\(Performance\)\.mp4$/);

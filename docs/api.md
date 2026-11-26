@@ -323,8 +323,9 @@ stored in `take.json` as `video.sync` (without `pictureOffsetMs`):
 | `pictureOffsetMs` | The sum above (entry only) |
 
 `POST .../sync` takes `{"nudgeMs": 40}` (absolute, a JSON number), `{"remeasure":
-true}`, or both. A changed `pictureOffsetMs` deletes `render.mp4`: `GET
-.../render` then answers `status: "none"` and the export renders again.
+true}`, or both. A changed `pictureOffsetMs` deletes `render.mp4` and
+`resolve.otioz`: `GET .../render` and `GET .../resolve` then answer `status:
+"none"` and the export runs again.
 Refusals: 404 for an unknown or malformed job or take, 409 `take not finished`
 or `video render running`, 503 `measurement could not run: nothing changed` (a
 `remeasure` whose ffmpeg or file read failed: the stored sync, the nudge and
@@ -340,3 +341,28 @@ whether it was recorded: `recorded`, `no-mic`, `denied`, `not-asked`, `failed`
 (also when the sound failed part way through the take) or `unsupported`.
 Clear windows that disagree by more than 40 ms give no measurement; otherwise
 the earliest clear window gives the offset.
+
+## DaVinci Resolve package of a take
+
+Performance's Export Performance menu makes either the MP4 (`POST
+.../takes/{take_id}/render`) or an OpenTimelineIO bundle for DaVinci Resolve
+18.5 or newer (File > Import > Timeline), `resolve.otioz` beside `render.mp4`:
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/jobs/{id}/takes/{take_id}/resolve` | Start it: the render's body (lanes, gains, pitches, `lanes`, `fx`, `take_gain`, `take_print`, `canvas`, `fit`, `size`, `fps`, `span`, `range_in`, `range_out`, `click`, `click_sound`, `remove_stem`) plus `backing` (`mix`: one backing track; `stems`: one track per lane as heard, a muted lane left out) and `name` (the timeline's name). Never `master`. `202` with the status |
+| GET | `/api/jobs/{id}/takes/{take_id}/resolve` | `{status, progress, error, url, estimate_bytes, large}`; `large` when the estimate is over 4 GiB (ZIP64) |
+| POST | `/api/jobs/{id}/takes/{take_id}/resolve/cancel` | Stop it; the MP4 render has its own cancel |
+| GET | `/api/jobs/{id}/takes/{take_id}/resolve.otioz?name=` | The file (`application/zip`); `name` must end in `.otioz` |
+
+The bundle holds `version.txt` (`1.0.0`), `content.otio` (a `Timeline.1` at
+01:00:00:00 with one video track, then the take, the backing or one track per
+lane, and the click when asked) and `media/<song>_video.mp4`,
+`<song>_take_<take_id>.wav`, `<song>_backing.wav` or `<song>_<lane>.wav`,
+`<song>_click.wav`. Every file starts at the span's start and is exactly N
+frames long: H.264 at the take's rate (24, 30 or 60), no sound, no B-frames,
+start 0; WAV 48 kHz, 24-bit, stereo, N x (48000 / fps) samples. Refusals as the
+render's (404, 422 `take has no camera` or no libx264), plus 422 `this song has
+no beat grid` for a click, 409 while an export of either kind runs for the take,
+and 507 `not enough free disk space for this export` (under 2.2 times the
+estimate).

@@ -430,8 +430,14 @@ const HELP = [
   ['#streamer .sm-switch-row[data-setting="autoStopAtEnd"]', "help.smAutoStop"],
   ["#streamer .sm-export-cancel", "help.smExportCancel"],
   ["#streamer .sm-export-raw", "help.smSaveRaw"],
-  // Its text changes with the take (Try again), so the name is fixed.
-  ["#streamer .sm-export-go", "help.smExport", null, "streamer.export.go"],
+  // The Export Performance menu (streamer.js buildExportMenu): its format
+  // tabs, the DaVinci Resolve options, the action row (titled by its own
+  // text: Export MP4, Export for DaVinci Resolve or Try again), the button.
+  ["#streamer .sm-export-fmts", "help.smExportFormat", null, "export.formatAria"],
+  ['#streamer .sm-export-opt[data-opt="stems"]', "help.smExportStems", null, "streamer.export.stems"],
+  ['#streamer .sm-export-opt[data-opt="click"]', "help.smExportClick", null, "export.includeClick"],
+  ["#streamer .sm-export-run", "help.smExportRun"],
+  ["#streamer .sm-export-go", "help.smExport", null, "streamer.export.menu"],
   ["#streamer .sm-export-reveal", "help.smReveal", null, "streamer.export.reveal"],
   // Sound and picture sync under the export (syncControl.js): its buttons
   // and the nudge first, then the group around them.
@@ -751,10 +757,11 @@ function onPointerOver(e) {
 // it. Those buttons still open what they open (choosing in it is taken like
 // any press), so the parts inside explain themselves too: the Mode menu, the
 // Stems popover, the Export menu, the click volume and options, and the
-// notifications, the Donate dialog and the We Recommend dialog. The Record arrow is not among them:
+// notifications, the Donate dialog and the We Recommend dialog, and
+// Performance's Export Performance menu. The Record arrow is not among them:
 // its panel opens the microphone. A click shows that control's box, which is also how help mode
 // works on a touch screen.
-const PASS = "#helpModeBtn, #modeBtn, #laneStemsBtn, #t-export-btn, #t-metro-vol-btn, #t-metro-more, #notifBtn, #donateBtn, #friendsBtn";
+const PASS = "#helpModeBtn, #modeBtn, #laneStemsBtn, #t-export-btn, #streamer .sm-export-go, #t-metro-vol-btn, #t-metro-more, #notifBtn, #donateBtn, #friendsBtn";
 
 function swallow(e) {
   if (e.target instanceof Element && e.target.closest(PASS)) {

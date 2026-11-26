@@ -9,6 +9,8 @@ A take is a folder, jobs/<job_id>/takes/<take_id>/, holding
     camera.webm | camera.mp4   the raw camera recording, when there is one
     take.json                  the sidecar
     render.mp4                 the rendered video, once asked for
+    resolve.otioz              the DaVinci Resolve package, once asked for (both go
+                               when the picture or the sound is moved)
 
 Takes belong to recording tracks (takes/tracks.json): a track is one mixer
 lane that owns takes and plays its active one.

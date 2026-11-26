@@ -585,6 +585,28 @@ TIMEOUT_VIDEO_RENDER = _env_int("STEMDECK_TIMEOUT_VIDEO_RENDER", 3600)
 TIMEOUT_RENDER_MAX = _env_int("STEMDECK_TIMEOUT_RENDER_MAX", 6 * 3600)
 VIDEO_RENDER_SEC_PER_SEC = 6.0
 
+# The DaVinci Resolve package of a Performance take (app/pipeline/resolve_package.py,
+# app/pipeline/resolve_timeline.py): the picture, the take and the song as
+# separate files on one timeline.
+# 48 kHz: a whole number of samples in every frame at 24, 30 and 60 fps (2000,
+# 1600 and 800), so every audio file ends on the same frame as the picture.
+RESOLVE_AUDIO_RATE = 48000
+# The picture's quality. Lower than the MP4's 20 (better), because an editor
+# encodes it again.
+RESOLVE_VIDEO_CRF = 18
+# Free space a package needs before it starts, as a multiple of its estimate:
+# the media files and the .otioz that holds them are on disk at the same time.
+RESOLVE_FREE_SPACE_FACTOR = 2.2
+# The estimate's picture, in bits per pixel per frame: a high guess for H.264 at
+# CRF 18 of a camera picture (the MP4's GPU cap is 0.5, its CRF 20 is far under).
+RESOLVE_VIDEO_EST_BITS_PER_PIXEL = 0.2
+# A package over this needs ZIP64 inside the .otioz. Whether DaVinci Resolve
+# reads ZIP64 is not verified, so the page says so when such an export is saved.
+RESOLVE_ZIP64_BYTES = 4 * 1024**3
+# Each audio file is one ffmpeg run (cut, EQ, key, gain, mix, 48 kHz): bounded
+# by this many seconds per second of song, never under TIMEOUT_FFMPEG.
+RESOLVE_AUDIO_SEC_PER_SEC = 4.0
+
 # The take render's hardware (GPU) H.264 encoders (app/pipeline/video_encoder.py).
 # libx264 stays the default and the fallback for every failure. h264_mf
 # (Windows Media Foundation) is deliberately absent: it refused 4K on the test

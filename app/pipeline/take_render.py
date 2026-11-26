@@ -511,10 +511,19 @@ class RenderCancelled(Exception):
     pass
 
 
+# The DaVinci Resolve package's leftovers, matched to the name and no
+# further: the temp .otioz (resolve_package.otioz_temp) and the folder its
+# media are made in (app/api/takes.py). Anything else beside a take is the
+# user's or the take's own and is never touched.
+_PACKAGE_TEMP_RE = re.compile(r"^\.resolve\.otioz\.[0-9a-f]{32}\.tmp\Z")
+_PACKAGE_WORK_RE = re.compile(r"^\.resolvework-[0-9a-f]{32}\Z")
+
+
 def sweep_render_temps(jobs_dir: Path) -> int:
-    """Remove render temp files (".render.mp4.<hex>.tmp.mp4") under every
-    take of every job: called at startup, before anything renders. Returns
-    how many went."""
+    """Remove render temp files (".render.mp4.<hex>.tmp.mp4") and the
+    DaVinci Resolve package's (".resolve.otioz.<hex>.tmp" files and
+    ".resolvework-<hex>" folders) under every take of every job: called at
+    startup, before anything renders. Returns how many went."""
     gone = 0
     for job_dir in job_dirs(jobs_dir):
         for path in job_dir.glob("takes/*/.render.mp4.*.tmp.mp4"):
@@ -523,6 +532,17 @@ def sweep_render_temps(jobs_dir: Path) -> int:
                 gone += 1
             except OSError:
                 logger.warning("stale render file not removed: %s", path.name)
+        for path in job_dir.glob("takes/*/.resolve*"):
+            try:
+                if path.is_file() and _PACKAGE_TEMP_RE.match(path.name):
+                    path.unlink()
+                elif path.is_dir() and not path.is_symlink() and _PACKAGE_WORK_RE.match(path.name):
+                    shutil.rmtree(path)
+                else:
+                    continue
+                gone += 1
+            except OSError:
+                logger.warning("stale package file not removed: %s", path.name)
     return gone
 
 
@@ -537,6 +557,7 @@ def run_video_render(
     timeout: float,
     check: Callable[[Path], None] | None = None,
     stall_timeout: float | None = None,
+    out_format: str = "mp4",
 ) -> None:
     """Run the render to a temp file beside `dest`, reporting progress from
     ffmpeg's -progress stream, then rename it into place. Blocking.
@@ -549,13 +570,18 @@ def run_video_render(
     finished temp file, before it is trusted; its OutputInvalid becomes a
     TakeRenderError "invalid-<check>") and `stall_timeout`: a render whose
     progress has not moved for that long is killed ("stall"). The CPU render
-    passes neither and runs exactly as before."""
+    passes neither and runs exactly as before.
+
+    `out_format` is the muxer: "mp4" (every video render) or "wav" (the
+    DaVinci Resolve package's audio files, app/pipeline/resolve_package.py)."""
     # A cancel that came before (during the encoder test, between a GPU
     # failure and the CPU render) starts nothing (#790).
     if cancelled():
         raise RenderCancelled()
-    tmp = dest.with_name(f".{dest.name}.{uuid.uuid4().hex}.tmp.mp4")
-    full = [*cmd, "-progress", "pipe:1", "-nostats", "-f", "mp4", "-y", str(tmp)]
+    if out_format not in ("mp4", "wav"):
+        raise ValueError(f"unknown output format {out_format}")
+    tmp = dest.with_name(f".{dest.name}.{uuid.uuid4().hex}.tmp.{out_format}")
+    full = [*cmd, "-progress", "pipe:1", "-nostats", "-f", out_format, "-y", str(tmp)]
     proc = subprocess.Popen(  # noqa: S603 -- list args, no shell, trusted ffmpeg
         full,
         stdin=subprocess.DEVNULL,

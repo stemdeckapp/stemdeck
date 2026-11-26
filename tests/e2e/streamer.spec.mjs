@@ -268,7 +268,7 @@ test.describe("Streamer Mode", () => {
     await expect(sm(page, ".sm-yt")).toHaveCount(0);
     await expect(sm(page, ".sm-export-go")).toBeVisible();
     await expect(sm(page, ".sm-export-go")).toBeDisabled();
-    await expect(sm(page, ".sm-export-text")).toHaveText("Record a take, then export it here as an MP4.");
+    await expect(sm(page, ".sm-export-text")).toHaveText("Record a take, then export it here.");
   });
 });
 
@@ -477,9 +477,15 @@ test.describe("Streamer Mode polish", () => {
       return r.fulfill({ response: res, json: { ...job, takes: [...(job.takes || []), { id: "fake-take" }] } });
     });
     await openStreamer(page);
+    // Export Performance opens its menu; the MP4 row exports.
     await sm(page, ".sm-export-go").click();
+    await sm(page, '.sm-export-fmt[data-format="mp4"]').click();
+    await sm(page, ".sm-export-run").click();
     await expect(sm(page, ".sm-export-text")).toContainText("ffmpeg exited with code 1");
-    await expect(sm(page, ".sm-export-go")).toHaveText("Try again");
+    // The button keeps its name; the menu's row offers Try again.
+    await expect(sm(page, ".sm-export-go")).toHaveText("Export Performance");
+    await sm(page, ".sm-export-go").click();
+    await expect(sm(page, ".sm-export-run-title")).toHaveText("Try again");
   });
 
   test("no audio input: the line says the take records the song only", async ({ page }) => {
