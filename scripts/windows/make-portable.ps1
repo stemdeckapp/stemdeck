@@ -136,12 +136,15 @@ function Assert-Fresh-TauriBuild {
   }
 
   $exe = Get-Item $TargetExe
-  $newerSources = @(
+  # The outer @() is required: a pipeline that emits nothing yields $null, and
+  # under Set-StrictMode -Version Latest on PowerShell 5.1, $null.Count throws.
+  # Without it the valid case (a fresh exe, no newer sources) fails the build.
+  $newerSources = @(@(
     Get-ChildItem -Path (Join-Path $DesktopDir "ui") -File -Recurse
     Get-ChildItem -Path (Join-Path $TauriDir "src") -File -Recurse
     Get-Item (Join-Path $TauriDir "Cargo.toml")
     Get-Item (Join-Path $TauriDir "tauri.conf.json")
-  ) | Where-Object { $_.LastWriteTimeUtc -gt $exe.LastWriteTimeUtc }
+  ) | Where-Object { $_.LastWriteTimeUtc -gt $exe.LastWriteTimeUtc })
 
   if ($newerSources.Count -gt 0) {
     $list = ($newerSources | Select-Object -First 8 | ForEach-Object { "  - $($_.FullName)" }) -join "`n"
