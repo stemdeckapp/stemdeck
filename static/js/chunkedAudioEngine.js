@@ -16,6 +16,8 @@
 // Graph: per-stem AudioBufferSourceNode -> GainNode -> fx slot (EQ, fxChain.js)
 //        -> AnalyserNode -> pitch bus -> SoundTouchNode -> masterGain
 //        -> master fx slot -> destination
+// A lane's alternate source (its MIDI sound, addAltSource) is one more member
+// of the lane with the same chain, fed by one source node per start.
 
 const CHUNK_SEC = 5;      // seconds of audio per chunk
 const LOOKAHEAD_SEC = 12; // schedule next chunk this far ahead of playhead
@@ -195,6 +197,7 @@ import { createTickLoop } from "./tickLoop.js";
 import { loadStretchWorklet, disposeStretchNode, pipelineLatencySeconds as stretchLatency } from "./tempoStage.js";
 import { createEngineFx, engineFxApi } from "./fxChain.js";
 import { reachedEnd } from "./playbackEnd.js";
+import { altSourceStart, laneSourceMode, sourceOn } from "./altSource.js";
 
 export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {}) {
   const AC = window.AudioContext || window.webkitAudioContext;
@@ -227,7 +230,20 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
   // Effects: a slot per stem between its gain and its analyser, and the
   // master slot between master and the destination (fxChain.js). Declared
   // before the stem loop, which attaches each stem's slot.
+  //
+  // The map also holds each lane's alternate source (addAltSource): an
+  // in-memory buffer as long as the song (a MIDI rendering), with `alt` set,
+  // no url and no header, its controlName the lane's. Being a member like the
+  // stems is what gives it the lane's volume, mute, solo, EQ, effects chain
+  // and key. The chunk fetch and scheduling skip it; it has one source node
+  // per start, put on the chunks' clock by _startAlt.
   const stemMap = new Map();
+  // Which of a lane's two sources sound (setLaneSource): "stem", "alt" or
+  // "both", by controlName; a member's `srcOn` is 1 or 0 from it, and its
+  // gain is its lane level times that (_levelOf). Same as audioEngine.js.
+  const laneSource = new Map();
+  const _srcOnFor = (controlName, alt) => sourceOn(laneSource.get(controlName), alt);
+  const _levelOf = (s) => s.level * s.srcOn;
   // The effects chain of a lane (Advanced mode only) goes between its chunk
   // sources and its gain; a lane without one is wired exactly as before
   // (fx/chainHost.js).
@@ -235,6 +251,7 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
     members: () => [...stemMap.values()],
     liveNodes: (s) => s.activeNodes,
     onLatencyChange: () => { _epoch++; },
+    levelOf: (s) => _levelOf(s),
   });
   master.connect(fx.masterInput);
 
@@ -315,6 +332,8 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
       bus: null,
       level: 1,
       fx: null,
+      alt: false,
+      srcOn: 1,
     };
     stemMap.set(s.name, stem);
     fx.attachSource(stem, gain, analyser);
@@ -434,7 +453,7 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
     g.setValueAtTime(g.value, at);
     g.linearRampToValueAtTime(0, at + ROUTE_FADE);
     g.setValueAtTime(0, at + ROUTE_FADE + ROUTE_HOLD);
-    g.linearRampToValueAtTime(stem.level, at + ROUTE_FADE + ROUTE_HOLD + ROUTE_FADE);
+    g.linearRampToValueAtTime(_levelOf(stem), at + ROUTE_FADE + ROUTE_HOLD + ROUTE_FADE);
     setTimeout(swap, (ROUTE_FADE + ROUTE_HOLD / 2) * 1000);
   }
 
@@ -531,7 +550,7 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
     entry.promise = (async () => {
       const pairs = await Promise.all(
         [...stemMap.entries()]
-          .filter(([, s]) => s.header)
+          .filter(([, s]) => !s.alt && s.header)
           .map(async ([name, stem]) => {
             try {
               const pcm = await _fetchPcm(stem, chunkIdx);
@@ -579,34 +598,61 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
     try { stNode?.port?.postMessage({ type: "reset" }); } catch { /* processor is gone */ }
   }
 
+  // A source node of `member`, connected and started: kept in its
+  // activeNodes (what _stopNodes stops and an effects chain rewires) until
+  // it ends.
+  function _startNode(member, buffer, when, offset) {
+    const node = ctx.createBufferSource();
+    node.buffer = buffer;
+    if (!stNode) node.playbackRate.value = _playbackRate; // tape-effect fallback
+    node.connect(fx.sourceInput(member));
+    node.start(when, offset);
+    member.activeNodes.push(node);
+    // A played node lets go of itself, and so of its five second buffer.
+    // The list was only emptied by pause, seek and destroy, so one buffer
+    // per stem stayed alive for every chunk played since Play: 2.1 MB/s on
+    // a six stem song, 1.3 GB over ten minutes, all of it freed at once on
+    // Stop. Stopped nodes end too; by then _stopNodes has emptied the list.
+    node.onended = () => {
+      const i = member.activeNodes.indexOf(node);
+      if (i >= 0) member.activeNodes.splice(i, 1);
+      try { node.disconnect(); } catch { /* already disconnected */ }
+    };
+    return node;
+  }
+
   // Schedule all stems' AudioBufferSourceNodes to start at `when` (AudioContext
   // time), beginning `startSecs` into each buffer. Returns the duration of audio
   // that will play (max over stems of buffer.duration - startSecs).
   function _scheduleChunk(buffers, when, startSecs) {
     let playDur = 0;
     for (const [name, stem] of stemMap) {
+      if (stem.alt) continue;
       const buf = buffers.get(name);
       if (!buf) continue;
-      const node = ctx.createBufferSource();
-      node.buffer = buf;
-      if (!stNode) node.playbackRate.value = _playbackRate; // tape-effect fallback
-      node.connect(fx.sourceInput(stem));
       const offset = Math.max(0, Math.min(startSecs, buf.duration - 0.001));
-      node.start(when, offset);
-      stem.activeNodes.push(node);
-      // A played node lets go of itself, and so of its five second buffer.
-      // The list was only emptied by pause, seek and destroy, so one buffer
-      // per stem stayed alive for every chunk played since Play: 2.1 MB/s on
-      // a six stem song, 1.3 GB over ten minutes, all of it freed at once on
-      // Stop. Stopped nodes end too; by then _stopNodes has emptied the list.
-      node.onended = () => {
-        const i = stem.activeNodes.indexOf(node);
-        if (i >= 0) stem.activeNodes.splice(i, 1);
-        try { node.disconnect(); } catch { /* already disconnected */ }
-      };
+      _startNode(stem, buf, when, offset);
       playDur = Math.max(playDur, buf.duration - offset);
     }
     return playDur;
+  }
+
+  // Start a lane's alternate source on the chunks' clock (altSource.js): at
+  // a start, at _startCtxTime and _startOffset in, as the first chunk is;
+  // joining a running playback (`join`), just ahead of now at the place the
+  // chunks will have reached. One node runs the whole buffer, so nothing
+  // more is scheduled for it until the next start: a pause, a seek, a loop
+  // jump and a speed change all stop every node and start again (play()).
+  function _startAlt(member, join) {
+    const at = altSourceStart({
+      startCtxTime: _startCtxTime,
+      startOffset: _startOffset,
+      srcRate: _srcRate(),
+      ctxNow: ctx.currentTime,
+      bufferDuration: member.buffer.duration,
+      join,
+    });
+    if (at) _startNode(member, member.buffer, at.when, at.offset);
   }
 
   // --- lookahead scheduler ---
@@ -737,6 +783,8 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
       _startCtxTime = when;
       const dur = _scheduleChunk(buffers, when, offsetWithin);
       _scheduledTo = _startOffset + dur;
+      // Each lane's alternate source starts in the same frame as the chunk.
+      for (const member of stemMap.values()) if (member.alt) _startAlt(member, false);
       _audioStarted = true;
       _epoch++; // mapping is valid from here; see isClockReady
       fx.transportStart(_startOffset, when);
@@ -826,6 +874,95 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
     if (wasPlaying) play();
   }
 
+  // --- a lane's alternate source ---
+
+  /**
+   * A second source for lane `controlName`, with audioEngine.js's contract:
+   * `buffer` (a MIDI rendering, as long as the song) plays in step with the
+   * stem chunks through the lane's own gain, effects, EQ, pitch bus and the
+   * tempo stage. It replaces the lane's earlier one, sounds only while
+   * setLaneSource says so, and never changes the song's length. Joins a
+   * running playback at the place the chunks have reached. False when the
+   * lane has no readable stem to follow.
+   */
+  function addAltSource(controlName, buffer) {
+    if (destroyed || !buffer) return false;
+    const lead = [...stemMap.values()].find((s) => !s.alt && s.header && s.controlName === controlName);
+    if (!lead) return false;
+    removeAltSource(controlName);
+    const gain = ctx.createGain();
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    const member = {
+      url: null,
+      header: null,
+      buffer,
+      gain,
+      analyser,
+      activeNodes: [],
+      name: `${controlName}::alt`,
+      controlName,
+      pitchable: lead.pitchable,
+      pitched: lead.pitched,
+      pitch: lead.pitch,
+      bus: null,
+      level: lead.level,
+      fx: null,
+      alt: true,
+      srcOn: _srcOnFor(controlName, true),
+    };
+    gain.gain.value = _levelOf(member);
+    stemMap.set(member.name, member);
+    fx.attachSource(member, gain, analyser);
+    routeStem(member, true);
+    // While the first chunk is still being fetched, play()'s start puts it
+    // in with the chunk.
+    if (playing && _audioStarted) _startAlt(member, true);
+    return true;
+  }
+
+  // Stop an alternate source and take it out of the graph and the map.
+  function _dropAlt(member) {
+    for (const node of member.activeNodes) {
+      try { node.stop(); } catch { /* already stopped */ }
+      try { node.disconnect(); } catch { /* noop */ }
+    }
+    member.activeNodes = [];
+    // Its effects chain, if the lane has one (fx/chainHost.js), goes with it.
+    try { member.chainHost?.dispose(); } catch { /* already gone */ }
+    member.chainHost = null;
+    try { member.gain.disconnect(); } catch { /* noop */ }
+    // Its EQ slot, with any EQ branch still fading out on a timer.
+    try { member.fx?.dispose(); } catch { /* noop */ }
+    member.fx = null;
+    try { member.analyser.disconnect(); } catch { /* noop */ }
+    _laneLeft(member.bus);
+    member.bus = null;
+    member.buffer = null;
+    stemMap.delete(member.name);
+  }
+
+  /** Take lane `controlName`'s alternate source out of the graph. */
+  function removeAltSource(controlName) {
+    for (const member of [...stemMap.values()]) {
+      if (member.alt && member.controlName === controlName) _dropAlt(member);
+    }
+  }
+
+  /**
+   * Which source lane `controlName` sounds: "stem" (the default), "alt" or
+   * "both". A short ramp, so a switch while playing does not click. The stem
+   * keeps streaming while it is off, so switching back is instant.
+   */
+  function setLaneSource(controlName, mode) {
+    laneSource.set(controlName, laneSourceMode(mode));
+    for (const member of stemMap.values()) {
+      if (member.controlName !== controlName) continue;
+      member.srcOn = _srcOnFor(controlName, member.alt);
+      member.gain.gain.setTargetAtTime(_levelOf(member), ctx.currentTime, 0.01);
+    }
+  }
+
   // Initialize: fetch all WAV headers in parallel and load the SoundTouch worklet.
   // Chunk 0 is kicked off in the background so ready() resolves quickly (headers
   // only, ~6 x 1 KB) instead of blocking on the full first-chunk download (~5 MB).
@@ -907,10 +1044,16 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
       for (const stem of stemMap.values()) {
         if (stem.controlName === name) {
           stem.level = Math.max(0, v);
-          stem.gain.gain.setTargetAtTime(stem.level, ctx.currentTime, 0.01);
+          stem.gain.gain.setTargetAtTime(_levelOf(stem), ctx.currentTime, 0.01);
         }
       }
     },
+    // A lane's alternate source (the MIDI of a lane, laneMidiPlay.js), with
+    // the contract of audioEngine.js's.
+    supportsAltSource: true,
+    addAltSource,
+    removeAltSource,
+    setLaneSource,
     setMasterGain(v) {
       master.gain.setTargetAtTime(Math.max(0, v), ctx.currentTime, 0.01);
     },
@@ -1008,6 +1151,9 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
       // its closure reachable, and that closure holds every decoded chunk.
       tickLoop.dispose();
       ctx.removeEventListener("statechange", onCtxStateChange);
+      // The alternate sources' nodes and buffers go while the worklet is
+      // still there to leave: a caller-supplied context outlives this engine.
+      for (const member of [...stemMap.values()]) if (member.alt) _dropAlt(member);
       // The node stops before its context closes (tempoStage.js): an active
       // processor keeps the node, the closed context and this engine alive.
       const node = stNode;
@@ -1016,6 +1162,7 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
       disposeStretchNode(node, ctx, ownsCtx);
       _cache.clear();
       stemMap.clear();
+      laneSource.clear();
     },
     audioContext: ctx,
   };

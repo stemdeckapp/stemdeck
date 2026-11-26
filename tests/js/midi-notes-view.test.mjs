@@ -87,9 +87,9 @@ eq("an unknown source is the stem", normalSource("loud"), "stem");
 eq("the engine calls the MIDI its alt", ["stem", "midi", "both", "x"].map(engineSource), ["stem", "alt", "both", "stem"]);
 eq("the MIDI sound is needed for MIDI and Both", SOURCES.map(needsMidiSound), [false, true, true]);
 eq("no file: no switch", sourceSwitch({ hasFile: false, engineSupports: true }), { show: false, disabled: false, reasonKey: "" });
-eq("a file and the full engine: on", sourceSwitch({ hasFile: true, engineSupports: true }), { show: true, disabled: false, reasonKey: "" });
+eq("a file and an audio engine: on", sourceSwitch({ hasFile: true, engineSupports: true }), { show: true, disabled: false, reasonKey: "" });
 eq("while it is prepared: off", sourceSwitch({ hasFile: true, engineSupports: true, preparing: true }).disabled, true);
-eq("the streaming engine: off, saying why", sourceSwitch({ hasFile: true, engineSupports: false }), { show: true, disabled: true, reasonKey: "laneMidi.source.unsupported" });
+eq("no audio engine: off, saying why",sourceSwitch({ hasFile: true, engineSupports: false }), { show: true, disabled: true, reasonKey: "laneMidi.source.unsupported" });
 
 // ─── The download choices ───
 

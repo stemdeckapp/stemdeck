@@ -28,6 +28,9 @@
 //     covers Include MIDI and the Transcription tab).
 // 11. The Drums lane's roll names its rows (Kick, Snare, Hi-hat).
 // 12. Before YourMT3+'s first run, the row says its download and its speed.
+// 13. Stem, MIDI and Both, on the chunked and the full-decode engine, read on
+//     the lane's VU taps while playing (tests/js/alt-source.test.mjs checks
+//     the timing, which the 6 s fixture cannot show).
 
 import { test, expect } from "@playwright/test";
 import { openStudio, exportUi, JOB_ID } from "./helpers.mjs";
@@ -421,28 +424,74 @@ test("the notes icon opens the row and draws the notes over the waveform, on its
   await expect(chip(page, "bass")).not.toHaveClass(/viewing/);
 });
 
-test("Stem, MIDI and Both switch what the lane plays", async ({ page }) => {
-  await stubServer(page, { midi: { bass: { ...DONE } } });
-  await openStudio(page);
-  await openMidiRow(page);
-  const source = waveRow(page, "bass").locator(".midi-source");
-  await expect(source).toBeVisible();
-  await expect(source.locator(".midi-source-btn")).toHaveText(["Stem", "MIDI", "Both"]);
-  await expect(source.locator('[data-source="stem"]')).toHaveAttribute("aria-pressed", "true");
-  const tracks = () => page.evaluate(async () => (await import("/js/state.js")).audioEngine.getAnalysers("bass").length);
-  expect(await tracks()).toBe(1);
-  await source.locator('[data-source="midi"]').click();
-  await expect(source.locator('[data-source="midi"]')).toHaveAttribute("aria-pressed", "true");
-  // The MIDI sound is added to the lane, in the engine, beside the stem.
-  await expect.poll(tracks).toBe(2);
-  await source.locator('[data-source="both"]').click();
-  await expect(source.locator('[data-source="both"]')).toHaveAttribute("aria-pressed", "true");
-  await source.locator('[data-source="stem"]').click();
-  await expect(source.locator('[data-source="stem"]')).toHaveAttribute("aria-pressed", "true");
-  // The visuals still read the stems' buffers only.
-  const keys = await page.evaluate(async () => [...(await import("/js/state.js")).audioEngine.getBuffers().keys()]);
-  expect(keys.filter((k) => k.startsWith("bass"))).toEqual(["bass"]);
-});
+/** The RMS of each of the bass lane's VU taps now: [stem, MIDI] once the MIDI is in. */
+function laneLevels(page) {
+  return page.evaluate(async () => (await import("/js/state.js")).audioEngine.getAnalysers("bass").map((a) => {
+    const d = new Float32Array(a.fftSize);
+    a.getFloatTimeDomainData(d);
+    let sum = 0;
+    for (const v of d) sum += v * v;
+    return Math.sqrt(sum / d.length);
+  }));
+}
+
+// Both engines: the chunked one is the default for every song with peaks (the
+// fixture has them); "fulldecode" is the flag's other engine. The switch used
+// to be off on the chunked one, so it was unusable in normal use.
+for (const engine of ["chunked", "fulldecode"]) {
+  test(`Stem, MIDI and Both switch what the lane plays (${engine} engine)`, async ({ page }) => {
+    if (engine === "fulldecode") await page.addInitScript(() => localStorage.setItem("stemdeck.audioEngine", "fulldecode"));
+    await stubServer(page, { midi: { bass: { ...DONE } } });
+    await openStudio(page);
+    // The engine the song is on: only the full decode hands the visuals its buffers.
+    const buffers = () => page.evaluate(async () => [...(await import("/js/state.js")).audioEngine.getBuffers().keys()]);
+    if (engine === "chunked") expect(await buffers()).toEqual([]);
+    else expect(await buffers()).toContain("bass");
+    await openMidiRow(page);
+    const source = waveRow(page, "bass").locator(".midi-source");
+    await expect(source).toBeVisible();
+    await expect(source.locator(".midi-source-btn")).toHaveText(["Stem", "MIDI", "Both"]);
+    for (const b of await source.locator(".midi-source-btn").all()) await expect(b).toBeEnabled();
+    await expect(source.locator('[data-source="stem"]')).toHaveAttribute("aria-pressed", "true");
+    const tracks = () => page.evaluate(async () => (await import("/js/state.js")).audioEngine.getAnalysers("bass").length);
+    expect(await tracks()).toBe(1);
+    await source.locator('[data-source="midi"]').click();
+    await expect(source.locator('[data-source="midi"]')).toHaveAttribute("aria-pressed", "true");
+    // The MIDI sound is added to the lane, in the engine, beside the stem.
+    await expect.poll(tracks).toBe(2);
+
+    // Playing, quietly, looped inside the second bass note (2 s to 3 s): the
+    // lane taps are before the master, so the master can be near silent.
+    await page.evaluate(async () => {
+      const eng = (await import("/js/state.js")).audioEngine;
+      eng.setMasterGain(0.02);
+      eng.setLoop(true, 2.05, 2.9);
+      eng.seek(2.05);
+      await eng.play();
+    });
+    const QUIET = 1e-4;
+    const SOUNDING = 1e-3;
+    // MIDI: the MIDI sounds, the stem does not.
+    await expect.poll(async () => (await laneLevels(page))[1], { timeout: 5000 }).toBeGreaterThan(SOUNDING);
+    await expect.poll(async () => (await laneLevels(page))[0], { timeout: 5000 }).toBeLessThan(QUIET);
+    // Both: both sound.
+    await source.locator('[data-source="both"]').click();
+    await expect(source.locator('[data-source="both"]')).toHaveAttribute("aria-pressed", "true");
+    await expect.poll(async () => Math.min(...(await laneLevels(page))), { timeout: 5000 }).toBeGreaterThan(SOUNDING);
+    // Stem: the stem sounds, the MIDI does not.
+    await source.locator('[data-source="stem"]').click();
+    await expect(source.locator('[data-source="stem"]')).toHaveAttribute("aria-pressed", "true");
+    await expect.poll(async () => (await laneLevels(page))[1], { timeout: 5000 }).toBeLessThan(QUIET);
+    await expect.poll(async () => (await laneLevels(page))[0], { timeout: 5000 }).toBeGreaterThan(SOUNDING);
+    await page.evaluate(async () => {
+      const eng = (await import("/js/state.js")).audioEngine;
+      eng.pause();
+      eng.setLoop(false, 0, 0);
+    });
+    // The visuals never read the MIDI sound as a stem.
+    expect((await buffers()).some((k) => k.includes("::alt"))).toBe(false);
+  });
+}
 
 test("without a MIDI file the row has no source switch", async ({ page }) => {
   await stubServer(page);

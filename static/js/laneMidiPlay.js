@@ -15,9 +15,9 @@
 //
 // HEAR: the row's source switch (Stem, MIDI, Both). MIDI renders the notes
 // once to a mono buffer (midiSynth.js, midiRender.js) and hands it to the engine as the
-// lane's alternate source (audioEngine.addAltSource), so everything the lane
-// follows applies to it. Only the full-decode engine can; with the streaming
-// engine of a long song the switch is off and says why.
+// lane's alternate source (addAltSource, on the full-decode and the chunked
+// engine alike), so everything the lane follows applies to it. When the
+// audio engine did not start for the song, the switch is off and says so.
 //
 // DOWNLOAD: the lane's download button (mixer.js a.lane-dl) offers Audio,
 // MIDI, or Audio and MIDI (one zip) while the lane has a MIDI file; without

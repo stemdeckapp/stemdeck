@@ -28,6 +28,7 @@ import { createTickLoop } from "./tickLoop.js";
 import { loadStretchWorklet, disposeStretchNode, pipelineLatencySeconds as stretchLatency } from "./tempoStage.js";
 import { createEngineFx, engineFxApi } from "./fxChain.js";
 import { reachedEnd } from "./playbackEnd.js";
+import { altSourceStart, laneSourceMode, sourceOn } from "./altSource.js";
 
 export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   // Mobile/iOS only starts audio from a context resumed inside a user gesture.
@@ -54,11 +55,9 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   // effects chain, key and the shared tempo stage exactly as the stem does.
   // Which of the two sound is the lane's source (setLaneSource): "stem",
   // "alt" or "both", by controlName; a track's `srcOn` is 1 or 0 from it.
+  // chunkedAudioEngine.js does the same with the same helpers (altSource.js).
   const laneSource = new Map();
-  const srcOnFor = (controlName, alt) => {
-    const mode = laneSource.get(controlName) || "stem";
-    return (alt ? mode !== "stem" : mode !== "alt") ? 1 : 0;
-  };
+  const srcOnFor = (controlName, alt) => sourceOn(laneSource.get(controlName), alt);
   // The gain a track's node is set to: the lane's level, unless the lane's
   // source switch has its source off.
   const levelOf = (t) => t.level * t.srcOn;
@@ -71,6 +70,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     members: () => [...tracks.values()].filter((t) => !t.visualOnly),
     liveNodes: (t) => (t.source ? [t.source] : []),
     onLatencyChange: () => { _epoch++; },
+    levelOf: (t) => levelOf(t),
   });
   master.connect(fx.masterInput);
 
@@ -528,16 +528,18 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     fx.attachSource(track, gain, analyser);
     routeTrack(track, true);
     if (playing) {
-      // The place the running sources have reached, in their own time
-      // (sourceTimeToCtxTime's inverse); during a count-in, their start.
-      const at = Math.max(ctx.currentTime, startCtxTime);
-      const offset = ctxTimeToSourceTime(at);
-      if (offset < buffer.duration) {
+      // Just ahead of now, at the place the running sources will have
+      // reached by then (altSource.js); during a count-in, their start.
+      const at = altSourceStart({
+        startCtxTime, startOffset, srcRate: srcRate(), ctxNow: ctx.currentTime,
+        bufferDuration: buffer.duration, join: true,
+      });
+      if (at) {
         const src = ctx.createBufferSource();
         src.buffer = buffer;
         if (!stNode) src.playbackRate.value = _playbackRate;
         src.connect(fx.sourceInput(track));
-        src.start(at, Math.max(0, offset));
+        src.start(at.when, at.offset);
         track.source = src;
       }
     }
@@ -557,7 +559,9 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
       try { t.chainHost?.dispose(); } catch { /* already gone */ }
       t.chainHost = null;
       try { t.gain.disconnect(); } catch { /* noop */ }
-      try { t.fx?.output?.disconnect(); } catch { /* noop */ }
+      // Its EQ slot, with any EQ branch still fading out on a timer.
+      try { t.fx?.dispose(); } catch { /* noop */ }
+      t.fx = null;
       try { t.analyser.disconnect(); } catch { /* noop */ }
       _laneLeft(t.bus);
       t.bus = null;
@@ -570,8 +574,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
    * "both". A short ramp, so a switch while playing does not click.
    */
   function setLaneSource(controlName, mode) {
-    const next = mode === "alt" || mode === "both" ? mode : "stem";
-    laneSource.set(controlName, next);
+    laneSource.set(controlName, laneSourceMode(mode));
     for (const t of tracks.values()) {
       if (t.visualOnly || t.controlName !== controlName) continue;
       t.srcOn = srcOnFor(controlName, t.alt);
@@ -718,8 +721,8 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     },
     setGain,
     setMasterGain,
-    // A lane's alternate source (the MIDI of a lane,
-    // laneMidiRows.js). The streaming engine has none.
+    // A lane's alternate source (the MIDI of a lane, laneMidiPlay.js). The
+    // chunked engine has the same; the legacy <audio> path has none.
     supportsAltSource: true,
     addAltSource,
     removeAltSource,

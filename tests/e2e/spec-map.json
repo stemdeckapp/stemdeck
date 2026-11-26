@@ -383,8 +383,8 @@
       "specs": ["lane-midi", "transcription-settings", "export-all-stems"]
     },
     {
-      "why": "Seeing, hearing and downloading a lane's MIDI: the piano roll over the waveform (the Drums lane's named rows), the Stem/MIDI/Both switch and its sound rendered into the engine as the lane's alternate source (audioEngine.addAltSource), and the download button's Audio, MIDI, Audio and MIDI choice",
-      "paths": ["static/js/laneMidiPlay.js", "static/js/midiNotesView.js", "static/js/midiSynth.js", "static/js/midiRender.js", "static/js/audioEngine.js", "static/css/waves.css"],
+      "why": "Seeing, hearing and downloading a lane's MIDI: the piano roll over the waveform (the Drums lane's named rows), the Stem/MIDI/Both switch and its sound rendered into either engine as the lane's alternate source (addAltSource, altSource.js), and the download button's Audio, MIDI, Audio and MIDI choice",
+      "paths": ["static/js/laneMidiPlay.js", "static/js/midiNotesView.js", "static/js/midiSynth.js", "static/js/midiRender.js", "static/js/audioEngine.js", "static/js/chunkedAudioEngine.js", "static/js/altSource.js", "static/css/waves.css"],
       "specs": ["lane-midi", "help-mode", "lane-alignment", "track-header", "eq-panels", "transpose", "speed-control"]
     },
     {

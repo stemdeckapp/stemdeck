@@ -238,9 +238,12 @@ export function createChainHost(ctx) {
 /**
  * Every host of one engine. `members()` lists the engine's playback sources
  * (each with .gain, .level, .controlName), `membersOf(name)` those of one
- * lane, `liveNodes(member)` the source nodes playing into it now.
+ * lane, `liveNodes(member)` the source nodes playing into it now, and
+ * `levelOf(member)` the gain its node rests at (fxChain.createEngineFx).
  */
-export function createChainHosts(ctx, { members, membersOf, liveNodes, onLatencyChange = null }) {
+export function createChainHosts(ctx, {
+  members, membersOf, liveNodes, onLatencyChange = null, levelOf = (member) => member.level ?? 1,
+}) {
   const lanes = new Map();
   let anchor = { offset: 0, when: 0, playing: false };
   let compFrames = 0;
@@ -259,7 +262,7 @@ export function createChainHosts(ctx, { members, membersOf, liveNodes, onLatency
     g.setValueAtTime(g.value, at);
     g.linearRampToValueAtTime(0, at + ROUTE_FADE);
     g.setValueAtTime(0, at + ROUTE_FADE + ROUTE_HOLD);
-    g.linearRampToValueAtTime(member.level ?? 1, at + ROUTE_FADE + ROUTE_HOLD + ROUTE_FADE);
+    g.linearRampToValueAtTime(levelOf(member), at + ROUTE_FADE + ROUTE_HOLD + ROUTE_FADE);
     laterIn(ctx, ROUTE_FADE + ROUTE_HOLD / 2, fn);
   }
 

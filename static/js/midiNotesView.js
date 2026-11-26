@@ -174,8 +174,9 @@ export function needsMidiSound(source) {
 
 /**
  * What the switch shows: hidden without a MIDI file; off with its reason
- * when the engine playing the song cannot add a source (the streaming
- * engine of a long song) or the sound is being prepared.
+ * when no audio engine plays the song (it failed to load; both engines can
+ * add the source, and the legacy <audio> path shows no MIDI rows at all);
+ * off while the sound is being prepared.
  */
 export function sourceSwitch({ hasFile, engineSupports, preparing = false }) {
   if (!hasFile) return { show: false, disabled: false, reasonKey: "" };

@@ -171,11 +171,17 @@ export function createFxSlot(ctx) {
  * be put in or taken out while the song plays. A source connects to
  * sourceInput(member): the lane gain itself while the lane has no chain,
  * exactly as before chains existed.
+ *
+ * `levelOf(member)` is the gain a member's node is set to (its lane level,
+ * 0 while the lane's source switch has that source off), so a duck around
+ * a chain change comes back to it and not to a level the switch has off.
  */
-export function createEngineFx(ctx, membersOf, { members = () => [], liveNodes = () => [], onLatencyChange = null } = {}) {
+export function createEngineFx(ctx, membersOf, {
+  members = () => [], liveNodes = () => [], onLatencyChange = null, levelOf,
+} = {}) {
   const laneEq = new Map();
   const taps = createTapRegistry(ctx);
-  const chains = createChainHosts(ctx, { members, membersOf, liveNodes, onLatencyChange });
+  const chains = createChainHosts(ctx, { members, membersOf, liveNodes, onLatencyChange, levelOf });
   const master = createFxSlot(ctx);
   let masterEq = null;
   // After the master EQ: the master effect (masterFx.js), created the first
