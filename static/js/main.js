@@ -1302,9 +1302,12 @@ const canDragOut = Boolean(window.__TAURI__?.core?.invoke);
 if (canDragOut) document.body.classList.add("can-drag-out");
 
 // The export panel's format, read from the DOM rather than its closure.
+// Scoped to the Studio's panel: Performance has format tabs of its own, and
+// #streamer comes before the footer in the page, so an unscoped query read
+// those first.
 // MP4 is a video mux that cannot be region-trimmed, so a drag is always audio.
 function exportFormat() {
-  const ext = document.querySelector(".export-fmt.active")?.id?.replace("t-fmt-", "") || "wav";
+  const ext = document.querySelector("#t-export-panel .export-fmt.active")?.id?.replace("t-fmt-", "") || "wav";
   return ext === "mp4" ? "wav" : ext;
 }
 
