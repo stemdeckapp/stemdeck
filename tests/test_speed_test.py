@@ -29,6 +29,7 @@ from app.core.stem_models import MODELS, SELECTABLE_STEMS
 from app.main import app
 from app.pipeline import jobqueue
 from app.pipeline import speed_test_worker as worker
+from tests.process_gone import is_gone
 
 KIM, SIX, FT = "kim_mel_roformer", "htdemucs_6s", "htdemucs_ft"
 # Taken before the autouse fixture replaces it, for the tests that need the
@@ -961,24 +962,6 @@ def test_a_worker_that_ignores_the_stop_is_killed(monkeypatch):
     assert time.monotonic() - started < 15
 
 
-def _is_gone(pid: int) -> bool:
-    """Whether the process is dead. A killed child whose parent is gone is
-    reparented to pid 1, and where pid 1 never reaps (the CI job container runs
-    `tail -f /dev/null`) it stays a zombie: kill(pid, 0) still succeeds for it,
-    but it is not running. So a zombie counts as gone."""
-    from app.core.process import process_exists
-
-    if not process_exists(pid):
-        return True
-    if os.name == "nt":
-        return False
-    try:
-        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
-    except OSError:
-        return True
-    return stat.rsplit(")", 1)[-1].split()[0] in ("Z", "X")
-
-
 def test_a_child_holding_the_output_open_is_killed_too(monkeypatch):
     code = (
         "import subprocess, sys, time\n"
@@ -1001,9 +984,9 @@ def test_a_child_holding_the_output_open_is_killed_too(monkeypatch):
     assert time.monotonic() - started < 20
     [pid] = [int(line.split()[1]) for line in run.tail if line.startswith("child ")]
     deadline = time.monotonic() + 10
-    while not _is_gone(pid) and time.monotonic() < deadline:
+    while not is_gone(pid) and time.monotonic() < deadline:
         time.sleep(0.1)
-    assert _is_gone(pid)
+    assert is_gone(pid)
 
 
 @pytest.mark.parametrize(
