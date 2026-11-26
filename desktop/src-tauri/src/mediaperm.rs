@@ -77,7 +77,9 @@ where
 {
     let backend_url: BackendUrl = std::sync::Arc::new(backend_url);
     if let Err(e) = window.with_webview(move |webview| attach(webview, backend_url)) {
-        eprintln!("[stemdeck] could not reach the webview for media permissions: {e}");
+        crate::shell_log(&format!(
+            "could not reach the webview for media permissions: {e}"
+        ));
     }
 }
 
@@ -149,7 +151,9 @@ fn attach(webview: tauri::webview::PlatformWebview, backend_url: BackendUrl) {
             .and_then(|core| core.add_PermissionRequested(&handler, &mut token))
     };
     if let Err(e) = added {
-        eprintln!("[stemdeck] could not install the media permission handler: {e}");
+        crate::shell_log(&format!(
+            "could not install the media permission handler: {e}"
+        ));
     }
 }
 

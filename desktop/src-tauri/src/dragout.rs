@@ -82,7 +82,9 @@ fn decode_icon(icon: Option<String>) -> Vec<u8> {
 }
 
 fn log_icon_rejected(len: usize) {
-    eprintln!("[stemdeck] ignoring a drag preview of {len} bytes; using the app icon");
+    crate::shell_log(&format!(
+        "ignoring a drag preview of {len} bytes; using the app icon"
+    ));
 }
 
 /// Characters no Windows filename may contain, plus the separators every
