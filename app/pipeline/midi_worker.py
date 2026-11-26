@@ -184,28 +184,34 @@ def model_output(model, audio: Path, on_pct=None) -> dict:
 
 
 def output_notes(output: dict, params: dict) -> list:
-    """Note events (start s, end s, MIDI pitch, amplitude, bends) from the
-    model's activations, under ``params`` (midi.run_params)."""
+    """Note events (start s, end s, MIDI pitch, amplitude, None) from the
+    model's activations, under ``params`` (midi.run_params).
+
+    Basic Pitch's own steps where they are right (the stem's frequency range,
+    inferred onsets, frame times), StemDeck's decoding where they are not
+    (midi_notes.onset_notes), then one voice for a stem that asks for it."""
     import numpy as np
     from basic_pitch import note_creation
     from basic_pitch.constants import AUDIO_SAMPLE_RATE, FFT_HOP
 
+    from app.pipeline import midi_notes
+
     min_note_len = int(
         np.round(params["minimum_note_length"] / 1000 * (AUDIO_SAMPLE_RATE / FFT_HOP))
     )
-    # model_output_to_notes zeroes the activations outside the frequency
-    # range in place: a caller that decodes one output more than once passes
-    # a copy each time.
-    _midi, notes = note_creation.model_output_to_notes(
-        output,
-        onset_thresh=params["onset_threshold"],
-        frame_thresh=params["frame_threshold"],
-        min_note_len=min_note_len,
-        min_freq=params["minimum_frequency"],
-        max_freq=params["maximum_frequency"],
-        multiple_pitch_bends=False,
-        melodia_trick=params["melodia_trick"],
+    # constrain_frequency zeroes the activations outside the range in place:
+    # a caller that decodes one output more than once passes a copy each time.
+    onsets, frames = note_creation.constrain_frequency(
+        output["onset"], output["note"], params["maximum_frequency"], params["minimum_frequency"]
     )
+    onsets = note_creation.get_infered_onsets(onsets, frames)
+    found = midi_notes.onset_notes(
+        frames, onsets, params["onset_threshold"], params["frame_threshold"], min_note_len
+    )
+    times = note_creation.model_frames_to_time(frames.shape[0])
+    notes = [(times[a], times[b], pitch, amp, None) for a, b, pitch, amp in found]
+    if params.get("one_voice"):
+        notes = midi_notes.one_voice(notes)
     return notes
 
 

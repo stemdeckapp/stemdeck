@@ -118,6 +118,23 @@ def test_real_inference_finds_the_pitch(tmp_path, name, tone, stem, pitch):
     assert loudest[0] == pitch, notes
 
 
+def test_a_bass_line_comes_out_one_note_at_a_time(tmp_path):
+    """A1 then D2, each with strong partials: the bass preset's one voice
+    (midi_notes.one_voice) keeps each fundamental and never two notes at once,
+    where Basic Pitch alone also hears the octave above."""
+    silence = np.zeros(SR // 2)
+    line = np.concatenate(
+        [silence, _tone(55.0, 1.5, partials=6, decay=0.5), _tone(73.42, 1.5, partials=6, decay=0.5)]
+    )
+    audio = _wav(tmp_path / "line.wav", np.concatenate([line, silence]))
+    out = tmp_path / "line.mid"
+    result = _run(_cmd(audio, out, "bass"), tmp_path)
+    assert result.returncode == 0, result.stderr[-3000:]
+    notes = mf.read_notes(out)["notes"]
+    assert [n[2] for n in notes] == [33, 38], notes
+    assert all(a[1] <= b[0] for a, b in zip(notes, notes[1:], strict=False))
+
+
 def test_too_long_is_refused_before_anything_is_decoded_or_imported(tmp_path):
     marker = tmp_path / "engine-imported"
     fake = _fake_engine(tmp_path, marker=marker)
@@ -193,11 +210,20 @@ def _fake_engine(tmp_path: Path, *, marker: Path | None = None, fail: str = "") 
                 def __init__(self, path):
                     print("loading", path)
                     self.model_type = Model.MODEL_TYPES.ONNX
+                    self.calls = 0
 
                 def predict(self, x):
+                    # Window 0 holds MIDI 60 from frame 10 to 20, window 1
+                    # MIDI 64 from its frame 10 to 20, window 2 nothing.
                     print("predicting")
-                    return {"note": np.zeros((1, 4, 88)), "onset": np.zeros((1, 4, 88)),
-                             "contour": np.zeros((1, 4, 264))}
+                    note = np.zeros((1, 40, 88))
+                    onset = np.zeros((1, 40, 88))
+                    if self.calls < 2:
+                        pitch = (60, 64)[self.calls] - 21
+                        note[0, 10:20, pitch] = 0.9
+                        onset[0, 10, pitch] = 0.9
+                    self.calls += 1
+                    return {"note": note, "onset": onset, "contour": np.zeros((1, 40, 264))}
 
             def get_audio_input(path, overlap_len, hop_size):
                 # Three windows' worth of samples: (n + overlap / 2) / hop = 3.
@@ -213,10 +239,18 @@ def _fake_engine(tmp_path: Path, *, marker: Path | None = None, fail: str = "") 
     (pkg / "note_creation.py").write_text(
         textwrap.dedent(
             f"""
-            def model_output_to_notes(output, **kw):
-                print("making notes", kw)
+            import numpy as np
+
+            def constrain_frequency(onsets, frames, max_freq, min_freq):
+                return onsets, frames
+
+            def get_infered_onsets(onsets, frames):
+                print("making notes")
                 {"raise RuntimeError('engine blew up')" if fail == "run" else ""}
-                return None, [(0.5, 1.0, 60, 0.8, None), (1.0, 1.5, 64, 0.4, [0, 1])]
+                return onsets
+
+            def model_frames_to_time(n_frames):
+                return np.arange(n_frames) * 0.05
             """
         ),
         encoding="utf-8",

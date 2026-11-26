@@ -1175,37 +1175,76 @@ MIDI_STEM_PROGRAMS: dict[str, tuple[int, str]] = {
     "piano": (0, "Keys"),
     "bass": (33, "Bass"),
 }
-# How much detail is kept, as Basic Pitch's thresholds (0..1) and minimum
-# note length (ms). The spike's numbers on the same two songs:
-# - Basic Pitch's own defaults (onset 0.5, frame 0.3, 127.7 ms) drop the 16th
-#   notes of a bass line at 144 BPM (104 ms each); 58 ms kept about 46% more
-#   bass notes.
-# - Strict thresholds (onset 0.7, frame 0.5) found 40 to 65% fewer notes:
-#   485 piano notes against 1208 on the 359 s song, 179 bass against 433 on
-#   the 229 s one. Fewer false notes, and fewer real ones.
-# "balanced" keeps the default thresholds with an 80 ms floor (a 16th at up
-# to about 187 BPM); "detailed" is the 58 ms run with slightly lower
-# thresholds; "clean" is the strict run at the default length.
+# How much detail is kept, per stem: Basic Pitch's thresholds (0..1), its
+# minimum note length (ms), and "one_voice" (midi_notes.one_voice, one note
+# at a time). Notes come from onsets only (midi_notes.onset_notes): Basic
+# Pitch's "melodia trick" is never used.
+#
+# Tuned on the BabySlakh tuning tracks 1 to 10 with scripts/midi_bench.py
+# (note onset F1 at 50 ms, mir_eval), weighted on what a person gets: the mix
+# separated by htdemucs_6s, then transcribed. "balanced", before (one preset
+# for both stems: onset 0.5, frame 0.3, 80 ms, melodia on) and after:
+# - bass, separated: F1 0.445 to 0.667 (tuning), 0.544 to 0.772 (held-out
+#   tracks 11 to 20); clean stem: 0.573 to 0.879, 0.639 to 0.936. Most of
+#   the gain is one_voice: Basic Pitch heard a bass note's octave partial as
+#   a second note (2736 of 3952 extra notes on the clean tuning stems; 9
+#   after). The higher thresholds drop most of what bleeds in from other
+#   instruments (2049 extra notes with no reference note near, 129 after).
+# - piano, separated: F1 0.328 to 0.413 (tuning), 0.326 to 0.394 (held-out);
+#   clean stem: 0.779 to 0.864, 0.792 to 0.868; MAESTRO v3 test pieces,
+#   real recordings never tuned on: 0.755 to 0.813 clean, 0.711 to 0.748
+#   separated. The melodia trick makes notes from the frame activation where
+#   there is no onset; on piano those were mostly fragments of held notes
+#   (1360 extra notes on the clean tuning stems, 272 after) and notes with
+#   nothing in the reference near them (556, 59 after), so it is off, and the
+#   onset threshold goes up to 0.6. Octave confusions are what is left (2063).
+# - Tried and left out, no gain: dropping a weak note that sits a harmonic
+#   above a held one on piano (ratios 0.3 to 1.0), and Basic Pitch's inferred
+#   onsets off.
+# "detailed" keeps more quiet and short notes, "clean" only clear ones, from
+# the same sweep; every preset is scored in data/midi-bench/results/after.md.
 MIDI_DETAILS = ("balanced", "detailed", "clean")
 MIDI_DEFAULT_DETAIL = "balanced"
-MIDI_DETAIL_PRESETS: dict[str, dict[str, float | bool]] = {
-    "balanced": {
-        "onset_threshold": 0.5,
-        "frame_threshold": 0.3,
-        "minimum_note_length": 80.0,
-        "melodia_trick": True,
+MIDI_DETAIL_PRESETS: dict[str, dict[str, dict[str, float | bool]]] = {
+    "piano": {
+        "balanced": {
+            "onset_threshold": 0.6,
+            "frame_threshold": 0.3,
+            "minimum_note_length": 58.0,
+            "one_voice": False,
+        },
+        "detailed": {
+            "onset_threshold": 0.5,
+            "frame_threshold": 0.2,
+            "minimum_note_length": 58.0,
+            "one_voice": False,
+        },
+        "clean": {
+            "onset_threshold": 0.7,
+            "frame_threshold": 0.4,
+            "minimum_note_length": 80.0,
+            "one_voice": False,
+        },
     },
-    "detailed": {
-        "onset_threshold": 0.4,
-        "frame_threshold": 0.25,
-        "minimum_note_length": 58.0,
-        "melodia_trick": True,
-    },
-    "clean": {
-        "onset_threshold": 0.7,
-        "frame_threshold": 0.5,
-        "minimum_note_length": 127.7,
-        "melodia_trick": True,
+    "bass": {
+        "balanced": {
+            "onset_threshold": 0.7,
+            "frame_threshold": 0.5,
+            "minimum_note_length": 58.0,
+            "one_voice": True,
+        },
+        "detailed": {
+            "onset_threshold": 0.6,
+            "frame_threshold": 0.4,
+            "minimum_note_length": 58.0,
+            "one_voice": True,
+        },
+        "clean": {
+            "onset_threshold": 0.8,
+            "frame_threshold": 0.5,
+            "minimum_note_length": 80.0,
+            "one_voice": True,
+        },
     },
 }
 # The written file: ticks per quarter note, and the velocity range a note's

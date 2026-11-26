@@ -282,7 +282,8 @@ async def test_a_run_writes_the_file_and_serves_its_state(jobs_dir, client, work
     assert 'filename="Song_piano.mid"' in r.headers["content-disposition"]
     stem, params, plan = worker.calls[-1]
     assert stem == "piano" and params["minimum_frequency"] == 27.5
-    assert params["maximum_frequency"] == 4200.0 and params["minimum_note_length"] == 80.0
+    assert params["maximum_frequency"] == 4200.0 and params["minimum_note_length"] == 58.0
+    assert params["one_voice"] is False
     info = json.loads((jobs_dir / JOB / "midi.json").read_text(encoding="utf-8"))
     record = info["stems"]["piano"]
     assert record["engine"] == "basic_pitch" and record["engine_version"] == "0.4.0"
@@ -312,7 +313,9 @@ async def test_bass_uses_its_range_the_detail_asked_and_the_song_tempo(jobs_dir,
     assert entry["tempo_source"] == "song" and entry["detail"] == "clean"
     _stem, params, plan = worker.calls[-1]
     assert (params["minimum_frequency"], params["maximum_frequency"]) == (30.0, 400.0)
-    assert (params["onset_threshold"], params["frame_threshold"]) == (0.7, 0.5)
+    assert (params["onset_threshold"], params["frame_threshold"]) == (0.8, 0.5)
+    # A bass line is one note at a time (midi_notes.one_voice).
+    assert params["one_voice"] is True
     assert plan["bpm"] == pytest.approx(150.0) and plan["bar_start"] == pytest.approx(0.65)
 
 
@@ -323,7 +326,7 @@ async def test_the_detail_setting_is_the_default(jobs_dir, client, worker):
         await c.post(f"/api/jobs/{JOB}/midi", json={"stem": "piano"})
         entry = (await _settled(c))["midi"]["piano"]
     assert entry["detail"] == "detailed"
-    assert worker.calls[-1][1]["minimum_note_length"] == 58.0
+    assert worker.calls[-1][1]["frame_threshold"] == 0.2
 
 
 # -- refusals

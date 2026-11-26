@@ -223,7 +223,11 @@ def song_tempo(job_dir: Path) -> dict[str, Any]:
 def run_params(stem: str, detail: str) -> dict[str, Any]:
     """Basic Pitch's parameters for ``stem`` at ``detail``."""
     low, high = MIDI_STEM_RANGES[stem]
-    return {**MIDI_DETAIL_PRESETS[detail], "minimum_frequency": low, "maximum_frequency": high}
+    return {
+        **MIDI_DETAIL_PRESETS[stem][detail],
+        "minimum_frequency": low,
+        "maximum_frequency": high,
+    }
 
 
 def _now_iso() -> str:
