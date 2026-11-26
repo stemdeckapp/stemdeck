@@ -164,7 +164,7 @@ eq("velocity 0 is silent", velocityGain(0), 0);
 check("a soft note stays audible (curved)", velocityGain(32) > 32 / 127);
 eq("the sound lasts the song", renderSeconds([[0, 1, 60, 100]], 10, keys), 10);
 check("or the last release past it", near(renderSeconds([[9, 12, 60, 100]], 10, keys), 12 + keys.release + 0.05));
-eq("a rendering is reused per song, lane, file and rate", soundKey("abc", "bass", "2026", 48000), "abc|bass|2026|48000");
+eq("a rendering is reused per song, lane, file, rate and stem level", soundKey("abc", "bass", "2026", 48000, 0.05), "abc|bass|2026|48000|0.05");
 check("another file is another rendering", soundKey("abc", "bass", "a", 48000) !== soundKey("abc", "bass", "b", 48000));
 
 // ─── The strings ───

@@ -351,6 +351,21 @@ export function levelScale(renderRms, stemRms, renderPeak) {
   return Math.round(k * 10000) / 10000;
 }
 
+/**
+ * The RMS a lane's MIDI sound is matched to (levelScale), the same on both
+ * audio engines: the stem file's own, as the server measured it (`stemRms`,
+ * the notes answer's stem_rms: channel 0 of the whole file). The streaming
+ * engine never holds the stem whole, so this is the only level it can have;
+ * the full decode uses it too, so the two match the same way. Only when the
+ * server has none (it could not read the file) is the decoded stem measured
+ * instead, channel 0, every sample, when the engine holds it (`decoded`, a
+ * Float32Array). 0 when neither: the sound is then left as rendered.
+ */
+export function stemLevel(stemRms, decoded = null) {
+  if (isNum(stemRms) && stemRms > 0) return stemRms;
+  return decoded && decoded.length ? levelOf(decoded, 1).rms : 0;
+}
+
 /** RMS and peak of `samples`, every `stride`th sample (a fast estimate). */
 export function levelOf(samples, stride = 4) {
   let sum = 0;
@@ -366,7 +381,11 @@ export function levelOf(samples, stride = 4) {
   return { rms: n ? Math.sqrt(sum / n) : 0, peak };
 }
 
-/** Which rendering a lane can reuse: the song, the lane, its file and the rate. */
-export function soundKey(jobId, stem, at, sampleRate) {
-  return `${jobId}|${stem}|${at || ""}|${sampleRate}`;
+/**
+ * Which rendering a lane can reuse: the song, the lane, its file, the rate
+ * and the stem level it is matched to (a stem replaced since is louder or
+ * quieter, and the sound follows it).
+ */
+export function soundKey(jobId, stem, at, sampleRate, level = 0) {
+  return `${jobId}|${stem}|${at || ""}|${sampleRate}|${isNum(level) && level > 0 ? level : 0}`;
 }

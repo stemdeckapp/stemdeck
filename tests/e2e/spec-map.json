@@ -383,8 +383,8 @@
       "specs": ["lane-midi", "transcription-settings", "export-all-stems"]
     },
     {
-      "why": "Seeing, hearing and downloading a lane's MIDI: the piano roll with the waveform (the Drums lane's named rows), drawn behind or in front of it as the row's data-midi-source says (waves.css), the Stem/MIDI/Both switch and its sound rendered into either engine as the lane's alternate source (addAltSource, altSource.js), and the download button's Audio, MIDI, Audio and MIDI choice",
-      "paths": ["static/js/laneMidiPlay.js", "static/js/midiNotesView.js", "static/js/midiSynth.js", "static/js/midiRender.js", "static/js/audioEngine.js", "static/js/chunkedAudioEngine.js", "static/js/altSource.js", "static/css/waves.css"],
+      "why": "Seeing, hearing and downloading a lane's MIDI: the piano roll with the waveform (the Drums lane's named rows), drawn behind or in front of it as the row's data-midi-source says (waves.css), the Stem/MIDI/Both switch and its sound rendered into either engine as the lane's alternate source (addAltSource, altSource.js), the download button's Audio, MIDI, Audio and MIDI choice, and the stem level the sound is matched to (stem_level.py, the notes answer's stem_rms)",
+      "paths": ["static/js/laneMidiPlay.js", "static/js/midiNotesView.js", "static/js/midiSynth.js", "static/js/midiRender.js", "static/js/audioEngine.js", "static/js/chunkedAudioEngine.js", "static/js/altSource.js", "static/css/waves.css", "app/pipeline/stem_level.py"],
       "specs": ["lane-midi", "help-mode", "lane-alignment", "track-header", "eq-panels", "transpose", "speed-control"]
     },
     {

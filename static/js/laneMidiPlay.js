@@ -33,13 +33,15 @@ import { t } from "./i18n.js";
 import { MIDI_LANES, midiFilename, midiOf, midiUrl, safeTitle } from "./laneMidiView.js";
 import {
   bothZipName, bothZipUrl, cleanNotes, downloadChoices, engineSource, laneGeometry, needsMidiSound, needsRefit,
-  normalSource, rollRects, sourceSwitch, widthAttr,
+  normalSource, rollRects, sourceSwitch, stemLevel, widthAttr,
 } from "./midiNotesView.js";
 import { canRender, forgetSounds, laneSound } from "./midiSynth.js";
 
 let _jobId = null;
 let _job = null;
-// lane -> { at, notes } once read; lane -> promise while reading.
+// lane -> { at, stem, notes, stemRms } once read (the MIDI file's time, the
+// stem file's URL with its revision, the notes, the stem's level the server
+// measured); `${lane}|${at}|${stem}` -> promise while reading.
 const _notes = new Map();
 const _reading = new Map();
 // jobId:lane -> "stem" | "midi" | "both", for this page.
@@ -47,7 +49,7 @@ const _source = new Map();
 // lane -> a sentence about the sound (preparing, failed), shown in the row.
 const _soundNote = new Map();
 // The engine the lanes' sources were last given to, and what each lane has
-// in it: lane -> the file time ("at") of the rendering added.
+// in it: lane -> what the rendering added was made from (soundOf).
 let _engine = null;
 const _added = new Map();
 // lane -> the roll's SVG, kept across the redraws that rewrite the row; and
@@ -98,18 +100,39 @@ function fileOf(lane) {
   return m?.has_file ? m : null;
 }
 
+/** The lane's stem file as the song lists it, "?v=<n>" once replaced in place. */
+function stemFileOf(lane) {
+  const s = (Array.isArray(_job?.stems) ? _job.stems : []).find((e) => e?.name === lane);
+  return typeof s?.url === "string" ? s.url : "";
+}
+
+/** What a lane's added sound was made from: its MIDI file and its stem file (the level). */
+const soundOf = (lane, m) => `${m.at}|${stemFileOf(lane)}`;
+
+/** The held answer when it is of the lane's current MIDI file and stem file. */
+function heldFor(lane, m) {
+  const held = _notes.get(lane);
+  return held && held.at === m.at && held.stem === stemFileOf(lane) ? held : null;
+}
+
 /** The lane's notes for its current file, or null (read on demand). */
 function notesOf(lane) {
   const m = fileOf(lane);
   if (!m) return null;
-  const held = _notes.get(lane);
-  if (held && held.at === m.at) return held.notes;
+  const held = heldFor(lane, m);
+  if (held) return held.notes;
   readNotes(lane, m);
   return null;
 }
 
+/**
+ * Read the notes answer: the notes, and the stem's level the MIDI sound is
+ * matched to, which is read again when the stem file is replaced (its level
+ * changed with it). Resolves to the held entry, or null.
+ */
 function readNotes(lane, m) {
-  const key = `${lane}|${m.at}`;
+  const stem = stemFileOf(lane);
+  const key = `${lane}|${m.at}|${stem}`;
   if (_reading.has(key)) return _reading.get(key);
   const jobId = _jobId;
   const p = (async () => {
@@ -117,14 +140,16 @@ function readNotes(lane, m) {
       const v = m.at ? `?v=${encodeURIComponent(m.at)}` : "";
       const r = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/midi/${encodeURIComponent(lane)}/notes${v}`, { cache: "no-store" });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const notes = cleanNotes(await r.json());
+      const answer = await r.json();
+      const notes = cleanNotes(answer);
       if (jobId !== _jobId) return null;
-      _notes.set(lane, { at: m.at, notes });
+      const held = { at: m.at, stem, notes, stemRms: answer?.stem_rms };
+      _notes.set(lane, held);
       // The roll waited for them.
       syncRolls(_lastRolls.lanes, _lastRolls.viewOn);
       _onChange();
       syncSources();
-      return notes;
+      return held;
     } catch (e) {
       console.warn("[midi] reading the notes failed:", e);
       return null;
@@ -358,7 +383,7 @@ async function syncPass() {
       engine.setLaneSource(lane, "stem");
       continue;
     }
-    if (_added.get(lane) === m.at) {
+    if (_added.get(lane) === soundOf(lane, m)) {
       engine.setLaneSource(lane, engineSource(source));
       continue;
     }
@@ -367,7 +392,8 @@ async function syncPass() {
 }
 
 async function addSound(engine, lane, m) {
-  const notes = _notes.get(lane)?.at === m.at ? _notes.get(lane).notes : await readNotes(lane, m);
+  const held = heldFor(lane, m) || (await readNotes(lane, m));
+  const notes = held?.notes;
   if (!notes || engine !== audioEngine) return;
   const jobId = _jobId;
   _soundNote.set(lane, { kind: "running", text: t("laneMidi.source.preparing", { name: display(lane) }) });
@@ -378,12 +404,14 @@ async function addSound(engine, lane, m) {
     const buffer = await laneSound({
       jobId, stem: lane, at: m.at, notes, duration: engine.getDuration?.() || songDuration(),
       context: engine.audioContext,
-      // At the stem's loudness, so the switch does not jump in level.
-      reference: engine.getBuffers?.().get(lane) || null,
+      // At the stem's loudness, so the switch does not jump in level: the
+      // server's measurement of the stem file, the same on both engines (the
+      // streaming one holds no whole stem to measure).
+      stemRms: stemLevel(held.stemRms, engine.getBuffers?.().get(lane)?.getChannelData?.(0)),
     });
     if (jobId !== _jobId || engine !== audioEngine || engine.isDestroyed?.()) return;
     if (!engine.addAltSource(lane, buffer)) throw new Error("the lane has no track");
-    _added.set(lane, m.at);
+    _added.set(lane, soundOf(lane, m));
     engine.setLaneSource(lane, engineSource(laneSource(lane)));
     _soundNote.delete(lane);
   } catch (e) {

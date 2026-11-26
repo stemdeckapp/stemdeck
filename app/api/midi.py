@@ -5,7 +5,8 @@
     POST   /api/jobs/{id}/midi/{stem}/cancel
     DELETE /api/jobs/{id}/midi/{stem}
     GET    /api/jobs/{id}/stems/{stem}.mid
-    GET    /api/jobs/{id}/midi/{stem}/notes     the file's notes, for the piano roll
+    GET    /api/jobs/{id}/midi/{stem}/notes     the file's notes, for the piano roll,
+                                                and the stem's level, for the sound
 
 Its own router rather than more of jobs.py (2900 lines): the five routes, the
 refusal table and the run task are one feature. Every refusal is
@@ -28,17 +29,18 @@ from fastapi import APIRouter
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from app.api.jobs import _keep_saved_fields
+from app.api.jobs import _keep_saved_fields, _write_metadata_fields
 from app.api.stems import _stem_download_name
 from app.core.config import JOB_ID_RE, JOBS_DIR, MIDI_DETAILS, MIDI_STEMS, TRANSCRIBE_MAX_SECONDS
 from app.core.models import FINISHED_STATUSES, Job, clean_midi
 from app.core.registry import get as registry_get
+from app.core.registry import metadata_lock
 from app.core.registry import operation as registry_operation
 from app.core.registry import persist as registry_persist
 from app.core.settings import get_transcribe_detail, midi_stem_enabled
 from app.core.stem_files import stem_path
 from app.core.stems_location import is_relocating
-from app.pipeline import jobqueue, midi_file
+from app.pipeline import jobqueue, midi_file, stem_level
 from app.pipeline import midi as midi_run
 
 logger = logging.getLogger("stemdeck.api.midi")
@@ -265,12 +267,39 @@ async def get_midi(job_id: str, stem: str) -> FileResponse | JSONResponse:
     )
 
 
+def _level_of(job: Job, job_dir: Path, stem: str) -> tuple[float | None, dict | None]:
+    """The RMS of the stem's file (app/pipeline/stem_level.py): the one kept
+    for the file on disk now, else measured now, with its new record to keep.
+    (None, None) without a finished stem file to measure. Blocking."""
+    if job.status != "done":
+        return None, None
+    path = stem_path(job_dir / "stems", stem).resolve()
+    if not path.is_file() or not path.is_relative_to(JOBS_DIR.resolve()):
+        return None, None
+    kept = stem_level.kept_rms(job.stem_rms, stem, path)
+    if kept is not None:
+        return kept, None
+    rec = stem_level.measure(path)
+    return (rec["rms"], rec) if rec is not None else (None, None)
+
+
+def _keep_stem_rms(job: Job) -> None:
+    """metadata.json's copy of Job.stem_rms, read under the lock, so of two
+    lanes measured at once the later write holds both."""
+    with metadata_lock:
+        _write_metadata_fields(job.id, {"stem_rms": job.stem_rms})
+
+
 @router.get("/jobs/{job_id}/midi/{stem}/notes", response_model=None)
 async def get_midi_notes(job_id: str, stem: str) -> JSONResponse:
     """The notes of the stem's MIDI file, read back from the file itself:
-    {"notes": [[start s, end s, pitch, velocity], ...], "bpm", "tempo_source"}.
-    The studio draws them as a piano roll and plays them (laneMidiRows.js).
-    The same checks and refusals as the file's own route."""
+    {"notes": [[start s, end s, pitch, velocity], ...], "bpm", "tempo_source",
+    "stem_rms"}. The studio draws them as a piano roll and plays them
+    (laneMidiRows.js). "stem_rms" is the RMS of the stem's own file, which
+    the MIDI sound is matched to on either audio engine; null when the stem
+    cannot be read. A song separated before it was kept has it measured here
+    the first time (one streamed pass of the stem) and kept. The same checks
+    and refusals as the file's own route."""
     job, job_dir = _job(job_id)
     if job is None or job_dir is None:
         return _refusal("job_not_found")
@@ -285,8 +314,19 @@ async def get_midi_notes(job_id: str, stem: str) -> JSONResponse:
         logger.exception("[%s] could not read the %s MIDI file", job_id, stem)
         return _refusal("no_midi")
     entry = (clean_midi(job.midi) or {}).get(stem) or {}
+    rms, measured = await asyncio.to_thread(_level_of, job, job_dir, stem)
+    if measured is not None:
+        # Merged on the event loop, so two lanes measured at once both stay.
+        job.stem_rms = {**stem_level.clean_stem_rms(job.stem_rms), stem: measured}
+        await asyncio.to_thread(registry_persist, JOBS_DIR)
+        await asyncio.to_thread(_keep_stem_rms, job)
     return JSONResponse(
-        {"notes": read["notes"], "bpm": read["bpm"], "tempo_source": entry.get("tempo_source")},
+        {
+            "notes": read["notes"],
+            "bpm": read["bpm"],
+            "tempo_source": entry.get("tempo_source"),
+            "stem_rms": rms,
+        },
         # A run replaces the file in place under the same URL.
         headers={"Cache-Control": "no-cache"},
     )

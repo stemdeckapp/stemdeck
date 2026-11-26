@@ -9,7 +9,7 @@
 // Only the latest rendering of each lane is kept, and a new song drops them
 // all (forgetSounds).
 
-import { levelOf, soundKey, voiceFor } from "./midiNotesView.js";
+import { soundKey, voiceFor } from "./midiNotesView.js";
 import { fitLevel, renderVoice } from "./midiRender.js";
 
 // lane key (job|stem) -> { key, promise }
@@ -25,18 +25,17 @@ export const canRender = (context) => !!context && typeof context.createBuffer =
 
 /**
  * Render `notes` for `stem` over `duration` seconds into a buffer of
- * `context`, at the loudness of `reference` (the lane's stem buffer) when
- * given: measured on the test song, the synth came out 16 dB over its bass
- * stem without it, so Stem and MIDI jumped in level.
+ * `context`, at the loudness of a stem whose RMS is `stemRms`
+ * (midiNotesView.stemLevel): measured on the test song, the synth came out
+ * 16 dB over its bass stem without it, so Stem and MIDI jumped in level.
  */
-export async function renderNotes(notes, { stem, duration, context, reference = null }) {
+export async function renderNotes(notes, { stem, duration, context, stemRms = 0 }) {
   const rate = context.sampleRate;
   const samples = await renderVoice(notes, voiceFor(stem), {
     duration,
     rate,
     onNote: (k) => ((k + 1) % YIELD_EVERY === 0 ? pause() : null),
   });
-  const stemRms = reference && typeof reference.getChannelData === "function" ? levelOf(reference.getChannelData(0)).rms : 0;
   fitLevel(samples, stemRms);
   const buffer = context.createBuffer(1, samples.length, rate);
   buffer.copyToChannel(samples, 0);
@@ -44,15 +43,15 @@ export async function renderNotes(notes, { stem, duration, context, reference = 
 }
 
 /**
- * The lane's sound for its current file: rendered once per file and rate,
- * the promise shared by every caller while it renders.
+ * The lane's sound for its current file: rendered once per file, rate and
+ * stem level, the promise shared by every caller while it renders.
  */
-export function laneSound({ jobId, stem, at, notes, duration, context, reference = null }) {
+export function laneSound({ jobId, stem, at, notes, duration, context, stemRms = 0 }) {
   const lane = `${jobId}|${stem}`;
-  const key = soundKey(jobId, stem, at, context.sampleRate);
+  const key = soundKey(jobId, stem, at, context.sampleRate, stemRms);
   const held = _sounds.get(lane);
   if (held && held.key === key) return held.promise;
-  const promise = renderNotes(notes, { stem, duration, context, reference });
+  const promise = renderNotes(notes, { stem, duration, context, stemRms });
   _sounds.set(lane, { key, promise });
   promise.catch((e) => {
     console.warn("[midi] rendering the MIDI sound failed:", e);

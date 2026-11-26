@@ -1083,6 +1083,7 @@ def _rebuild_from_folder(job_dir: Path) -> tuple[Job, bool] | None:
         loudness_version=meta.get("loudness_version"),
         tempo_stability=meta.get("tempo_stability"),
         stem_presence=meta.get("stem_presence"),
+        stem_rms=meta.get("stem_rms") if isinstance(meta.get("stem_rms"), dict) else None,
         sections=meta.get("sections"),
         sections_source=meta.get("sections_source"),
         # Through _clean_timeline_tags, the one check _repair_field_types also

@@ -6,7 +6,7 @@
 // Run:  node tests/js/midi-render.test.mjs
 
 import { drumSound, envelope, fitLevel, lowpassInPlace, renderDrums, renderVoice } from "../../static/js/midiRender.js";
-import { levelOf, levelScale, voiceFor } from "../../static/js/midiNotesView.js";
+import { levelOf, levelScale, soundKey, stemLevel, voiceFor } from "../../static/js/midiNotesView.js";
 
 let pass = 0,
   fail = 0;
@@ -99,6 +99,41 @@ check("never more than 4", levelScale(0.001, 1, 0.01) === 4);
 check("never under 0.05", levelScale(1, 0.0001, 1) === 0.05);
 const lv = levelOf(new Float32Array([0.5, -0.5, 0.5, -0.5]), 1);
 check("levelOf gives RMS and peak", Math.abs(lv.rms - 0.5) < 1e-9 && lv.peak === 0.5);
+
+// ─── Both engines match the same way (stemLevel) ───
+// The streaming engine never holds the stem whole: the level is the server's
+// measurement of the stem file (the notes answer's stem_rms, channel 0 of the
+// whole file, app/pipeline/stem_level.py), and the full decode uses the same
+// number, so a lane switched Stem/MIDI is at the same level on either.
+
+{
+  // A stem: a 110 Hz tone at 0.05 (about -29 dBFS RMS), the level of a bass
+  // stem; the full decode would hold exactly these samples as channel 0.
+  const stem = new Float32Array(RATE * 2).map((_, i) => Math.sin((2 * Math.PI * 110 * i) / RATE) * 0.05);
+  const fileRms = levelOf(stem, 1).rms;
+  check("the server's level is used as it is", stemLevel(fileRms) === fileRms);
+  check("by the full decode too, over its own buffer", stemLevel(fileRms, new Float32Array(10).fill(0.9)) === fileRms);
+  check("without one, the decoded stem is measured the same way (channel 0, every sample)", Math.abs(stemLevel(null, stem) - fileRms) < 1e-12);
+  check("a missing or bad level from the server is not a level", [undefined, null, 0, -1, NaN, "0.1"].every((v) => stemLevel(v) === 0));
+  check("nothing to match to: 0, the rendering left as it is", stemLevel(null, null) === 0 && stemLevel(null, new Float32Array(0)) === 0);
+
+  // The same rendering matched on each engine comes out the same, and at the
+  // stem's loudness: before this the chunked engine matched to nothing and
+  // played the synth about 16 dB over the stem.
+  const notes = [[0, 1.5, 40, 100], [0.5, 1.8, 45, 100]];
+  const chunked = await renderVoice(notes, bass, { duration: 2, rate: RATE });
+  const full = await renderVoice(notes, bass, { duration: 2, rate: RATE });
+  const unmatchedDb = 20 * Math.log10(levelOf(chunked, 1).rms / fileRms);
+  check("unmatched, the synth is well over the stem", unmatchedDb > 10, `${unmatchedDb.toFixed(1)} dB`);
+  const kChunked = fitLevel(chunked, stemLevel(fileRms));
+  const kFull = fitLevel(full, stemLevel(fileRms, stem));
+  check("the two engines apply the same gain", kChunked === kFull, `${kChunked} vs ${kFull}`);
+  const matchedDb = 20 * Math.log10(levelOf(chunked, 1).rms / fileRms);
+  check("and the MIDI sound is at the stem's loudness (within 0.5 dB)", Math.abs(matchedDb) < 0.5, `${matchedDb.toFixed(2)} dB`);
+
+  check("another stem level is another rendering", soundKey("a", "bass", "t", 48000, 0.05) !== soundKey("a", "bass", "t", 48000, 0.1));
+  check("a missing level is one key, not NaN", soundKey("a", "bass", "t", 48000, NaN) === soundKey("a", "bass", "t", 48000));
+}
 
 // ─── The drums ───
 

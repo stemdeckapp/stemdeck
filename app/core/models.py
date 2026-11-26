@@ -344,6 +344,11 @@ class Job:
     loudness_remeasured: str | None = None
     tempo_stability: int | None = None  # 0-100, beat interval consistency
     stem_presence: dict[str, int] | None = None  # per-stem RMS 0-100
+    # Each stem's RMS with the file it was measured on, {name: {"rms",
+    # "file", "size", "mtime_ns"}} (app/pipeline/stem_level.py): the level a
+    # lane's MIDI is played at. None for a song separated before it was kept;
+    # a stem is then measured the first time its lane asks.
+    stem_rms: dict[str, dict[str, Any]] | None = None
     sections: list[dict] | None = None  # [{id, name, kind?, start, end, color}]
     # Whether this job should run the automatic song-structure pass, captured
     # from the setting when the job is created rather than read when the stage

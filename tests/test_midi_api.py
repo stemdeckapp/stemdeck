@@ -775,6 +775,112 @@ async def test_the_notes_route_reads_the_file(jobs_dir, client):
     assert body["tempo_source"] == "song"
 
 
+def _bass_midi(jobs_dir: Path, job: Job) -> None:
+    folder = jobs_dir / JOB / "midi"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "bass.mid").write_bytes(_smf_notes())
+    job.midi = {
+        "bass": {
+            "state": "done",
+            "pct": 100,
+            "notes": 2,
+            "engine": "basic_pitch",
+            "detail": "balanced",
+            "tempo_source": "song",
+            "at": "2026-11-25T10:00:00Z",
+            "error_code": None,
+            "has_file": True,
+        }
+    }
+
+
+def _rms0(path: Path) -> float:
+    data, _ = sf.read(str(path), dtype="float32", always_2d=True)
+    return float(np.sqrt(np.mean(data[:, 0].astype(np.float64) ** 2)))
+
+
+@pytest.fixture
+def scans(monkeypatch):
+    """Every stem the level code measures, by file name."""
+    from app.pipeline import stem_level
+
+    seen: list[str] = []
+    real = stem_level.scan_stem
+
+    def counting(path, *a, **k):
+        seen.append(Path(path).name)
+        return real(path, *a, **k)
+
+    monkeypatch.setattr(stem_level, "scan_stem", counting)
+    return seen
+
+
+async def test_the_notes_answer_the_stems_level_measured_once_and_kept(jobs_dir, client, scans):
+    """A song separated before the level was kept: the stem is measured the
+    first time (the chunked engine has no other way to match the MIDI sound
+    to it), then kept in the record and in metadata.json."""
+    job = _song(jobs_dir)
+    _bass_midi(jobs_dir, job)
+    want = _rms0(jobs_dir / JOB / "stems" / "bass.wav")
+    async with client as c:
+        first = (await c.get(f"/api/jobs/{JOB}/midi/bass/notes")).json()
+        second = (await c.get(f"/api/jobs/{JOB}/midi/bass/notes")).json()
+    assert first["stem_rms"] == pytest.approx(want, rel=1e-6)
+    assert second["stem_rms"] == first["stem_rms"]
+    assert scans == ["bass.wav"]
+    assert job.stem_rms["bass"]["rms"] == first["stem_rms"]
+    meta = json.loads((jobs_dir / JOB / "metadata.json").read_text(encoding="utf-8"))
+    assert meta["stem_rms"] == job.stem_rms
+    assert meta["title"] == "Song"
+
+
+async def test_the_notes_use_the_kept_level_of_the_file_on_disk(jobs_dir, client, scans):
+    from app.pipeline import stem_level
+
+    job = _song(jobs_dir)
+    _bass_midi(jobs_dir, job)
+    path = jobs_dir / JOB / "stems" / "bass.wav"
+    job.stem_rms = {"bass": stem_level.level_record(path, 0.0123)}
+    async with client as c:
+        r = await c.get(f"/api/jobs/{JOB}/midi/bass/notes")
+    assert r.json()["stem_rms"] == 0.0123
+    assert scans == []
+
+
+async def test_a_replaced_stem_is_measured_again(jobs_dir, client, scans):
+    """The kept value belongs to the file it was measured on: a stem replaced
+    since (re-extracted, undone, stored as MP3) is measured again, never
+    matched to the old file's level."""
+    from app.pipeline import stem_level
+
+    job = _song(jobs_dir)
+    _bass_midi(jobs_dir, job)
+    path = jobs_dir / JOB / "stems" / "bass.wav"
+    job.stem_rms = {
+        "bass": stem_level.level_record(path, 0.0123),
+        "piano": {"rms": "damaged"},
+    }
+    _wav(path, seconds=4.0)
+    async with client as c:
+        r = await c.get(f"/api/jobs/{JOB}/midi/bass/notes")
+    assert r.json()["stem_rms"] == pytest.approx(_rms0(path), rel=1e-6)
+    assert scans == ["bass.wav"]
+    # The damaged entry is dropped as the new one is kept.
+    assert set(job.stem_rms) == {"bass"}
+
+
+async def test_the_notes_without_a_stem_file_have_no_level(jobs_dir, client, scans):
+    job = _song(jobs_dir)
+    _bass_midi(jobs_dir, job)
+    (jobs_dir / JOB / "stems" / "bass.wav").unlink()
+    async with client as c:
+        r = await c.get(f"/api/jobs/{JOB}/midi/bass/notes")
+    assert r.status_code == 200
+    assert r.json()["stem_rms"] is None
+    assert scans == []
+    assert job.stem_rms is None
+
+
 async def test_the_notes_route_refuses_like_the_file_route(jobs_dir, client, caplog):
     _song(jobs_dir)
     (jobs_dir / "secret.mid").write_bytes(_smf_notes())

@@ -126,10 +126,15 @@ async function stubServer(page, { midi = {}, settings = {}, status = STATUS, ref
     const stem = new URL(route.request().url()).pathname.split("/")[5];
     if (!state.midi[stem]?.has_file) return route.fulfill({ status: 404, json: { detail: "no", code: "no_midi" } });
     const notes = stem === "drums" ? state.drumNotes : state.notes;
-    return route.fulfill({ json: { notes, bpm: 120, tempo_source: "song" } });
+    return route.fulfill({ json: { notes, bpm: 120, tempo_source: "song", stem_rms: STEM_RMS } });
   });
   return state;
 }
+
+// The stem's level the notes answer carries (the server measures the stem
+// file, app/pipeline/stem_level.py): the MIDI sound is matched to it on both
+// engines. Not the fixture's own level, so a match to anything else shows.
+const STEM_RMS = 0.03;
 
 const header = (page, lane) => page.locator(`.mixer-column .lane-header[data-stem="${lane}"]`);
 const chip = (page, lane) => header(page, lane).locator(":scope > .mx-model-slot > .midi-tab");
@@ -543,10 +548,27 @@ for (const engine of ["chunked", "fulldecode"]) {
     await expect(source.locator('[data-source="stem"]')).toHaveAttribute("aria-pressed", "true");
     const tracks = () => page.evaluate(async () => (await import("/js/state.js")).audioEngine.getAnalysers("bass").length);
     expect(await tracks()).toBe(1);
+    // The RMS of the sound handed to the engine.
+    await page.evaluate(async () => {
+      const eng = (await import("/js/state.js")).audioEngine;
+      const add = eng.addAltSource;
+      window.__altRms = null;
+      eng.addAltSource = (lane, buffer) => {
+        const d = buffer.getChannelData(0);
+        let sum = 0;
+        for (const v of d) sum += v * v;
+        window.__altRms = Math.sqrt(sum / d.length);
+        return add(lane, buffer);
+      };
+    });
     await source.locator('[data-source="midi"]').click();
     await expect(source.locator('[data-source="midi"]')).toHaveAttribute("aria-pressed", "true");
     // The MIDI sound is added to the lane, in the engine, beside the stem.
     await expect.poll(tracks).toBe(2);
+    // At the stem's loudness, on either engine: the chunked one used to
+    // match it to nothing, about 16 dB over the stem.
+    const altRms = await page.evaluate(() => window.__altRms);
+    expect(Math.abs(20 * Math.log10(altRms / STEM_RMS)), `MIDI sound RMS ${altRms}`).toBeLessThan(0.5);
 
     // Playing, quietly, looped inside the second bass note (2 s to 3 s): the
     // lane taps are before the master, so the master can be near silent.

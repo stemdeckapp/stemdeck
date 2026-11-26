@@ -806,6 +806,52 @@ def test_common_pipeline_never_reanalyzes_existing_manual_sections(tmp_path: Pat
     assert job.sections_source == "manual"
 
 
+def test_common_pipeline_keeps_each_stems_rms_from_the_peaks_pass(tmp_path: Path):
+    """The peaks pass measures every stem's RMS for presence; the value
+    itself is kept too, with the file it is of, instead of thrown away: it
+    is the level a lane's MIDI is played at (app/pipeline/stem_level.py)."""
+    import numpy as np
+    import soundfile as sf
+
+    from app.pipeline import stem_level
+
+    job = Job(id="abcdefabc121", duration_sec=60.0)
+    job_dir = tmp_path / job.id
+    stems_dir = job_dir / "stems"
+    stems_dir.mkdir(parents=True)
+    want = {}
+    for name, level in (("bass", 0.4), ("drums", 0.2), ("vocals", 0.1)):
+        tone = (np.sin(np.arange(44100) / 7) * level).astype("float32")
+        sf.write(str(stems_dir / f"{name}.wav"), tone, 44100, subtype="FLOAT")
+        want[name] = float(np.sqrt(np.mean(tone.astype(np.float64) ** 2)))
+
+    patches = _common_stage_patches(job_dir, [])
+    # Index 6 is compute_stem_peaks: the real one runs here.
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patches[3],
+        patches[4],
+        patches[5],
+        patches[7],
+        patches[8],
+    ):
+        _run_common(job, job_dir / "source.wav", job_dir)
+
+    assert set(job.stem_rms) == set(want)
+    for name, rms in want.items():
+        assert job.stem_rms[name]["rms"] == pytest.approx(rms, rel=1e-6)
+        assert stem_level.kept_rms(job.stem_rms, name, stems_dir / f"{name}.wav") is not None
+    assert job.stem_presence == {"bass": 100, "drums": 50, "vocals": 25}
+
+    _write_metadata(job, job_dir)
+    import json as _json
+
+    meta = _json.loads((job_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert meta["stem_rms"] == job.stem_rms
+
+
 def test_metadata_includes_sections_and_source(tmp_path: Path):
     job = Job(
         id="abcdefabc114",
