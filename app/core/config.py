@@ -1485,12 +1485,20 @@ YMT3_BATCH_CPU = 1
 # at most 3.0 GB on a dense one, at batch 8; the CUDA context adds about
 # 0.4 GB that torch does not count, so 3.5 GB.
 YMT3_GPU_MIN_FREE_MB = max(0, _env_int("STEMDECK_YMT3_GPU_MIN_FREE_MB", 3584))
-# Seconds of work per minute of audio, what Settings tells the person before
-# the first run (the model decodes token by token, so a dense stem takes up
-# to twice this).
-YMT3_SECONDS_PER_MINUTE = {"cuda": 12, "cpu": 69}
+# Seconds of work per minute of audio, what Settings and the lane tell the
+# person before the first run. The model decodes token by token, so a dense
+# stem takes longer than a sparse one. Measured 2026-11-26 through the real
+# worker, nothing else running (scripts/midi_bench.py --engine ymt3 eng
+# --limit, results/ymt3-speed-gpu.md and ymt3-speed-cpu.md), on 90 s
+# separated Slakh stems, the worker's start and the model's load (about 12 s)
+# included: on an RTX 3080, drums 15.6, bass 16.2, a dense piano 26.4 s per
+# audio minute; on a 24-thread CPU, bass 52.8, a dense piano 113.6. The model
+# alone (engines-per-stem.md) is 12.1 on that GPU and 68.8 on that CPU. Said
+# as 20 and 90: what a typical stem costs, start included, rounded up.
+YMT3_SECONDS_PER_MINUTE = {"cuda": 20, "cpu": 90}
 # The whole ymt3 run: the longest song allowed (TRANSCRIBE_MAX_SECONDS, 20
-# minutes) at twice the CPU rate is 2760 s; five times that is a hang.
+# minutes) at a dense stem's CPU rate above (113.6 s a minute) is 2272 s; six
+# times that, for a slower CPU, is a hang.
 TIMEOUT_MIDI_YMT3 = max(60, _env_int("STEMDECK_TIMEOUT_MIDI_YMT3", 14400))
 # Making the weights from the checkpoint: about 5 s here; a slow disk or an
 # antivirus scan of 750 MB can take minutes, an hour is a hang.

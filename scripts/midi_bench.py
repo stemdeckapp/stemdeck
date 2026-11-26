@@ -34,6 +34,28 @@ Its cache holds every activation the model outputs; ``score`` decodes them with
 piano_hr.output_notes, as the worker does. The model runs on the device the app
 would pick (``--device`` to choose).
 
+YourMT3+ (app/pipeline/ymt3.py) and Basic Pitch on every stem are measured on
+the engine comparison's held-out sets (data/midi-bench/eng/inputs.json, made
+by data/midi-bench/engine-scripts/build_jobs.py; their scores are in
+data/midi-bench/results/engines-per-stem.md) with ``eng``, which spawns the
+real worker for each input exactly as midi.py does, reads its .mid back and
+scores it as engine-scripts/score.py did, beside that comparison's own score
+for the same input:
+
+    uv run python scripts/midi_bench.py fetch-ymt3 --from-file <last.ckpt>
+    uv run python scripts/midi_bench.py --engine ymt3 eng --tag ymt3-worker
+    uv run python scripts/midi_bench.py eng --tag bp-worker --sets guitartechs vocadito
+
+fetch-ymt3 is the app's own first-use step (download, then the conversion
+process, then the checks, then the checkpoint removed), into
+data/ymt3-bench-models (STEMDECK_MODELS_DIR for every ymt3 command, so the
+removal never touches data/midi-bench). ``--from-file`` puts a copy of a
+checkpoint already on this computer where the download would, still checked
+against the pinned size and SHA-256. YourMT3+ is not offered for the vocals
+(config.MIDI_ENGINES), so the worker refuses them; ``eng`` measures it on the
+vocals with the worker's own functions in this process instead (rows marked
+"in_process").
+
 ``score`` decodes the cached activations in this process with the worker's own
 functions (midi_worker.output_notes), writes and reads the .mid like the worker,
 and so gives the worker's notes without running the model again; ``--worker``
@@ -89,7 +111,13 @@ FORMATS = ("wav", "mp3")
 CONDITIONS = ("clean", "sep")
 
 
-def _setup_env(bench: Path) -> None:
+# YourMT3+'s models folder for the bench: the app's first-use step removes the
+# checkpoint after its conversion, and nothing under data/midi-bench is ever
+# removed, so its files live beside it (git-ignored, inside the repository).
+YMT3_MODELS = ROOT / "data" / "ymt3-bench-models"
+
+
+def _setup_env(bench: Path, ymt3_models: bool = False) -> None:
     """App data, cache and jobs for anything this process or its workers
     import: under the bench folder, never a real library."""
     bench = bench.resolve()
@@ -103,25 +131,34 @@ def _setup_env(bench: Path) -> None:
     ):
         (app / sub).mkdir(parents=True, exist_ok=True)
         os.environ[name] = str(app / sub)
+    if ymt3_models:
+        YMT3_MODELS.mkdir(parents=True, exist_ok=True)
+        os.environ["STEMDECK_MODELS_DIR"] = str(YMT3_MODELS)
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
 
 
-def _vendor_path() -> None:
-    from app.pipeline import piano_hr
+def _vendor_path(engine: str = "basic_pitch") -> None:
+    """The vendored engines on this process's path, as the worker puts them
+    (with the same packages blocked): Basic Pitch and piano_hr, or for
+    ymt3 its own folders, whose einops would try a blocked tensorflow."""
+    from app.pipeline import piano_hr, ymt3
     from app.pipeline.midi_file import VENDOR_DIR
     from app.pipeline.midi_worker import _install_engine
 
-    _install_engine(VENDOR_DIR, piano_hr.VENDOR_DIR)
+    if engine == "ymt3":
+        _install_engine(VENDOR_DIR, [ymt3.VENDOR_DIR / "shim", ymt3.VENDOR_DIR / "src"], "ymt3")
+    else:
+        _install_engine(VENDOR_DIR, [piano_hr.VENDOR_DIR])
 
 
 def _device(asked: str | None) -> str:
-    """The device piano_hr runs on here: ``asked``, or what the app picks."""
+    """The device a torch engine runs on here: ``asked``, or what the app picks."""
     if asked:
         return asked
-    from app.pipeline.midi import piano_hr_device
+    from app.pipeline.midi import torch_engine_device
 
-    return piano_hr_device()
+    return torch_engine_device()
 
 
 def _ffmpeg() -> str:
@@ -554,7 +591,15 @@ def cmd_fetch_piano_hr(args) -> None:
         print("already there", dst)
         return
     dst.parent.mkdir(parents=True, exist_ok=True)
-    cmd = midi_run._spawn_fetch_cmd(dst)
+    from app.core.config import (
+        PIANO_HR_CHECKPOINT_SHA256,
+        PIANO_HR_CHECKPOINT_SIZE,
+        PIANO_HR_CHECKPOINT_URL,
+    )
+
+    cmd = midi_run._spawn_fetch_cmd(
+        dst, PIANO_HR_CHECKPOINT_URL, PIANO_HR_CHECKPOINT_SHA256, PIANO_HR_CHECKPOINT_SIZE
+    )
     if args.from_url:
         # Another copy of the same bytes (a local server): still checked
         # against the pinned size and SHA-256.
@@ -567,6 +612,53 @@ def cmd_fetch_piano_hr(args) -> None:
     if not piano_hr.checkpoint_ok(dst):
         sys.exit("the checkpoint did not arrive whole: " + result.stderr[-800:])
     print("checked", dst)
+
+
+def _run_protocol(cmd: list[str]) -> tuple[list[dict], subprocess.CompletedProcess, float]:
+    from app.pipeline import midi as midi_run
+
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8:replace"
+    started = time.monotonic()
+    result = subprocess.run(
+        cmd, cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8"
+    )
+    events = [e for e in (midi_run.parse_event(x) for x in result.stdout.splitlines()) if e]
+    return events, result, time.monotonic() - started
+
+
+def cmd_fetch_ymt3(args) -> None:
+    """YourMT3+'s weights, made the way a first run makes them: the pinned
+    checkpoint downloaded (or ``--from-file``, a copy already here, put
+    where the download would put it), checked, converted by the app's own
+    process (ymt3_convert), the result checked, the checkpoint removed."""
+    from app.core.config import YMT3_CHECKPOINT_SHA256, YMT3_CHECKPOINT_SIZE, YMT3_CHECKPOINT_URL
+    from app.pipeline import midi as midi_run
+    from app.pipeline import ymt3
+
+    weights = ymt3.weights_path()
+    if ymt3.weights_ok(weights):
+        print("already there", weights)
+        return
+    ckpt = ymt3.checkpoint_path()
+    ckpt.parent.mkdir(parents=True, exist_ok=True)
+    if not ymt3.checkpoint_ok(ckpt):
+        if args.from_file:
+            shutil.copyfile(args.from_file, ckpt)
+        else:
+            cmd = midi_run._spawn_fetch_cmd(
+                ckpt, YMT3_CHECKPOINT_URL, YMT3_CHECKPOINT_SHA256, YMT3_CHECKPOINT_SIZE
+            )
+            events, result, took = _run_protocol(cmd)
+            print("download: exit", result.returncode, events[-1:], f"{took:.1f}s")
+    if not ymt3.checkpoint_ok(ckpt):
+        sys.exit("the checkpoint is not the pinned file")
+    events, result, took = _run_protocol(midi_run._spawn_convert_cmd(ckpt, weights))
+    print("convert: exit", result.returncode, events[-1:], f"{took:.1f}s")
+    if not ymt3.weights_ok(weights):
+        sys.exit("the weights are not the pinned file: " + result.stderr[-800:])
+    ckpt.unlink()
+    print("checked", weights)
 
 
 def _cache_piano_hr(args, items: list[dict]) -> None:
@@ -633,7 +725,11 @@ def cmd_cache(args) -> None:
 
 
 def _load_mir_eval():
-    _vendor_path()
+    from app.pipeline.midi_file import VENDOR_DIR
+
+    # mir_eval is in Basic Pitch's folder, which every engine's path holds.
+    if str(VENDOR_DIR) not in sys.path:
+        _vendor_path()
     import mir_eval.transcription as tr
 
     return tr
@@ -1246,16 +1342,302 @@ def cmd_compare(args) -> None:
     print(text)
 
 
+# -- the engine comparison's held-out sets (data/midi-bench/eng)
+
+# GM drum notes to the five classes engine-scripts/common.py scores.
+_ENG_DRUM_CLASSES = ("kick", "snare", "hihat", "tom", "cymbal")
+_ENG_GM_DRUM = {
+    35: "kick", 36: "kick",
+    37: "snare", 38: "snare", 40: "snare",
+    42: "hihat", 44: "hihat", 46: "hihat",
+    41: "tom", 43: "tom", 45: "tom", 47: "tom", 48: "tom", 50: "tom",
+    49: "cymbal", 51: "cymbal", 52: "cymbal", 53: "cymbal", 55: "cymbal", 57: "cymbal",
+    59: "cymbal",
+}  # fmt: skip
+_ENG_IDMT_CLASSES = ("kick", "snare", "hihat")
+# The label engine-scripts/score.py gave each engine's score of an input.
+_ENG_LABEL = {
+    ("ymt3", "drums"): "YourMT3+",
+    ("ymt3", None): "YourMT3+ (class)",
+    ("basic_pitch", "vocals"): "Basic Pitch (mono)",
+    ("basic_pitch", None): "Basic Pitch",
+}
+
+
+def _eng_drums(notes) -> dict:
+    out = {c: [] for c in _ENG_DRUM_CLASSES}
+    for n in notes:
+        c = _ENG_GM_DRUM.get(int(n[2]))
+        if c:
+            out[c].append(float(n[0]))
+    return {c: sorted(v) for c, v in out.items()}
+
+
+def _eng_score_notes(ref: list, est: list) -> dict:
+    """engine-scripts/score.py score_notes: onset F1 at 50 ms on whole MIDI
+    notes, with offsets, and the best of one octave shift per track."""
+    tr = _load_mir_eval()
+    import numpy as np
+
+    def arrays(notes):
+        if not notes:
+            return np.zeros((0, 2)), np.zeros(0)
+        iv = np.array([[n[0], max(n[1], n[0] + 1e-3)] for n in notes], dtype=float)
+        hz = 440.0 * 2 ** ((np.round(np.array([n[2] for n in notes], dtype=float)) - 69) / 12)
+        return iv, hz
+
+    out = {"n_ref": len(ref), "n_est": len(est)}
+    if not ref or not est:
+        out.update({"f1": 0.0, "f1_off": 0.0, "f1_oct": 0.0})
+        return out
+    riv, rhz = arrays(ref)
+    eiv, ehz = arrays(est)
+    _p, _r, f, _ = tr.precision_recall_f1_overlap(
+        riv, rhz, eiv, ehz, onset_tolerance=ONSET_TOL, offset_ratio=None
+    )
+    _p, _r, fo, _ = tr.precision_recall_f1_overlap(
+        riv, rhz, eiv, ehz, onset_tolerance=ONSET_TOL, offset_ratio=0.2, offset_min_tolerance=0.05
+    )
+    best = f
+    for k in (-24, -12, 12, 24):
+        _p, _r, fk, _ = tr.precision_recall_f1_overlap(
+            riv, rhz, eiv, ehz * 2 ** (k / 12), onset_tolerance=ONSET_TOL, offset_ratio=None
+        )
+        best = max(best, fk)
+    out.update({"f1": f, "f1_off": fo, "f1_oct": best})
+    return out
+
+
+def _eng_score_drums(ref: dict, est: dict, classes) -> dict:
+    """engine-scripts/score.py score_drums: hits summed over the classes."""
+    import numpy as np
+
+    _load_mir_eval()
+    import mir_eval.util as mu
+
+    tp = fp = fn = 0
+    for c in classes:
+        r = np.array(sorted(ref.get(c, [])))
+        e = np.array(sorted(est.get(c, [])))
+        if len(r) == 0 and len(e) == 0:
+            continue
+        hits = len(mu.match_events(r, e, ONSET_TOL)) if len(r) and len(e) else 0
+        tp += hits
+        fp += len(e) - hits
+        fn += len(r) - hits
+    p = tp / (tp + fp) if tp + fp else 0.0
+    r = tp / (tp + fn) if tp + fn else 0.0
+    return {"f1": 2 * p * r / (p + r) if p + r else 0.0, "tp": tp, "fp": fp, "fn": fn}
+
+
+def _eng_in_process(src: Path, stem: str, device: str) -> tuple[list, float]:
+    """YourMT3+ on ``stem`` with the worker's own functions, in this process
+    (the worker refuses a stem the engine is not offered for)."""
+    from app.pipeline import ymt3
+
+    global _ENG_MODEL
+    if _ENG_MODEL is None:
+        _ENG_MODEL = ymt3.load_weights(ymt3.build_model(), ymt3.weights_path(), device)
+    started = time.monotonic()
+    segs = ymt3.segments(ymt3.read_audio(src))
+    preds = ymt3.model_output(_ENG_MODEL, segs, device, 8)
+    events, _program = ymt3.stem_notes(ymt3.decode(_ENG_MODEL, preds, len(segs)), stem)
+    took = time.monotonic() - started
+    return [[e[0], e[1], e[2], 92] for e in events], took
+
+
+_ENG_MODEL = None
+
+
+def cmd_eng(args) -> None:
+    """Every input of eng/inputs.json in the asked sets, conditions and
+    stems, through the real worker, scored beside the engine comparison's
+    own score of the same input (eng/scores.json)."""
+    eng = args.bench / "eng"
+    rows = json.loads((eng / "inputs.json").read_text(encoding="utf-8-sig"))
+    old = json.loads((eng / "scores.json").read_text(encoding="utf-8-sig"))
+    engine = args.engine
+    device = _device(args.device) if engine != "basic_pitch" else "cpu"
+    out_path = args.bench / "results" / f"{args.tag}.json"
+    done = {}
+    if out_path.is_file():
+        for r in json.loads(out_path.read_text(encoding="utf-8")).get("rows", []):
+            done[(r["key"], r["cond"])] = r
+    from app.pipeline import midi as midi_run
+    from app.pipeline.midi_file import read_notes
+
+    work = args.bench / "work" / f"eng-{args.tag}"
+    results = list(done.values())
+    taken: dict[str, int] = {}
+    for row in rows:
+        stem, cond = row["stem"], row["cond"]
+        if args.sets and row["set"] not in args.sets:
+            continue
+        if cond not in args.conds or (args.stems and stem not in args.stems):
+            continue
+        if engine == "basic_pitch" and stem == "drums":
+            continue
+        if (row["key"], cond) in done:
+            continue
+        if args.limit is not None:
+            if taken.get(stem, 0) >= args.limit:
+                continue
+            taken[stem] = taken.get(stem, 0) + 1
+        label = _ENG_LABEL.get((engine, stem)) or _ENG_LABEL[(engine, None)]
+        before = next(
+            (
+                o
+                for o in old
+                if o["key"] == row["key"] and o["cond"] == cond and o["engine"] == label
+            ),
+            None,
+        )
+        src = Path(row["audio"])
+        in_process = engine == "ymt3" and stem == "vocals"
+        try:
+            if in_process:
+                notes, took = _eng_in_process(src, stem, device)
+                ran_on, peak = device, None
+            else:
+                params = midi_run.run_params(stem, "balanced", engine)
+                work.mkdir(parents=True, exist_ok=True)
+                out = work / f"{stem}-{os.getpid()}.mid"
+                from app.pipeline.midi_file import default_tempo
+
+                cmd = midi_run._spawn_worker_cmd(
+                    src, out, stem, params, default_tempo(), engine, device
+                )
+                events, result, took = _run_protocol(cmd)
+                if not events or events[-1]["event"] != "done":
+                    raise RuntimeError(f"{events[-1:]} {result.stderr[-600:]}")
+                notes = read_notes(out)["notes"]
+                out.unlink()
+                ran_on, peak = events[-1].get("device"), events[-1].get("gpu_peak_mb")
+        except Exception as exc:  # noqa: BLE001 -- one bad input is reported, not fatal
+            print("FAILED", row["key"], cond, exc, flush=True)
+            continue
+        if stem == "drums":
+            ref = json.loads(Path(row["ref"]).read_text(encoding="utf-8-sig"))
+            if row["kind"] == "drums-notes":
+                ref = _eng_drums(ref)
+            classes = _ENG_IDMT_CLASSES if row["set"] == "idmt" else _ENG_DRUM_CLASSES
+            score = _eng_score_drums(ref, _eng_drums(notes), classes)
+        else:
+            ref = json.loads(Path(row["ref"]).read_text(encoding="utf-8-sig"))
+            score = _eng_score_notes(ref, notes)
+            if row.get("ref_alt"):
+                alt = json.loads(Path(row["ref_alt"]).read_text(encoding="utf-8-sig"))
+                score["f1_alt"] = _eng_score_notes(alt, notes)["f1"]
+        rec = {
+            "key": row["key"],
+            "set": row["set"],
+            "stem": stem,
+            "cond": cond,
+            "engine": engine,
+            "device": ran_on,
+            "gpu_peak_mb": peak,
+            "in_process": in_process,
+            "seconds_audio": float(_audio_seconds(src)),
+            "worker_s": round(took, 2),
+            **score,
+            "before": {k: before.get(k) for k in ("f1", "f1_off", "f1_oct")} if before else None,
+            "before_alt": (before.get("alt") or {}).get("f1") if before else None,
+        }
+        results.append(rec)
+        print(
+            row["key"],
+            cond,
+            f"{score['f1']:.3f}",
+            "was",
+            f"{before['f1']:.3f}" if before else "-",
+            ran_on,
+            f"{took:.1f}s",
+            flush=True,
+        )
+        _write_json(out_path, {"engine": engine, "rows": results})
+    _write_json(out_path, {"engine": engine, "rows": results})
+    text = _eng_table(results)
+    (args.bench / "results" / f"{args.tag}.md").write_text(text, encoding="utf-8")
+    print(text)
+
+
+def _audio_seconds(path: Path) -> float:
+    import soundfile as sf
+
+    info = sf.info(str(path))
+    return info.frames / info.samplerate
+
+
+def _eng_table(rows: list[dict]) -> str:
+    """Means per set, stem and condition: this run, the comparison's score of
+    the same inputs, and the largest gap on one input; then the speed."""
+    groups: dict[tuple, list[dict]] = {}
+    for r in rows:
+        groups.setdefault((r["set"], r["stem"], r["cond"]), []).append(r)
+    lines = [
+        "| set | stem | cond | inputs | F1 worker | F1 before | mean gap | max gap |"
+        " F1 on+off | oct-aligned | F1 alt (A2) |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for (set_, stem, cond), rs in sorted(groups.items()):
+        paired = [r for r in rs if r.get("before") and r["before"].get("f1") is not None]
+        gaps = [r["f1"] - r["before"]["f1"] for r in paired]
+        alt = [r["f1_alt"] for r in rs if "f1_alt" in r]
+        pitched = stem != "drums"
+        cells = [
+            set_,
+            stem,
+            cond,
+            str(len(rs)),
+            f"{_mean(rs, 'f1'):.3f}",
+            f"{sum(r['before']['f1'] for r in paired) / len(paired):.3f}" if paired else "-",
+            f"{sum(gaps) / len(gaps):+.4f}" if gaps else "-",
+            f"{max(gaps, key=abs):+.4f}" if gaps else "-",
+            f"{_mean(rs, 'f1_off'):.3f}" if pitched else "-",
+            f"{_mean(rs, 'f1_oct'):.3f}" if pitched else "-",
+            f"{sum(alt) / len(alt):.3f}" if alt else "-",
+        ]
+        lines.append("| " + " | ".join(cells) + " |")
+    lines += [
+        "",
+        "| device | inputs | audio min | worker s per audio min | peak GPU MB |",
+        "|---|---|---|---|---|",
+    ]
+    by_dev: dict[str, list[dict]] = {}
+    for r in rows:
+        if not r.get("in_process"):
+            by_dev.setdefault(str(r.get("device")), []).append(r)
+    for dev, rs in sorted(by_dev.items()):
+        minutes = sum(r["seconds_audio"] for r in rs) / 60
+        peaks = [r["gpu_peak_mb"] for r in rs if r.get("gpu_peak_mb")]
+        lines.append(
+            f"| {dev} | {len(rs)} | {minutes:.1f} | "
+            f"{sum(r['worker_s'] for r in rs) / max(minutes, 1e-9):.1f} | "
+            f"{max(peaks) if peaks else '-'} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--bench", type=Path, default=DEFAULT_BENCH)
     parser.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
-    parser.add_argument("--engine", choices=("basic_pitch", "piano_hr"), default="basic_pitch")
-    parser.add_argument("--device", choices=("cpu", "cuda"), help="piano_hr only")
+    parser.add_argument(
+        "--engine", choices=("basic_pitch", "piano_hr", "ymt3"), default="basic_pitch"
+    )
+    parser.add_argument("--device", choices=("cpu", "cuda"), help="piano_hr and ymt3 only")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("prepare")
     p = sub.add_parser("fetch-piano-hr")
     p.add_argument("--from-url", help="fetch the same file from this address instead")
+    p = sub.add_parser("fetch-ymt3")
+    p.add_argument("--from-file", type=Path, help="a copy of the pinned checkpoint already here")
+    p = sub.add_parser("eng")
+    p.add_argument("--tag", required=True)
+    p.add_argument("--sets", nargs="+", help="slakh-test mdb idmt vocadito guitartechs")
+    p.add_argument("--conds", nargs="+", default=["sep", "clean", "clean-di"])
+    p.add_argument("--stems", nargs="+")
+    p.add_argument("--limit", type=int, help="the first N inputs of each stem only (a speed check)")
     p = sub.add_parser("separate")
     p.add_argument("--formats", nargs="+", default=list(FORMATS))
     p = sub.add_parser("cache")
@@ -1285,11 +1667,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--formats", nargs="+", default=["wav"])
     p.add_argument("--only")
     args = parser.parse_args(argv)
-    _setup_env(args.bench)
-    _vendor_path()
+    _setup_env(args.bench, ymt3_models=args.engine == "ymt3" or args.cmd == "fetch-ymt3")
+    _vendor_path(args.engine)
     {
         "prepare": cmd_prepare,
         "fetch-piano-hr": cmd_fetch_piano_hr,
+        "fetch-ymt3": cmd_fetch_ymt3,
+        "eng": cmd_eng,
         "separate": cmd_separate,
         "cache": cmd_cache,
         "score": cmd_score,

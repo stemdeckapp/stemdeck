@@ -45,7 +45,7 @@
 | `STEMDECK_TIMEOUT_MIDI_STALL` | `120` | Stop a MIDI run after this many seconds with no output from its worker (30 or more). |
 | `STEMDECK_TIMEOUT_MIDI_PIANO_HR` | `6000` | Stop a piano run with ByteDance Piano Transcription after this many seconds in all (60 or more). On a CPU it takes about half a minute per minute of audio. |
 | `STEMDECK_TIMEOUT_MIDI_MODEL_DOWNLOAD` | `3600` | Stop the first-use download of an engine's checkpoint (ByteDance Piano Transcription 172 MB, YourMT3+ 562 MB) after this many seconds in all (60 or more). |
-| `STEMDECK_TIMEOUT_MIDI_YMT3` | `14400` | Stop a YourMT3+ run after this many seconds in all (60 or more). On a CPU it takes about a minute per minute of audio, twice that for a dense stem. |
+| `STEMDECK_TIMEOUT_MIDI_YMT3` | `14400` | Stop a YourMT3+ run after this many seconds in all (60 or more). On a 24-thread CPU it took 53 s per minute of audio on a bass stem, 114 s on a dense piano. |
 | `STEMDECK_TIMEOUT_MIDI_MODEL_PREPARE` | `3600` | Stop the one-time making of YourMT3+'s weights from its checkpoint after this many seconds in all (60 or more). |
 | `STEMDECK_YMT3_GPU_MIN_FREE_MB` | `3584` | Free GPU memory a YourMT3+ run needs to start on the GPU; with less it runs on the CPU. |
 | `STEMDECK_PIANO_HR_GPU_MIN_FREE_MB` | `2048` | Free GPU memory (MB) a ByteDance Piano Transcription run needs to start on the GPU; with less it runs on the CPU. |

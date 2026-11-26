@@ -204,7 +204,7 @@ instrument class; the drums' file is General MIDI percussion on channel 10.
    {"id": "ymt3", "label": "YourMT3+", "version": "5e66c1e", "licence": "Apache-2.0",
     "model_licence": "Apache-2.0", "stems": ["drums", "bass", "guitar", "piano", "other"], ...,
     "download_bytes": 561544628, "disk_bytes": 188412704, "device": "cpu" | "cuda",
-    "seconds_per_minute": {"cuda": 12, "cpu": 69}, "uses_detail": false}],
+    "seconds_per_minute": {"cuda": 20, "cpu": 90}, "uses_detail": false}],
  "stem_engines": {"vocals": ["basic_pitch"], "drums": ["ymt3"], "bass": ["basic_pitch", "ymt3"], ...},
  "default_engines": {"vocals": "basic_pitch", "drums": "ymt3", ...},
  "stems": ["vocals", "drums", "bass", "guitar", "piano", "other"], "max_seconds": 1200,
