@@ -180,7 +180,7 @@ def test_a_missing_or_short_checkpoint_is_downloaded_and_said(
         path.write_bytes(present)
     calls = []
 
-    def fake_fetch(url, dst, sha256, size, *, read_timeout, attempts):
+    def fake_fetch(url, dst, sha256, size, *, read_timeout, attempts, on_bytes=None):
         calls.append((url, dst, size, read_timeout, attempts))
         Path(dst).write_bytes(b"12345")
 
@@ -219,7 +219,7 @@ def fetches(monkeypatch):
     calls: list[str] = []
     good: dict[str, bytes] = {}
 
-    def fake_fetch(url, dst, sha256, size, *, read_timeout, attempts):
+    def fake_fetch(url, dst, sha256, size, *, read_timeout, attempts, on_bytes=None):
         calls.append(dst)
         Path(dst).write_bytes(good["bytes"])
 

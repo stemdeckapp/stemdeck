@@ -35,7 +35,10 @@ The endpoints the web app itself uses. They are not a stable public interface an
 | POST | `/api/settings` | JSON with any of the settings; answers the same body as the GET. `{"stem_models": {...}}` below |
 | POST | `/api/speed-test` | Start the benchmark (Settings > Separation): `202 {"state": "running"}`; `409` with `code: "busy"` and a fixed `detail` while a song is separating, a song waits in a queue that is not paused, a stem fill or a Lead + Backing split holds the pipeline, a benchmark is already running, the server is stopping, or a stems folder move is in progress. A running benchmark holds the pipeline, so a song imported meanwhile waits for it |
 | POST | `/api/speed-test/cancel` | Cancel a running benchmark; answers the state as the GET does |
-| GET | `/api/models` | Every built-in model (Settings > Models): its purpose, licence, and state and size on disk. Read-only. See [Built-in models](#built-in-models) |
+| GET | `/api/models` | Every built-in model (Settings > Models): its purpose, licence, source, and state and size on disk, with the Download button's run. See [Built-in models](#built-in-models) |
+| POST | `/api/models/{id}/download` | Download one built-in model now: `202 {state: "running"}`, or `404`/`409` `{detail, code}` |
+| GET | `/api/models/download` | The Download button's run: state, model, phase, bytes, total, error code |
+| POST | `/api/models/download/cancel` | Stop the download: `200` and its state |
 | GET | `/api/my-models` | The models you added (Settings > Models > My models). See [My models](#my-models) |
 | POST | `/api/my-models/link` | Add a model from a Hugging Face link: `202` and the new entry |
 | POST | `/api/my-models/upload` | Add a model from two files (multipart): `202` and the new entry |
@@ -336,6 +339,8 @@ remove its `midi/` folder and `midi.json` with the rest of it.
   "models": [
     {"id": "htdemucs_6s", "group": "separation", "use": "stems",
      "name": "HT Demucs 6 stems", "stems": ["vocals", ...], "license": "MIT",
+     "source": {"author": "Meta AI (Rouard, Massa, Défossez)",
+                "url": "https://github.com/facebookresearch/demucs"},
      "state": "downloaded", "size_bytes": 54996327, "download_bytes": 54996327,
      "available": true},
     ...
@@ -355,12 +360,48 @@ pinned file at the wrong size), `not_downloaded`, `built_in` (Basic Pitch ships
 inside StemDeck) or `unknown` (the folder could not be worked out, for example
 when torch does not load). `size_bytes` is what is on disk now, or null;
 `download_bytes` is a full download, or null when unknown. `license` is null
-when the code does not know it. No path is ever in the answer. What a model is
+when the code does not know it. `source` is who made the model and the
+original author's own page (never a re-upload), or null when it is not
+verified (a model a deployment swapped in); the list is in
+[Models](models.md#where-each-model-comes-from). No path is ever in the answer. What a model is
 used for comes from `stem_models_resolved` and `transcribe_<stem>` /
 `transcribe_<stem>_engine` in `GET /api/settings`, not from here. The song-sections
 model is not listed: the Hugging Face hub caches it under a layout only its
 package names. Built-in models are never removed through the API (`remove` is
 false): a running separation may be reading the file.
+
+`downloadable` says the Download button can fetch the model here: one this
+install can run, whose files the code has pinned (every default model except
+Basic Pitch, which is built in; not a Karaoke, beat or Whisper model a
+deployment swapped in). `download` is the button's run, the same as
+`GET /api/models/download`:
+
+```
+{"state": "idle" | "running" | "done" | "failed" | "cancelled",
+ "model": "kim_mel_roformer" | null, "phase": "download" | "prepare" | null,
+ "bytes": 120400000, "total": 913106900, "error_code": null}
+```
+
+`POST /api/models/{id}/download` starts one, the way the first job that needs
+the model would fetch it, into the same file (app/core/model_get.py has each
+family's path). One at a time. Every file is written under a temporary name
+in a folder of the run's own beside its destination, checked against its
+pinned size and SHA-256, flushed, and only then renamed into place, so a
+download that is stopped or cut off never leaves a file that looks complete.
+`phase` is `prepare` while YourMT3+'s weights are made from its checkpoint.
+`error_code` is `network`, `disk`, `checksum`, `io`, `prepare` or `failed`;
+the page says each in its own words, and no path is ever in an answer.
+
+Refusals are `{detail, code}`: `404 not_found` (not a model the button can
+download here), `409 downloaded` (its files are there already), `409 busy`
+(another download runs; for a separation, Karaoke, Whisper or beat model, a
+song separating or waiting, a split, a fill, a re-extract or a speed test; for
+ByteDance Piano Transcription or YourMT3+, a MIDI run). A separation, Karaoke,
+Whisper or beat model's download holds the pipeline lock, so a song added
+meanwhile waits for it, and a MIDI run of an engine whose weights are
+downloading is refused with `409 model_downloading`.
+`POST /api/models/download/cancel` stops the process, removes what it left,
+and answers with the state, `cancelled` once it has settled.
 
 ## My models
 
@@ -397,7 +438,7 @@ An entry:
 | `size`, `sha256` | The model file's size and SHA-256, null until it is stored |
 | `stems` | The stems you declared, in the order vocals, drums, bass, guitar, piano |
 | `arch`, `params` | `mel_band_roformer` or `bs_roformer`, and its parameter count |
-| `source` | `{kind: "hf" or "upload", label, license_declared}`. `label` is `owner/repo@<12 hex of the commit>` or the file name. `license_declared` is what the Hugging Face card says, shown as given and never checked |
+| `source` | `{kind: "hf" or "upload", label, license_declared, link}`. `label` is `owner/repo@<12 hex of the commit>` or the file name. `license_declared` is what the Hugging Face card says, shown as given and never checked. `link` is the Hugging Face address it was added from (an `https://huggingface.co/` address), or null for a model from files |
 | `added_at`, `checked_at` | Epoch seconds |
 | `cpu_rtf` | Seconds of work per second of audio on the CPU, from the check's test run |
 | `usable`, `missing` | Whether separation can use it now, and whether its file is gone |

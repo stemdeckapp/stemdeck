@@ -17,12 +17,12 @@ const entry = (id, group, use, extra = {}) => ({
 });
 const MODELS = {
   models: [
-    entry("htdemucs_6s", "separation", "stems", { name: "HT Demucs 6 stems", stems: ["vocals", "drums", "bass", "guitar", "piano", "other"], state: "downloaded", size_bytes: 54_996_327, download_bytes: 54_996_327 }),
+    entry("htdemucs_6s", "separation", "stems", { name: "HT Demucs 6 stems", stems: ["vocals", "drums", "bass", "guitar", "piano", "other"], state: "downloaded", size_bytes: 54_996_327, download_bytes: 54_996_327, source: { author: "Meta AI (Rouard, Massa, Défossez)", url: "https://github.com/facebookresearch/demucs" } }),
     entry("htdemucs_ft", "separation", "stems", { name: "HT Demucs fine-tuned", stems: ["vocals", "drums", "bass", "other"], state: "partial", size_bytes: 84_141_271, download_bytes: 336_565_084 }),
     entry("kim_mel_roformer", "separation", "stems", { name: "Mel-Band RoFormer (Kim)", stems: ["vocals"], download_bytes: 913_106_900, available: false }),
     entry("uvr_karaoke_2", "separation", "lead_backing", { name: "UVR-MDX-NET Karaoke 2", stems: ["lead_backing"] }),
     entry("basic_pitch", "transcription", "midi", { name: "Basic Pitch", stems: ["vocals", "bass", "guitar", "piano", "other"], license: "Apache-2.0", state: "built_in", size_bytes: 230_000 }),
-    entry("piano_hr", "transcription", "midi_piano", { name: "ByteDance Piano Transcription", stems: ["piano"], license: "CC BY 4.0", download_bytes: 171_966_578 }),
+    entry("piano_hr", "transcription", "midi_piano", { name: "ByteDance Piano Transcription", stems: ["piano"], license: "CC BY 4.0", download_bytes: 171_966_578, source: { author: "Qiuqiang Kong (ByteDance)", url: "https://zenodo.org/records/4034264" } }),
     entry("ymt3", "transcription", "midi_multi", { name: "YourMT3+", stems: ["drums", "bass", "guitar", "piano", "other"], license: "Apache-2.0", download_bytes: 561_544_628 }),
     entry("whisper_turbo", "analysis", "lyrics_gpu", { name: "Whisper turbo", download_bytes: 1_617_941_637 }),
     entry("whisper_small", "analysis", "lyrics_cpu", { name: "Whisper small", state: "downloaded", size_bytes: 483_617_219 }),
@@ -101,6 +101,22 @@ test("the built-in models are grouped by purpose, each with its state and size",
   await expect(pane.locator(".models-row button")).toHaveCount(0);
 });
 
+test("each row names its source, linked to the author's own page", async ({ page }) => {
+  await stubServer(page);
+  await openModels(page);
+  const six = row(page, "htdemucs_6s").locator(".models-source");
+  await expect(six).toHaveText("Source: Meta AI (Rouard, Massa, Défossez), github.com/facebookresearch/demucs ↗");
+  const link = six.locator("a.models-source-link");
+  await expect(link).toHaveAttribute("href", "https://github.com/facebookresearch/demucs");
+  // target="_blank" is what main.js hands to the desktop app's open_url.
+  await expect(link).toHaveAttribute("target", "_blank");
+  await expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  await expect(row(page, "piano_hr").locator(".models-source a")).toHaveAttribute("href", "https://zenodo.org/records/4034264");
+  // An entry with no verified source says so, with no link.
+  await expect(row(page, "uvr_karaoke_2").locator(".models-source")).toHaveText("Source: not verified");
+  await expect(row(page, "uvr_karaoke_2").locator(".models-source a")).toHaveCount(0);
+});
+
 test("Used for follows the per-stem choices and the MIDI lanes", async ({ page }) => {
   await stubServer(page);
   await openModels(page);
@@ -173,4 +189,139 @@ test("at phone width the rows stack and nothing runs off the side", async ({ pag
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(375);
   }
+});
+
+// ── The Download button (app/core/model_get.py behind it) ──
+//
+// The server's run is played here: POST /api/models/{id}/download starts it,
+// GET /api/models/download moves it on one step per poll, Cancel stops it,
+// and the list read again at the end has the model downloaded. Nothing is
+// fetched and nothing reaches the shared backend.
+
+async function downloadServer(page, { steps, refuse = null } = {}) {
+  const models = structuredClone(MODELS);
+  for (const m of models.models) if (["kim_mel_roformer", "piano_hr", "htdemucs_ft"].includes(m.id)) m.downloadable = true;
+  models.models.find((m) => m.id === "kim_mel_roformer").available = true;
+  const server = { models, run: { state: "idle", model: null, phase: null, bytes: 0, total: null, error_code: null }, posts: [], cancelled: false, polls: 0 };
+  await page.route("**/api/models", (route) => route.fulfill({ json: { ...server.models, download: server.run } }));
+  await page.route("**/api/models/download", (route) => {
+    server.polls += 1;
+    if (server.run.state === "running" && !server.cancelled) {
+      const next = steps.shift();
+      if (next) Object.assign(server.run, next);
+      if (server.run.state === "done") {
+        const m = server.models.models.find((e) => e.id === server.run.model);
+        Object.assign(m, { state: "downloaded", size_bytes: m.download_bytes });
+      }
+    }
+    return route.fulfill({ json: server.run });
+  });
+  await page.route(/\/api\/models\/[a-z0-9_]+\/download$/, (route) => {
+    const id = route.request().url().split("/").slice(-2)[0];
+    server.posts.push(id);
+    if (refuse) return route.fulfill({ status: refuse.status, json: { detail: "x", code: refuse.code } });
+    const m = server.models.models.find((e) => e.id === id);
+    server.run = { state: "running", model: id, phase: "download", bytes: 0, total: m.download_bytes, error_code: null };
+    return route.fulfill({ status: 202, json: { state: "running" } });
+  });
+  await page.route("**/api/models/download/cancel", (route) => {
+    server.cancelled = true;
+    server.run = { ...server.run, state: "cancelled", phase: null };
+    return route.fulfill({ json: server.run });
+  });
+  return server;
+}
+
+test("Download beside Not downloaded: progress, then Downloaded and no button", async ({ page }) => {
+  await stubServer(page);
+  const server = await downloadServer(page, {
+    steps: [
+      { bytes: 120_400_000 },
+      { bytes: 913_106_900 },
+      { state: "done", phase: null, bytes: 913_106_900 },
+    ],
+  });
+  await openModels(page);
+  const kim = row(page, "kim_mel_roformer");
+  const get = kim.locator("button.models-download");
+  await expect(get).toHaveText("Download");
+  await expect(get).toHaveAttribute("aria-label", "Download Mel-Band RoFormer (Kim)");
+  // A real button, beside the label, not the label itself.
+  await expect(kim.locator(".models-state")).toHaveText("Not downloaded, 913 MB to download");
+  // Partly downloaded has one too; downloaded, built-in and not downloadable rows do not.
+  await expect(row(page, "htdemucs_ft").locator("button.models-download")).toHaveCount(1);
+  for (const id of ["htdemucs_6s", "basic_pitch", "whisper_turbo", "beat_this"]) {
+    await expect(row(page, id).locator("button")).toHaveCount(0);
+  }
+  await get.click();
+  await expect(kim.locator(".models-state")).toHaveText("Downloading 120 of 913 MB");
+  const cancel = kim.locator("button.models-cancel");
+  await expect(cancel).toHaveText("Cancel");
+  // One at a time: the other Download waits.
+  await expect(row(page, "piano_hr").locator("button.models-download")).toBeDisabled();
+  await expect(kim.locator(".models-state")).toHaveText("Downloaded, 913 MB");
+  await expect(kim.locator("button")).toHaveCount(0);
+  await expect(row(page, "piano_hr").locator("button.models-download")).toBeEnabled();
+  expect(server.posts).toEqual(["kim_mel_roformer"]);
+});
+
+test("Cancel stops the download and Download comes back", async ({ page }) => {
+  await stubServer(page);
+  const server = await downloadServer(page, { steps: [{ bytes: 50_000_000 }, { bytes: 60_000_000 }, { bytes: 70_000_000 }, { bytes: 80_000_000 }] });
+  await openModels(page);
+  const hr = row(page, "piano_hr");
+  await hr.locator("button.models-download").click();
+  await expect(hr.locator(".models-state")).toHaveText(/^Downloading \d+ of 172 MB$/);
+  await hr.locator("button.models-cancel").click();
+  expect(server.cancelled).toBe(true);
+  await expect(hr.locator(".models-state")).toHaveText("Not downloaded, 172 MB to download");
+  await expect(hr.locator("button.models-download")).toBeEnabled();
+  await expect(hr.locator(".models-download-msg")).toBeHidden();
+});
+
+test("a failed download says why in the page's words, never the server's", async ({ page }) => {
+  await stubServer(page);
+  await downloadServer(page, { steps: [{ state: "failed", phase: null, error_code: "network" }] });
+  await openModels(page);
+  const kim = row(page, "kim_mel_roformer");
+  await kim.locator("button.models-download").click();
+  await expect(kim.locator(".models-download-msg")).toHaveText(
+    "StemDeck could not reach the download server. Check the internet connection and try again.",
+  );
+  await expect(kim.locator("button.models-download")).toBeEnabled();
+});
+
+test("a refused start says it is busy, on its own row", async ({ page }) => {
+  await stubServer(page);
+  await downloadServer(page, { steps: [], refuse: { status: 409, code: "busy" } });
+  await openModels(page);
+  const kim = row(page, "kim_mel_roformer");
+  await kim.locator("button.models-download").click();
+  await expect(kim.locator(".models-download-msg")).toHaveText(
+    "StemDeck is downloading another model, separating a song or making MIDI. Try again when it has finished.",
+  );
+  await expect(row(page, "piano_hr").locator(".models-download-msg")).toBeHidden();
+});
+
+test("in European Portuguese the button is Transferir", async ({ page }) => {
+  await stubServer(page);
+  await downloadServer(page, { steps: [{ bytes: 120_400_000 }, { bytes: 130_000_000 }] });
+  await page.addInitScript(() => localStorage.setItem("stemdeck.language", JSON.stringify("pt-PT")));
+  await openModels(page);
+  const kim = row(page, "kim_mel_roformer");
+  await expect(kim.locator("button.models-download")).toHaveText("Transferir");
+  await kim.locator("button.models-download").click();
+  await expect(kim.locator(".models-state")).toHaveText(/^A transferir \d+ de 913 MB$/);
+});
+
+test("at phone width a row's state and Download stay on the screen", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await stubServer(page);
+  await downloadServer(page, { steps: [] });
+  const pane = await openModels(page);
+  const overflow = await pane.evaluate((el) => el.scrollWidth - el.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
+  const box = await row(page, "kim_mel_roformer").locator("button.models-download").boundingBox();
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(375);
 });

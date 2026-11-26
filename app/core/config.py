@@ -399,6 +399,13 @@ TIMEOUT_DEMUCS_STALL = _env_int("STEMDECK_TIMEOUT_DEMUCS_STALL", 1800)
 TIMEOUT_MODEL_DOWNLOAD_READ = max(1, _env_int("STEMDECK_TIMEOUT_MODEL_DOWNLOAD_READ", 30))
 MODEL_DOWNLOAD_ATTEMPTS = max(1, _env_int("STEMDECK_MODEL_DOWNLOAD_ATTEMPTS", 3))
 MODEL_DOWNLOAD_BACKOFF = (2, 5)
+# Settings > Models' Download button (app/core/model_get.py): its process is
+# stopped after this many seconds without a line from it. A download says
+# its bytes every half second while they come, and gives up by
+# itself after TIMEOUT_MODEL_DOWNLOAD_READ seconds without one, tried
+# MODEL_DOWNLOAD_ATTEMPTS times on two hosts at most (the mirror, then the
+# original): about 200 s with the defaults, well inside this.
+TIMEOUT_MODEL_GET_STALL = max(60, _env_int("STEMDECK_TIMEOUT_MODEL_GET_STALL", 300))
 _MODEL_MIRROR_DEFAULT = "https://files.stemdeck.app"
 
 
@@ -494,6 +501,21 @@ SECTION_REFINEMENT_RECURRENCE_LABEL_MARGIN = 0.25
 # deployment swap the checkpoint (e.g. to a roformer model) without a code
 # change; see docs/models.md for the license audit behind this default.
 VOCAL_SPLIT_MODEL = os.environ.get("STEMDECK_KARAOKE_MODEL", "").strip() or "UVR_MDXNET_KARA_2.onnx"
+# The default Karaoke 2 file, pinned for Settings > Models' Download button
+# (app/core/model_get.py): the address audio-separator fetches it from (its
+# public_model_repo_url_prefix in Separator.download_model_files, 0.44.5),
+# and its size and SHA-256, measured 2026-11-26 on that download. GitHub
+# publishes no digest for the asset; the bytes are the UVR-published model:
+# the MD5 audio-separator identifies a model by (of its last 10,240,000
+# bytes), 1d64a6d2c30f709b8c9b4ce1366d96ee, is the Karaoke entry of UVR's own
+# mdx_model_data/model_data_new.json, and the size is the asset's in the
+# releases API.
+KARAOKE_2_URL = (
+    "https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/"
+    "UVR_MDXNET_KARA_2.onnx"
+)
+KARAOKE_2_SHA256 = "bf32e15105a09c0f7dddd2b67346146334d6f3ecb399ed7638eba2ab07cbf5f4"
+KARAOKE_2_SIZE = 52_786_726
 # A first run downloads the checkpoint (hundreds of MB); generous default so a
 # slow connection isn't mistaken for a stall.
 TIMEOUT_VOCAL_SPLIT = _env_int("STEMDECK_TIMEOUT_VOCAL_SPLIT", 1800)
@@ -1108,6 +1130,26 @@ LYRICS_REPAIR_ALIGN_MAX_CELLS = 4_000_000
 # small on a CPU, or on a GPU without room for turbo: 0.5 GB.
 TRANSCRIBE_MODEL_GPU = os.environ.get("STEMDECK_WHISPER_MODEL_GPU", "").strip() or "turbo"
 TRANSCRIBE_MODEL_CPU = os.environ.get("STEMDECK_WHISPER_MODEL_CPU", "").strip() or "small"
+# The two default Whisper files, pinned for Settings > Models' Download
+# button: the addresses openai-whisper 20250625 fetches them from
+# (whisper._MODELS), whose folder is the file's full SHA-256 (what Whisper
+# checks on every load), and their sizes, the Content-Length those addresses
+# answered on 2026-11-26. A file put there by the button is the one Whisper
+# would have fetched itself, so it loads it as its own.
+_WHISPER_HOST = "https://openaipublic.azureedge.net/main/whisper/models/"
+WHISPER_FILES: dict[str, tuple[str, str, int]] = {
+    "turbo": (
+        _WHISPER_HOST
+        + "aff26ae408abcba5fbf8813c21e62b0941638c5f6eebfb145be0c9839262a19a/large-v3-turbo.pt",
+        "aff26ae408abcba5fbf8813c21e62b0941638c5f6eebfb145be0c9839262a19a",
+        1_617_941_637,
+    ),
+    "small": (
+        _WHISPER_HOST + "9ecf779972d90ba49c06d968637d720dd632c55bbf19d441fb42bf17a411e794/small.pt",
+        "9ecf779972d90ba49c06d968637d720dd632c55bbf19d441fb42bf17a411e794",
+        483_617_219,
+    ),
+}
 # Free VRAM the GPU model needs, checked in the worker before loading, since
 # the Demucs worker keeps its own allocation resident on the same card.
 # Measured on an RTX 3080 (Nirvana "Lithium", 255 s): turbo held in fp16
@@ -1550,6 +1592,14 @@ if BEAT_DETECTOR not in ("auto", "model", "librosa"):
 # beat_this checkpoint name; resolved through torch.hub, so it lands under
 # TORCH_HOME (which configure_portable_environment points at MODELS_DIR).
 BEAT_MODEL_CHECKPOINT = os.environ.get("STEMDECK_BEAT_MODEL", "").strip() or "final0"
+# The default checkpoint pinned for Settings > Models' Download button: the
+# address beat_this asks torch.hub for (beat_this.inference.CHECKPOINT_URL,
+# beat-this 1.1.0, plus "/final0.ckpt"), and its size and SHA-256, measured
+# 2026-11-26. The host publishes a SHA-1 of the file (its oc-checksum header,
+# e1506282faf66ca10e8ab50ee26bd542b7b9ff0a), which that download matched.
+BEAT_THIS_FINAL0_URL = "https://cloud.cp.jku.at/public.php/dav/files/7ik4RrBKTS273gp/final0.ckpt"
+BEAT_THIS_FINAL0_SHA256 = "8c328b45f59d8dd3dff219253ff6a8d6482be57d0133a29140e2febbf8eb8331"
+BEAT_THIS_FINAL0_SIZE = 81_058_141
 
 BEATGRID_SR = 22050
 BEATGRID_HOP = 512

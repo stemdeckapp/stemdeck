@@ -298,7 +298,7 @@ def test_worker_spec_carries_what_the_worker_needs():
         um.worker_spec(_entry())
 
 
-def test_the_public_entry_has_no_path_or_link():
+def test_the_public_entry_has_no_path():
     model_id = _ready()
     entry = um.get(model_id)
     assert set(entry) == {
@@ -320,7 +320,12 @@ def test_the_public_entry_has_no_path_or_link():
         "usable",
         "missing",
     }
-    assert set(entry["source"]) == {"kind", "label", "license_declared"}
+    # The link it was added from is public since Settings > Models shows it
+    # ("Source: added by you, <link>"), and only ever a checked Hugging Face
+    # address (user_models._public_link); never a path.
+    assert set(entry["source"]) == {"kind", "label", "license_declared", "link"}
+    link = entry["source"]["link"]
+    assert link is None or link.startswith("https://huggingface.co/")
     assert str(um.root()) not in json.dumps(entry)
     assert entry["usable"] is True and entry["cpu_rtf"] == 0.5
     assert um.name_of(model_id) == "Mine"

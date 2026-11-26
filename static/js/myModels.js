@@ -24,6 +24,7 @@
 import { t, getLanguage } from "./i18n.js";
 import { onOnlineSourcesChange, onlineSourcesFrom, onlineSourcesOn } from "./onlineSources.js";
 import { usedForLine } from "./modelsView.js";
+import { linkedLine } from "./sourceLink.js";
 import {
   CONFIG_ACCEPT,
   MODEL_ACCEPT,
@@ -43,6 +44,7 @@ import {
   reasonText,
   refusalCode,
   sourceLine,
+  userSourceView,
   statusView,
   uploadFields,
   uploadPct,
@@ -224,6 +226,8 @@ export function wireMyModels(overlay, { onModelsChanged, onOffered } = {}) {
     const meta = el("div", "settings-row-desc my-model-meta", metaLine(m, t, locale));
     if (m.sha256) meta.title = `SHA-256 ${m.sha256}`;
     main.append(meta);
+    // Who it comes from: always the person, with the link they added it from.
+    main.append(linkedLine("settings-row-desc my-model-source-by", userSourceView(m, t)));
     const source = sourceLine(m, t);
     if (source) main.append(el("div", "settings-row-desc my-model-source", source));
     const status = el("div", "my-model-status-line");

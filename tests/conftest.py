@@ -71,6 +71,29 @@ def _isolate_piano_hr(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_model_get(monkeypatch):
+    """No test runs the real Download button worker (app/pipeline/
+    model_get_worker.py), which would fetch hundreds of MB into torch.hub's
+    and Whisper's real folders. The worker it starts exits at once as a
+    failed download, and the one-download state starts idle. Tests that want
+    one point model_get._spawn_cmd at a stub of their own."""
+    from app.core import model_get as _model_get
+
+    _model_get.reset_state()
+    monkeypatch.setattr(
+        _model_get,
+        "_spawn_cmd",
+        lambda model_id, token: [
+            sys.executable,
+            "-c",
+            'print(\'{"event":"error","code":"failed"}\', flush=True); raise SystemExit(3)',
+        ],
+    )
+    yield
+    _model_get.reset_state()
+
+
+@pytest.fixture(autouse=True)
 def _isolate_ymt3(monkeypatch, tmp_path):
     """No test reads, writes, downloads or converts YourMT3+'s real files (a
     561 MB checkpoint and a 188 MB weights file under MODELS_DIR,

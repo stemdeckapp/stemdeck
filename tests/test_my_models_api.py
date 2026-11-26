@@ -244,6 +244,8 @@ def test_a_link_downloads_checks_and_is_ready(client, hub, online_sources_on, ch
         "kind": "hf",
         "label": f"o/r@{COMMIT[:12]}",
         "license_declared": "mit",
+        # The link it was added from, for Settings' "Source: added by you".
+        "link": "https://huggingface.co/o/r",
     }
     assert entry["params"] == RESULT["params"] and entry["cpu_rtf"] == RESULT["cpu_rtf"]
     folder = um.model_dir(first["id"])
@@ -370,6 +372,8 @@ def test_an_upload_is_stored_under_fixed_names_and_checked(client, check):
     entry = _wait(client, model_id)
     assert entry["status"] == "ready" and entry["name"] == "evil name"
     assert entry["source"]["kind"] == "upload"
+    # A model from files has no link to show.
+    assert entry["source"]["link"] is None
     folder = um.model_dir(model_id)
     assert sorted(p.name for p in folder.iterdir()) == ["config.yaml", "model.safetensors"]
     assert (folder / "config.yaml").read_bytes() == CONFIG_BYTES
@@ -610,3 +614,25 @@ def test_the_lan_gate_covers_these_routes(check):
         assert c.get("/api/my-models").status_code == 403
         assert _upload(c).status_code == 403
     assert um.count() == 0
+
+
+def test_a_link_read_back_from_the_registry_is_checked_again():
+    """The Source line's link comes from the registry file, which a person
+    can edit: only an https huggingface.co address of plain characters is
+    served, anything else is no link."""
+    link = um._public_link
+    assert (
+        link({"kind": "hf", "link": "https://huggingface.co/o/r"}) == "https://huggingface.co/o/r"
+    )
+    assert link({"kind": "upload", "link": "https://huggingface.co/o/r"}) is None
+    for bad in (
+        "http://huggingface.co/o/r",
+        "https://huggingface.co.evil.example/o/r",
+        "javascript:alert(1)",
+        'https://huggingface.co/o/r" onclick="x',
+        "https://huggingface.co/o/r with space",
+        "https://huggingface.co/" + "a" * 500,
+        None,
+        42,
+    ):
+        assert link({"kind": "hf", "link": bad}) is None, bad

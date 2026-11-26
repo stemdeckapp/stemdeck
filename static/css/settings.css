@@ -509,7 +509,7 @@
 .my-model-row:first-child { border-top: 0; padding-top: 4px; }
 .my-model-main { min-width: 0; flex: 1 1 260px; display: flex; flex-direction: column; gap: 4px; }
 .my-model-name { font-size: 14px; font-weight: 600; color: var(--fg); overflow-wrap: anywhere; }
-.my-model-meta, .my-model-source, .my-model-redownload { margin: 0; overflow-wrap: anywhere; }
+.my-model-meta, .my-model-source, .my-model-source-by, .my-model-redownload { margin: 0; overflow-wrap: anywhere; }
 .my-model-status-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 .my-model-reason { margin: 0; color: var(--danger); }
 /* The same solid badges as the Benchmark rating: a word, never colour alone. */
@@ -553,6 +553,16 @@
 .models-state[data-state="downloaded"], .models-state[data-state="built_in"] { color: var(--bg); background: var(--guitar); border-color: transparent; }
 .models-state[data-state="partial"] { color: var(--bg); background: var(--accent); border-color: transparent; }
 .models-state[data-state="unavailable"] { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 50%, transparent); }
+.models-state[data-state="downloading"] { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, transparent); font-variant-numeric: tabular-nums; }
+/* The state, then Download (or Cancel while it runs) beside it. */
+.models-side { flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.models-row .models-download-msg { color: var(--danger); }
+.models-row .models-download-msg:empty { display: none; }
+/* "Source: <author>, <page> ↗": the page opens in the system browser. */
+.models-source, .my-model-source-by { overflow-wrap: anywhere; }
+.models-source-link { color: var(--accent); text-decoration: none; }
+.models-source-link:hover, .models-source-link:focus-visible { text-decoration: underline; }
+.models-source-arrow { font-size: 0.9em; }
 .models-remove-note { margin: 0 0 0 2px; }
 /* "Add or remove models in Models": a button that reads as a link. */
 .models-open-line { margin: 0 0 2px 2px; }
@@ -782,6 +792,8 @@
   .settings-row > .settings-num-input, .settings-row > .settings-btn,
   .settings-row > .settings-reset-btn, .settings-row > .rec-small-btn,
   .settings-row > .models-state { align-self: flex-start; }
+  .settings-row > .models-side { justify-content: flex-start; }
+  .models-side .models-state { white-space: normal; }
   .settings-foot-note { display: none; }
   .settings-foot { justify-content: flex-end; }
 }

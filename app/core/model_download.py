@@ -130,6 +130,14 @@ class ModelDownloadError(RuntimeError):
         # reason goes last: the job's error_detail keeps 200 characters, and a
         # long one (a proxy's TLS error) would otherwise cut off the folder.
         super().__init__(f"model download failed: {url}; put the file in {folder} ({reason})")
+        # Why, as _reason() words it, for a caller that says it in its own
+        # words (Settings > Models' Download button): CHECKSUM_REASON or a
+        # network reason.
+        self.reason = reason
+
+
+# The reason of a file that arrived and was not the pinned one.
+CHECKSUM_REASON = "file did not match its checksum"
 
 
 def _reason(exc: BaseException, read_timeout: int) -> str:
@@ -146,7 +154,7 @@ def _reason(exc: BaseException, read_timeout: int) -> str:
     if isinstance(exc, (ConnectionError, http.client.IncompleteRead)):
         return "connection closed early"
     if isinstance(exc, RuntimeError):
-        return "file did not match its checksum"
+        return CHECKSUM_REASON
     return str(exc) or type(exc).__name__
 
 
@@ -293,10 +301,18 @@ def _download_verified(
                 os.remove(tmp)
 
 
-def _fetch_verified(url: str, dst: str, entry: MirroredFile, progress: bool) -> None:
+def _fetch_verified(
+    url: str,
+    dst: str,
+    entry: MirroredFile,
+    progress: bool,
+    on_bytes: Callable[[int], None] | None = None,
+) -> None:
     """Download `url` from the mirror to `dst` only if it is exactly `entry`.
     The mirror answers with the file itself, so a redirect is refused."""
-    _download_verified(url, dst, entry.sha256, entry.size, progress, _RefuseRedirect)
+    _download_verified(
+        url, dst, entry.sha256, entry.size, progress, _RefuseRedirect, on_bytes=on_bytes
+    )
 
 
 # A ".partial" this module, or torch.hub, writes beside a download: the file's
@@ -426,7 +442,74 @@ def fetch_verified_file(
             read_timeout=read_timeout,
         )
     except MirrorFileMismatch as exc:
-        raise ModelDownloadError(url, folder, "file did not match its checksum") from exc
+        raise ModelDownloadError(url, folder, CHECKSUM_REASON) from exc
+
+
+def fetch_pinned_hub_file(
+    url: str,
+    dst: str,
+    *,
+    read_timeout: int,
+    attempts: int,
+    hash_prefix: str | None = None,
+    progress: bool = True,
+    on_bytes: Callable[[int], None] | None = None,
+) -> bool:
+    """The download bounded_downloads gives a pinned torch.hub address: the
+    mirror first when the file is in MIRRORED_FILES, then the original host,
+    each kept only when its size and full SHA-256 match. False, having done
+    nothing, when ``url`` is not pinned (torch.hub's own download is left to
+    the caller). Raises ModelDownloadError when every try failed.
+
+    The socket default timeout of bounded_downloads is what bounds a read
+    here; call it inside that block. ``on_bytes`` is told the bytes the
+    current try has received, after every chunk."""
+    folder = os.path.dirname(os.path.abspath(dst))
+    mirrored = _mirror_url(url, dst, hash_prefix)
+    if mirrored is not None:
+        mirror_url, entry = mirrored
+        try:
+            fetch_with_retry(
+                lambda: _fetch_verified(mirror_url, dst, entry, progress, on_bytes),
+                url=mirror_url,
+                folder=folder,
+                attempts=attempts,
+                read_timeout=read_timeout,
+            )
+            return True
+        except (ModelDownloadError, MirrorFileMismatch) as exc:
+            if isinstance(exc, ModelDownloadError) and exc.__cause__ is not None:
+                reason = _reason(exc.__cause__, read_timeout)
+            else:
+                reason = str(exc)
+            # On stderr, the worker's failure evidence. No "%" in it: the
+            # parent reads a percentage there as download progress. The
+            # Downloading line is torch.hub's own, said again so the parent
+            # follows the second download as it did the first.
+            sys.stderr.write(
+                f"model mirror failed ({reason.replace('%', '')}), "
+                "downloading from the original host\n"
+                f'Downloading: "{url}" to {dst}\n'
+            )
+            sys.stderr.flush()
+    pinned = _pinned(url)
+    if pinned is None:
+        return False
+    sha256, size = pinned
+    sweep_partials(folder, os.path.basename(dst))
+    try:
+        fetch_with_retry(
+            lambda: _download_verified(
+                url, dst, sha256, size, progress, _HttpsRedirectOnly, on_bytes=on_bytes
+            ),
+            url=url,
+            folder=folder,
+            attempts=attempts,
+            read_timeout=read_timeout,
+        )
+    except MirrorFileMismatch as exc:
+        raise ModelDownloadError(url, folder, CHECKSUM_REASON) from exc
+    return True
 
 
 @contextmanager
@@ -441,55 +524,19 @@ def bounded_downloads(read_timeout: int, attempts: int) -> Iterator[None]:
     download = torch.hub.download_url_to_file
 
     def bounded(url: str, dst: str, hash_prefix: str | None = None, progress: bool = True) -> None:
-        folder = os.path.dirname(os.path.abspath(dst))
-        mirrored = _mirror_url(url, dst, hash_prefix)
-        if mirrored is not None:
-            mirror_url, entry = mirrored
-            try:
-                fetch_with_retry(
-                    lambda: _fetch_verified(mirror_url, dst, entry, progress),
-                    url=mirror_url,
-                    folder=folder,
-                    attempts=attempts,
-                    read_timeout=read_timeout,
-                )
-                return
-            except (ModelDownloadError, MirrorFileMismatch) as exc:
-                if isinstance(exc, ModelDownloadError) and exc.__cause__ is not None:
-                    reason = _reason(exc.__cause__, read_timeout)
-                else:
-                    reason = str(exc)
-                # On stderr, the worker's failure evidence. No "%" in it: the
-                # parent reads a percentage there as download progress. The
-                # Downloading line is torch.hub's own, said again so the parent
-                # follows the second download as it did the first.
-                sys.stderr.write(
-                    f"model mirror failed ({reason.replace('%', '')}), "
-                    "downloading from the original host\n"
-                    f'Downloading: "{url}" to {dst}\n'
-                )
-                sys.stderr.flush()
-        pinned = _pinned(url)
-        if pinned is not None:
-            sha256, size = pinned
-            sweep_partials(folder, os.path.basename(dst))
-            try:
-                fetch_with_retry(
-                    lambda: _download_verified(
-                        url, dst, sha256, size, progress, _HttpsRedirectOnly
-                    ),
-                    url=url,
-                    folder=folder,
-                    attempts=attempts,
-                    read_timeout=read_timeout,
-                )
-            except MirrorFileMismatch as exc:
-                raise ModelDownloadError(url, folder, "file did not match its checksum") from exc
+        if fetch_pinned_hub_file(
+            url,
+            dst,
+            read_timeout=read_timeout,
+            attempts=attempts,
+            hash_prefix=hash_prefix,
+            progress=progress,
+        ):
             return
         fetch_with_retry(
             lambda: download(url, dst, hash_prefix, progress),
             url=url,
-            folder=folder,
+            folder=os.path.dirname(os.path.abspath(dst)),
             attempts=attempts,
             read_timeout=read_timeout,
         )

@@ -30,7 +30,7 @@ function readyEntry(id, name, stems, extra = {}) {
   return {
     id, name, status: "ready", pct: 100, step: null, code: null, size: 912_000_000, sha256: SHA, stems,
     arch: "bs_roformer", params: 228_000_000,
-    source: { kind: "hf", label: `owner/${name}@0123456789ab`, license_declared: "MIT" },
+    source: { kind: "hf", label: `owner/${name}@0123456789ab`, license_declared: "MIT", link: `https://huggingface.co/owner/${encodeURIComponent(name)}` },
     added_at: 1_790_000_000, checked_at: 1_790_000_100, cpu_rtf: 2.5, usable: true, missing: false, ...extra,
   };
 }
@@ -236,6 +236,9 @@ test("files from the computer need the config file too, and go up as multipart",
   }
   await expect(row(page, "user_cccccccccccc").locator(".my-model-status")).toHaveText("Checking the model...");
   await expect(row(page, "user_cccccccccccc").locator(".my-model-source")).toHaveText("From your computer: drums.safetensors.");
+  // Added from files: "added by you", with no link.
+  await expect(row(page, "user_cccccccccccc").locator(".my-model-source-by")).toHaveText("Source: added by you");
+  await expect(row(page, "user_cccccccccccc").locator(".my-model-source-by a")).toHaveCount(0);
 });
 
 test("a refused add says the server's reason in the page's own words", async ({ page }) => {
@@ -264,6 +267,12 @@ test("a refused model shows why; Check again and Remove act on it", async ({ pag
   await expect(refused.locator(".my-model-reason")).toHaveText("The model file does not match its config file.");
   await expect(row(page, GUITAR_ID).locator(".my-model-meta")).toHaveText("912 MB · separates Guitar · SHA-256 3f9a12...c21e");
   await expect(row(page, GUITAR_ID).locator(".my-model-source")).toHaveText("From Hugging Face: owner/Guitar RoFormer@0123456789ab. Licence declared by its source: MIT. StemDeck does not check it.");
+  // Added from a link: "added by you", linked to where it came from, opened
+  // outside the app (target="_blank", main.js and open_url).
+  const by = row(page, GUITAR_ID).locator(".my-model-source-by");
+  await expect(by).toHaveText("Source: added by you, huggingface.co/owner/Guitar%20RoFormer ↗");
+  await expect(by.locator("a")).toHaveAttribute("href", "https://huggingface.co/owner/Guitar%20RoFormer");
+  await expect(by.locator("a")).toHaveAttribute("target", "_blank");
 
   await refused.locator(".my-model-check").click();
   await expect.poll(() => state.log.check).toEqual([VOCALS_ID]);

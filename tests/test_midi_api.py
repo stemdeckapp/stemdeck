@@ -1637,3 +1637,28 @@ async def test_the_zip_carries_the_midi_of_every_stem(jobs_dir, client, worker):
     assert len(mids) == 3
     for stem in ("drums", "vocals", "piano"):
         assert any(stem in n for n in mids), (stem, mids)
+
+
+async def test_a_run_is_refused_while_settings_downloads_its_engine(
+    jobs_dir, client, worker, monkeypatch
+):
+    """Settings > Models' Download button is fetching the engine's weights
+    (app/core/model_get.py): a run now would fetch them a second time beside
+    it, or read them before they are whole. Another engine still runs."""
+    from app.core import model_get
+
+    _song(jobs_dir)
+    monkeypatch.setattr(midi_run, "engine_for", lambda stem: "piano_hr")
+    monkeypatch.setattr(midi_run, "engine_availability", lambda engine: (True, None))
+    assert model_get.claim("piano_hr", 1) is not None
+    async with client as c:
+        _refused(
+            await c.post(f"/api/jobs/{JOB}/midi", json={"stem": "piano"}), 409, "model_downloading"
+        )
+        model_get.reset_state()
+        assert model_get.claim("ymt3", 1) is not None
+        monkeypatch.setattr(midi_run, "engine_for", lambda stem: "basic_pitch")
+        r = await c.post(f"/api/jobs/{JOB}/midi", json={"stem": "piano"})
+        assert r.status_code == 202, r.text
+        await _settled(c)
+    assert len(worker.calls) == 1

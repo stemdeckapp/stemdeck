@@ -14,9 +14,10 @@ refusal table and the run task are one feature. Every refusal is
 (404 job_not_found), the body (400 stem_not_supported, bad_detail), whether
 the stem's engine can run here at all (503 engine_unavailable: the one
 Settings picks for the stem, transcribe_<stem>_engine), the setting (403
-disabled), whether anything holds the song or the server's one MIDI slot (409
-busy), the stem (409 no_stem), its length (413 too_long). docs/api.md has
-the contract.
+disabled), whether Settings > Models is downloading that engine's weights
+(409 model_downloading: app/core/model_get.py), whether anything holds the
+song or the server's one MIDI slot (409 busy), the stem (409 no_stem), its
+length (413 too_long). docs/api.md has the contract.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from pydantic import BaseModel, Field
 
 from app.api.jobs import _keep_saved_fields, _write_metadata_fields
 from app.api.stems import _stem_download_name
+from app.core import model_get
 from app.core.config import JOB_ID_RE, JOBS_DIR, MIDI_DETAILS, MIDI_STEMS, TRANSCRIBE_MAX_SECONDS
 from app.core.models import FINISHED_STATUSES, Job, clean_midi
 from app.core.registry import get as registry_get
@@ -56,6 +58,10 @@ _REFUSALS: dict[str, tuple[int, str]] = {
         409,
         "This song is busy, or StemDeck is making another MIDI file. "
         "Try again when it has finished.",
+    ),
+    "model_downloading": (
+        409,
+        "The model this needs is downloading in Settings, Models. Try again when it has finished.",
     ),
     "no_stem": (409, "this song has no finished stem to make MIDI from"),
     "too_long": (413, "this stem is too long to make MIDI from"),
@@ -179,6 +185,10 @@ async def start_midi(job_id: str, body: MidiBody) -> JSONResponse:
         return _refusal("engine_unavailable")
     if not midi_stem_enabled(stem):
         return _refusal("disabled")
+    # Its weights are being fetched by the Download button: a run now would
+    # fetch them a second time beside it, or read them before they are whole.
+    if model_get.running_model() == engine:
+        return _refusal("model_downloading")
     if _song_busy(job):
         return _refusal("busy")
     audio = _stem_file(job, job_dir, stem)
@@ -188,6 +198,8 @@ async def start_midi(job_id: str, body: MidiBody) -> JSONResponse:
         return _refusal("too_long")
     # Checked again after the await above, then claimed with no await in
     # between: nothing else on the event loop can take the slot meanwhile.
+    if model_get.running_model() == engine:
+        return _refusal("model_downloading")
     if _song_busy(job):
         return _refusal("busy")
     has_file = midi_run.midi_path(job_dir, stem).is_file()
