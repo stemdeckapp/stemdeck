@@ -26,6 +26,7 @@ import { runStoreMigrationIfNeeded } from "./utils.js";
 import { ignoredByShortcuts } from "./libraryDeleteKey.js";
 import { initI18n, applyTranslations, t, plural, onLanguageChange } from "./i18n.js";
 import { initFooterFit, refitFooter } from "./footerFit.js";
+import { createExportMenu } from "./exportMenu.js";
 import { externalLinkAction } from "./externalLinks.js";
 import { initArtistInfo } from "./artistInfo.js";
 import { initLyrics } from "./lyrics.js";
@@ -588,6 +589,9 @@ function wireFooterControls() {
   // the dropdown so the hit target is predictable.
   // The menu offers Mix / All Stems / Current Region, with a WAV/MP3 toggle in
   // the header. All exports reuse the backend-served download helpers.
+  // Opening, closing, the format radiogroup, the keyboard and disabled rows
+  // are the shared export menu's (exportMenu.js, also Performance's); the
+  // rows, their gates and the busy state are this menu's own.
   const exportBtn   = document.getElementById("t-export-btn");
   const exportPanel = document.getElementById("t-export-panel");
   const exportLabel = document.getElementById("t-export-label");
@@ -630,7 +634,6 @@ function wireFooterControls() {
   // It applies to the mix only — stems/region are audio-only.
   const videoAvailable = () => !!exportWrap?.classList.contains("has-video");
 
-  let format = "wav";
   // OGG needs an FFmpeg with libvorbis, which is optional (#824). The
   // backend's /api/health says which formats its FFmpeg can encode. Without
   // libvorbis the OGG button stays visible but disabled, with the reason
@@ -641,47 +644,38 @@ function wireFooterControls() {
   // True from the click until the transfer starts or the dialog is cancelled.
   let picking = false;
 
-  const panelOpen = () => exportPanel && !exportPanel.classList.contains("hidden");
-  function openPanel() {
-    closeAllChipPanels();
-    // A previous (video) job may have left MP4 selected; revert if unavailable now.
-    if (format === "mp4" && !videoAvailable()) setFormat("wav");
-    applyTransposeGate();
-    refreshOpenReaperRow();
-    exportPanel?.classList.remove("hidden");
-    exportBtn?.setAttribute("aria-expanded", "true");
-  }
-  function closePanel() {
-    exportPanel?.classList.add("hidden");
-    exportBtn?.setAttribute("aria-expanded", "false");
-  }
-
-  function setFormat(f) {
-    format = f;
-    for (const [btn, val] of [[fmtWav, "wav"], [fmtMp3, "mp3"], [fmtFlac, "flac"], [fmtOgg, "ogg"], [fmtMp4, "mp4"]]) {
-      btn?.classList.toggle("active", f === val);
-      btn?.setAttribute("aria-checked", String(f === val));
-    }
-    applyFormatState();
-    // applyFormatState gives the region row back its loop state; a held-back
-    // transposed mix keeps it disabled.
-    if (panelOpen()) applyTransposeGate();
-  }
-  fmtWav?.addEventListener("click", (e) => { e.stopPropagation(); setFormat("wav"); });
-  fmtMp3?.addEventListener("click", (e) => { e.stopPropagation(); setFormat("mp3"); });
-  fmtFlac?.addEventListener("click", (e) => { e.stopPropagation(); setFormat("flac"); });
-  fmtOgg?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    if (oggUnavailable) return;
-    setFormat("ogg");
+  const menu = createExportMenu({
+    button: exportBtn,
+    panel: exportPanel,
+    hiddenClass: "hidden",
+    formats: [["wav", fmtWav], ["mp3", fmtMp3], ["flac", fmtFlac], ["ogg", fmtOgg], ["mp4", fmtMp4]]
+      .map(([value, el]) => ({ value, el })),
+    initialFormat: "wav",
+    activeClass: "active",
+    formatDisabled: (f) => f === "ogg" && oggUnavailable,
+    onFormat: () => {
+      applyFormatState();
+      // applyFormatState gives the region row back its loop state; a held-back
+      // transposed mix keeps it disabled.
+      if (menu.isOpen()) applyTransposeGate();
+    },
+    rows: actionItems,
+    // Shut from the click until the transfer ends (busy) or the dialog closes.
+    canOpen: () => !(busy || picking),
+    closeOthers: closeAllChipPanels,
+    onOpen: () => {
+      // A previous (video) job may have left MP4 selected; revert if unavailable now.
+      if (menu.format === "mp4" && !videoAvailable()) menu.setFormat("wav");
+      applyTransposeGate();
+      refreshOpenReaperRow();
+    },
   });
-  fmtMp4?.addEventListener("click", (e) => { e.stopPropagation(); setFormat("mp4"); });
 
   // MP4 exports the mix muxed with the source video. Stems and region have no
   // video equivalent, so they're hidden (via .fmt-mp4) while MP4 is selected,
   // leaving just "Export Mix".
   function applyFormatState() {
-    const video = format === "mp4";
+    const video = menu.format === "mp4";
     exportPanel?.classList.toggle("fmt-mp4", video);
     if (mixDescEl) {
       mixDescEl.textContent = video ? t("export.mixDescVideo") : t("export.mixDesc");
@@ -700,7 +694,7 @@ function wireFooterControls() {
     if (oggUnavailable) fmtOgg.title = t("export.oggUnavailable");
     else fmtOgg.removeAttribute("title");
     exportPanel?.classList.toggle("ogg-unavailable", oggUnavailable);
-    if (oggUnavailable && format === "ogg") setFormat("wav");
+    if (oggUnavailable && menu.format === "ogg") menu.setFormat("wav");
   }
   onLanguageChange(applyOggAvailability);
 
@@ -736,7 +730,7 @@ function wireFooterControls() {
       oggUnavailable = health?.export_formats?.ogg === false;
       applyOggAvailability();
       setTransposeExportAvailable(transposeExportFromHealth(health));
-      if (panelOpen()) applyTransposeGate();
+      if (menu.isOpen()) applyTransposeGate();
       // The same answer says whether Lead + Backing can be made (#832).
       applyVocalSplitHealth(health);
       // An FFmpeg older than 5.1 cannot run any export: say so now, not at
@@ -777,7 +771,7 @@ function wireFooterControls() {
     exportBtn?.classList.add("is-busy");
     if (exportLabel) exportLabel.textContent = t("export.mixing");
     actionItems().forEach((it) => it?.setAttribute("aria-disabled", "true"));
-    closePanel();
+    menu.close();
   }
   // Same reasoning as applyFormatState's listener above: exportLabel's text
   // depends on `busy`, so re-derive it after a language switch instead of
@@ -826,7 +820,7 @@ function wireFooterControls() {
           kind: "export",
           message,
           detail: err instanceof Error ? String(err.message) : null,
-          context: { stage: `Exporting ${format}`, jobId },
+          context: { stage: `Exporting ${menu.format}`, jobId },
         });
       })
       .finally(() => {
@@ -850,67 +844,37 @@ function wireFooterControls() {
     settleBusy(pending, jobId);
   }
 
-  exportBtn?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    if (busy || picking) return;
-    panelOpen() ? closePanel() : openPanel();
-  });
-
+  // Every row is inert while disabled (exportMenu.wireRow); Mix and Region
+  // ask the transpose gate again first, since a key can change while the
+  // menu is open.
   // Export Mix: MP4 produces the video; any other format an audio mix.
-  itemMix?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    applyTransposeGate();
-    if (transposeBlocked) return;
+  menu.wireRow(itemMix, () => {
+    const format = menu.format;
     runExport(
       (onStart) => (format === "mp4" ? downloadCurrentVideo(onStart) : downloadCurrentMix(format, onStart)),
       t("export.allMuted"),
     );
-  });
+  }, { gate: applyTransposeGate });
 
-  itemRegion?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    applyTransposeGate();
-    if (itemRegion.getAttribute("aria-disabled") === "true") return;
-    runExport((onStart) => downloadRegionMix(format, onStart), t("export.allMuted"));
-  });
+  menu.wireRow(itemRegion, () => {
+    runExport((onStart) => downloadRegionMix(menu.format, onStart), t("export.allMuted"));
+  }, { gate: applyTransposeGate });
 
   // All Stems = a single backend-built ZIP, named after the song. Audio-only,
   // so it's disabled (and inert) while MP4 is the selected format.
-  itemStems?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    if (itemStems.getAttribute("aria-disabled") === "true") return;
-    runExport((onStart) => downloadAllStemsZip(format, onStart), t("export.noStems"));
+  menu.wireRow(itemStems, () => {
+    runExport((onStart) => downloadAllStemsZip(menu.format, onStart), t("export.noStems"));
   });
 
   // The same zip plus a REAPER project (.rpp) naming every file in it.
-  itemReaper?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    if (itemReaper.getAttribute("aria-disabled") === "true") return;
-    runExport((onStart) => downloadAllStemsZip(format, onStart, { reaper: true }), t("export.noStems"));
+  menu.wireRow(itemReaper, () => {
+    runExport((onStart) => downloadAllStemsZip(menu.format, onStart, { reaper: true }), t("export.noStems"));
   });
 
   // Desktop only: save that zip, unpack it into a folder beside it and open
   // the project with the system's app for .rpp files.
-  itemOpenReaper?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    if (itemOpenReaper.getAttribute("aria-disabled") === "true") return;
-    runExport((onStart) => openStemsInReaper(format, onStart), t("export.noStems"));
-  });
-
-  // Keyboard: ↓ opens/moves into the menu, ↑/↓ cycle rows, Esc closes + restores focus.
-  exportBtn?.addEventListener("keydown", (e) => {
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      if (!panelOpen()) openPanel();
-      actionItems().find((it) => it?.getAttribute("aria-disabled") !== "true")?.focus();
-    }
-  });
-  exportPanel?.addEventListener("keydown", (e) => {
-    const focusable = actionItems().filter((it) => it && it.getAttribute("aria-disabled") !== "true");
-    const idx = focusable.indexOf(document.activeElement);
-    if (e.key === "Escape") { closePanel(); exportBtn?.focus(); }
-    else if (e.key === "ArrowDown") { e.preventDefault(); focusable[(idx + 1) % focusable.length]?.focus(); }
-    else if (e.key === "ArrowUp") { e.preventDefault(); focusable[(idx - 1 + focusable.length) % focusable.length]?.focus(); }
+  menu.wireRow(itemOpenReaper, () => {
+    runExport((onStart) => openStemsInReaper(menu.format, onStart), t("export.noStems"));
   });
 
   // ── Close panels on outside click ──
@@ -918,7 +882,7 @@ function wireFooterControls() {
   // export panel carries two checkboxes (click track, count-in) that a user
   // may well want both of, and without this the first tick closed the menu and
   // the second needed it reopened. Rows that *should* close the menu do it
-  // themselves -- the export actions via enterBusy() -> closePanel().
+  // themselves -- the export actions via enterBusy() -> menu.close().
   exportPanel?.addEventListener("click", (e) => e.stopPropagation());
   document.addEventListener("click", closeAllChipPanels);
 }
