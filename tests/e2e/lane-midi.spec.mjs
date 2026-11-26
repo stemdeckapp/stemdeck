@@ -450,6 +450,21 @@ function picture(page, lane) {
   }, lane);
 }
 
+/**
+ * How the lane's notes are drawn: the weakest computed fill-opacity of a note
+ * and the narrowest note on screen, px. The stub's drum hits last 10 ms,
+ * about 1.5 px at zoom 1 over the 6 s fixture, so the minimum width shows.
+ */
+function noteLook(page, lane) {
+  return page.evaluate((l) => {
+    const rects = [...document.querySelectorAll(`.midi-roll[data-midi-lane="${l}"] rect`)];
+    return {
+      opacity: Math.min(...rects.map((r) => Number(getComputedStyle(r).fillOpacity))),
+      width: Math.min(...rects.map((r) => r.getBoundingClientRect().width)),
+    };
+  }, lane);
+}
+
 // The picture follows the Sound on the click, before the MIDI sound is ready,
 // and on the Drums lane as on a pitched one.
 for (const lane of ["bass", "drums"]) {
@@ -466,11 +481,16 @@ for (const lane of ["bass", "drums"]) {
     await source.locator('[data-source="midi"]').click();
     await expect(row).toHaveAttribute("data-midi-source", "midi");
     await expect.poll(() => picture(page, lane)).toMatchObject({ front: "notes", notesStronger: true, notes: 1 });
+    // What plays is drawn as bright as the waveform in Stem: every note at
+    // full strength whatever its velocity, and none a hairline.
+    await expect.poll(() => noteLook(page, lane)).toMatchObject({ opacity: 1 });
+    expect((await noteLook(page, lane)).width).toBeGreaterThanOrEqual(1.8);
 
     // A redraw of the lanes (a zoom) keeps it.
     await page.evaluate(async () => (await import("/js/transport.js")).setWaveZoomLevel(3));
     await expect(row.locator(":scope > svg.midi-roll")).toHaveCount(1);
     await expect(row).toHaveAttribute("data-midi-source", "midi");
+    await expect.poll(async () => (await noteLook(page, lane)).width).toBeGreaterThanOrEqual(1.8);
 
     // Both waits for the MIDI sound to be ready (the switch is off meanwhile).
     await expect(source.locator('[data-source="both"]')).toBeEnabled();
@@ -487,6 +507,8 @@ for (const lane of ["bass", "drums"]) {
     await source.locator('[data-source="stem"]').click();
     await expect(row).toHaveAttribute("data-midi-source", "stem");
     await expect.poll(() => picture(page, lane)).toMatchObject({ front: "waveform", waveStronger: true });
+    // Behind the waveform a soft note stays fainter: velocity is the cue there.
+    if (lane === "bass") await expect.poll(async () => (await noteLook(page, lane)).opacity).toBeLessThan(1);
   });
 }
 

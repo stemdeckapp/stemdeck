@@ -39,7 +39,9 @@ export const ROLL_NOTE_H = 0.8;
  * SVG viewBox stretched over the lane (preserveAspectRatio none): x is
  * seconds, so it follows the waveform's timeline and zoom; y is pitch rows,
  * highest at the top, over the lane's own note range with ROLL_PAD rows
- * spare. Velocity is the note's opacity, 0.35 to 1.
+ * spare. Velocity is the note's opacity, 0.35 to 1, behind the waveform
+ * (Sound: Stem) and beside it (Both); when the lane plays its MIDI every
+ * note is drawn at full strength (waves.css), as bright as the waveform.
  * Returns { width, height, lo, hi, rects: [{ x, y, w, h, o }] }, or null
  * when there is nothing to draw.
  */
@@ -91,9 +93,6 @@ const GM_DRUM_ROW = {
   41: "tom", 43: "tom", 45: "tom", 47: "tom", 48: "tom", 50: "tom",
   49: "cymbal", 51: "cymbal", 52: "cymbal", 53: "cymbal", 55: "cymbal", 57: "cymbal", 59: "cymbal",
 };
-/** The shortest a hit is drawn, s: a hit lasts 10 ms, a hair at a song's zoom. */
-export const DRUM_HIT_MIN_SEC = 0.06;
-
 /** The row a General MIDI percussion note is drawn in. */
 export function drumRow(pitch) {
   return GM_DRUM_ROW[pitch] || "perc";
@@ -106,9 +105,10 @@ export function drumRowKey(row) {
 
 /**
  * The Drums lane's roll: like rollGeometry, but a row per kind of drum the
- * file has (DRUM_ROWS order, the others left out), each hit at least
- * DRUM_HIT_MIN_SEC wide, and `rows` naming each row and where it is:
- * [{ row, key, y }], y its top in rows. null when there is nothing to draw.
+ * file has (DRUM_ROWS order, the others left out), and `rows` naming each row
+ * and where it is: [{ row, key, y }], y its top in rows. A hit lasts about
+ * 10 ms; it is drawn NOTE_MIN_PX wide (drawnWidth). null when there is
+ * nothing to draw.
  */
 export function drumGeometry(notes, duration) {
   if (!Array.isArray(notes) || !notes.length || !isNum(duration) || duration <= 0) return null;
@@ -121,7 +121,7 @@ export function drumGeometry(notes, duration) {
     rects.push({
       x: s,
       y: order.indexOf(drumRow(p)) + off,
-      w: Math.min(Math.max(e, s + DRUM_HIT_MIN_SEC), duration) - s,
+      w: Math.min(e, duration) - s,
       h: ROLL_NOTE_H,
       o: Math.round((0.35 + 0.65 * (v / 127)) * 100) / 100,
     });
@@ -143,12 +143,50 @@ export function laneGeometry(lane, notes, duration) {
 
 const f = (n) => String(Math.round(n * 10000) / 10000);
 
+/**
+ * The narrowest a note is drawn, in screen pixels. The roll's x is seconds,
+ * so a note's width on screen is its length times the lane's pixels per
+ * second: at a whole song's zoom (about 4 px/s for a four minute song) a
+ * 10 ms drum hit is 0.04 px and a 100 ms bass note 0.4 px, which the browser
+ * paints as a faint, darkened hair instead of the lane's colour. A minimum in
+ * seconds cannot hold at every zoom; this one is in pixels.
+ */
+export const NOTE_MIN_PX = 2;
+
+/**
+ * The width, in seconds, a note of `geometry` is drawn with when the lane
+ * shows `pxPerSec` pixels a second: its length, or NOTE_MIN_PX on screen when
+ * that is longer, never past the song's end. Its length as it is when the
+ * scale is not known (0).
+ */
+export function drawnWidth(rect, geometry, pxPerSec) {
+  const min = pxPerSec > 0 ? NOTE_MIN_PX / pxPerSec : 0;
+  return Math.max(rect.w, Math.min(min, geometry.width - rect.x));
+}
+
+/** drawnWidth as the rect's width attribute. */
+export function widthAttr(rect, geometry, pxPerSec) {
+  return f(drawnWidth(rect, geometry, pxPerSec));
+}
+
 /** The roll as the inside of an SVG (its <rect>s), for one innerHTML write. */
-export function rollRects(geometry) {
+export function rollRects(geometry, pxPerSec = 0) {
   if (!geometry) return "";
   return geometry.rects
-    .map((r) => `<rect x="${f(r.x)}" y="${f(r.y)}" width="${f(r.w)}" height="${f(r.h)}" fill-opacity="${r.o}"></rect>`)
+    .map((r) => `<rect x="${f(r.x)}" y="${f(r.y)}" width="${widthAttr(r, geometry, pxPerSec)}" height="${f(r.h)}" fill-opacity="${r.o}"></rect>`)
     .join("");
+}
+
+/**
+ * Whether a roll drawn at `drawnPxPerSec` must be widened again for
+ * `pxPerSec`: when the scale changed by more than a tenth, so a zoom drag
+ * rewrites the widths a few times, not on every frame, and a note never
+ * drops under about 1.8 px.
+ */
+export function needsRefit(drawnPxPerSec, pxPerSec) {
+  if (!(pxPerSec > 0)) return false;
+  if (!(drawnPxPerSec > 0)) return true;
+  return Math.abs(Math.log(pxPerSec / drawnPxPerSec)) > Math.log(1.1);
 }
 
 // ─── The lane's source switch ───

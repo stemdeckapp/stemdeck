@@ -32,8 +32,8 @@ import { STEM_DISPLAY } from "./constants.js";
 import { t } from "./i18n.js";
 import { MIDI_LANES, midiFilename, midiOf, midiUrl, safeTitle } from "./laneMidiView.js";
 import {
-  bothZipName, bothZipUrl, cleanNotes, downloadChoices, engineSource, laneGeometry, needsMidiSound, normalSource,
-  rollRects, sourceSwitch,
+  bothZipName, bothZipUrl, cleanNotes, downloadChoices, engineSource, laneGeometry, needsMidiSound, needsRefit,
+  normalSource, rollRects, sourceSwitch, widthAttr,
 } from "./midiNotesView.js";
 import { canRender, forgetSounds, laneSound } from "./midiSynth.js";
 
@@ -54,6 +54,14 @@ const _added = new Map();
 // the Drums lane's row names beside it.
 const _rolls = new Map();
 const _rollLabels = new Map();
+// roll SVG -> { g: its geometry, px: the pixels a second its widths were
+// drawn for }. Every note is at least NOTE_MIN_PX wide on screen, and the
+// screen width of a second follows the zoom and the window, so the widths are
+// drawn again when the roll's size changes enough (fitRoll).
+const _rollFit = new WeakMap();
+const _rollResize = typeof ResizeObserver === "function"
+  ? new ResizeObserver((entries) => { for (const e of entries) fitRoll(e.target, e.contentRect.width); })
+  : null;
 let _onChange = () => {};
 
 const sourceKey = (lane) => `${_jobId}:${lane}`;
@@ -68,7 +76,10 @@ export function setPlayContext({ jobId, job, onChange }) {
     _reading.clear();
     _soundNote.clear();
     _added.clear();
-    for (const svg of _rolls.values()) svg.remove();
+    for (const svg of _rolls.values()) {
+      _rollResize?.unobserve(svg);
+      svg.remove();
+    }
     _rolls.clear();
     for (const el of _rollLabels.values()) el.remove();
     _rollLabels.clear();
@@ -138,8 +149,28 @@ function waveRowOf(lane) {
   return document.querySelector(`.stem-waveform-layer > .stem-waveform-row[data-stem="${CSS.escape(lane)}"]`);
 }
 
+/**
+ * Draw the roll's notes at least NOTE_MIN_PX wide for its width on screen,
+ * `px` pixels (its viewBox is the song's seconds). Rewrites only the widths
+ * that change, and only once the scale moved by more than a tenth.
+ */
+function fitRoll(svg, px) {
+  const fit = _rollFit.get(svg);
+  if (!fit || !(px > 0)) return;
+  const pxPerSec = px / fit.g.width;
+  if (!needsRefit(fit.px, pxPerSec)) return;
+  fit.px = pxPerSec;
+  const rects = svg.children;
+  for (let i = 0; i < fit.g.rects.length && i < rects.length; i++) {
+    const w = widthAttr(fit.g.rects[i], fit.g, pxPerSec);
+    if (rects[i].getAttribute("width") !== w) rects[i].setAttribute("width", w);
+  }
+}
+
 function dropRoll(lane) {
-  _rolls.get(lane)?.remove();
+  const svg = _rolls.get(lane);
+  if (svg) _rollResize?.unobserve(svg);
+  svg?.remove();
   _rolls.delete(lane);
   _rollLabels.get(lane)?.remove();
   _rollLabels.delete(lane);
@@ -173,6 +204,7 @@ export function syncRolls(lanes, viewOn) {
     let svg = _rolls.get(lane);
     const sig = `${m.at}|${duration}|${notes.length}`;
     if (!svg || svg.dataset.sig !== sig) {
+      if (svg) _rollResize?.unobserve(svg);
       svg?.remove();
       _rollLabels.get(lane)?.remove();
       _rollLabels.delete(lane);
@@ -187,7 +219,13 @@ export function syncRolls(lanes, viewOn) {
       svg.dataset.midiLane = lane;
       svg.dataset.lo = String(g.lo);
       svg.dataset.hi = String(g.hi);
-      svg.innerHTML = rollRects(g);
+      // At the row's width now (0 before it is laid out: the observer then
+      // draws them once it is), so the first paint has no hairline notes.
+      const px = row.getBoundingClientRect().width;
+      const pxPerSec = px > 0 ? px / g.width : 0;
+      svg.innerHTML = rollRects(g, pxPerSec);
+      _rollFit.set(svg, { g, px: pxPerSec });
+      _rollResize?.observe(svg);
       _rolls.set(lane, svg);
       if (g.rows) _rollLabels.set(lane, rollLabels(g));
     }

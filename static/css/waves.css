@@ -601,6 +601,13 @@
   z-index: var(--midi-notes-z);
 }
 .midi-roll rect { fill: var(--midi-notes-fill, var(--stem-color)); }
+/* Each note's fill-opacity attribute is its velocity (0.35 to 1), a cue
+   behind the waveform and beside it. When the lane plays its MIDI the notes
+   are what is heard, so they are drawn as the waveform is in Stem, in the
+   lane's colour at full strength: a velocity of 60, the median of a
+   transcribed bass line, was 0.66 and read dim and brownish. A CSS property
+   wins over the attribute. */
+.stem-waveform-row.midi-view[data-midi-source="midi"] > .midi-roll rect { fill-opacity: 1; }
 body.help-mode .midi-roll { pointer-events: auto; }
 /* The Drums lane's row names (Kick, Snare, ...), at the left of the lane,
    each beside its row of hits. */

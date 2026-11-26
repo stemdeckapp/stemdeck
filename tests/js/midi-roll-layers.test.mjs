@@ -3,7 +3,7 @@
 // and order, read from static/css/waves.css, where it lives (one attribute
 // set by laneMidiPlay.js, the CSS does the rest).
 //   Stem: the waveform in front, the notes faint behind it.
-//   MIDI: the notes in front, the waveform dimmed.
+//   MIDI: the notes in front at full strength, the waveform dimmed.
 //   Both: the two at the same strength.
 // tests/e2e/lane-midi.spec.mjs checks the attribute follows the switch.
 //
@@ -88,6 +88,20 @@ eq(
   rules.filter(([sel]) => /midi-view/.test(sel) && /stem-waveform-svg\s+(rect|path)/.test(sel)).map(([sel]) => sel),
   [],
 );
+// ─── What plays is drawn bright ───
+
+// Each note's fill-opacity attribute is its velocity, 0.35 to 1 (a transcribed
+// bass line's median, 60, is 0.66): in MIDI the notes are what is heard, so a
+// CSS rule (which wins over the attribute) draws them all at full strength, as
+// the waveform is drawn in Stem. Stem and Both keep velocity as a cue.
+const fillOpacity = (source) =>
+  body(`${BASE}[data-midi-source="${source}"] > .midi-roll rect`).match(/fill-opacity:\s*([^;]+);/)?.[1].trim() ?? null;
+eq("MIDI: every note at full strength, whatever its velocity", fillOpacity("midi"), "1");
+eq("Stem: velocity still shades the notes", fillOpacity("stem"), null);
+eq("Both: velocity still shades the notes", fillOpacity("both"), null);
+// In the lane's own colour: no lighter mix in MIDI as Both has.
+check("MIDI: the notes in the lane's colour", !/--midi-notes-fill/.test(body(`${BASE}[data-midi-source="midi"]`)));
+
 // A change of Sound fades on the motion tokens, so reduced motion stops it.
 check("the fade is on the motion tokens", /transition:\s*opacity\s+var\(--t-(fast|base)\)/.test(body(`${BASE} > .midi-roll`)));
 

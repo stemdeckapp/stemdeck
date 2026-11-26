@@ -15,20 +15,23 @@ import {
   bothZipName,
   bothZipUrl,
   cleanNotes,
-  DRUM_HIT_MIN_SEC,
   DRUM_ROWS,
   downloadChoices,
   drumGeometry,
   drumRow,
   drumRowKey,
   engineSource,
+  drawnWidth,
   laneGeometry,
+  needsRefit,
+  NOTE_MIN_PX,
   needsMidiSound,
   normalSource,
   pitchHz,
   renderSeconds,
   rollGeometry,
   rollRects,
+  widthAttr,
   soundKey,
   sourceSwitch,
   velocityGain,
@@ -79,6 +82,23 @@ eq("a note past the end is cut at the end", g.rects.map((r) => [r.x, r.w]), [[4,
 // starts 6 rows down, plus the gap above the note.
 eq("the rects as SVG", rollRects(rollGeometry([[1, 1.5, 60, 127]], 4)), '<rect x="1" y="6.1" width="0.5" height="0.8" fill-opacity="1"></rect>');
 eq("no geometry, no rects", rollRects(null), "");
+
+// A note is never drawn narrower than NOTE_MIN_PX on screen: at a whole
+// song's zoom a 10 ms hit is a few hundredths of a pixel, which the browser
+// paints as a faint, darkened hair (measured: 0.23 px on a 224 s song).
+const wg = rollGeometry([[1, 1.01, 60, 100], [2, 4, 62, 100], [9.999, 10, 61, 100]], 10);
+eq("the minimum is about 2 px", NOTE_MIN_PX, 2);
+check("at 4 px/s a 10 ms note is drawn 2 px wide", near(drawnWidth(wg.rects[0], wg, 4) * 4, NOTE_MIN_PX));
+check("a long note keeps its length", near(drawnWidth(wg.rects[1], wg, 4), 2));
+check("zoomed in far enough, a short note is its own length", near(drawnWidth(wg.rects[0], wg, 1000), 0.01));
+check("never past the song's end", near(wg.rects[2].x + drawnWidth(wg.rects[2], wg, 4), 10));
+check("an unknown scale draws the length", near(drawnWidth(wg.rects[0], wg, 0), 0.01));
+eq("the attribute is rounded like the rest", widthAttr(wg.rects[0], wg, 4), "0.5");
+check("the rects carry the drawn width", rollRects(wg, 4).includes('width="0.5"'));
+check("a first fit is always drawn", needsRefit(0, 4));
+check("a scale moved by under a tenth is left", !needsRefit(4, 4.3) && !needsRefit(4, 3.7));
+check("by more, in or out, the widths are drawn again", needsRefit(4, 4.5) && needsRefit(4, 3.5));
+check("no size (a roll not on the page), nothing to fit", !needsRefit(4, 0));
 
 // ─── The source switch ───
 
@@ -133,7 +153,7 @@ const dg = drumGeometry([[1, 1.01, 36, 127], [1.5, 1.51, 42, 64], [2, 2.01, 38, 
 eq("only the rows the file has, in order", dg.rows.map((r) => [r.row, r.y]), [["hihat", 0], ["snare", 1], ["kick", 2]]);
 eq("one row tall each", dg.height, 3);
 eq("each hit in its row", dg.rects.map((r) => Math.floor(r.y)), [2, 0, 1, 2]);
-check("a 10 ms hit is drawn wide enough to see", dg.rects.every((r) => near(r.w, DRUM_HIT_MIN_SEC)));
+check("a hit keeps its own length in the geometry", dg.rects.every((r) => near(r.w, 0.01, 1e-6)));
 check("no hits, no roll", drumGeometry([], 10) === null);
 check("the Drums lane uses the drum rows", laneGeometry("drums", [[1, 1.01, 36, 127]], 10).rows.length === 1);
 check("any other lane uses pitch rows", !laneGeometry("bass", [[1, 2, 40, 127]], 10).rows);
