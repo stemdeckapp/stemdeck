@@ -152,6 +152,9 @@ _SESSION_MAX_BYTES = 8 * 1024
 _NUDGE_MAX_MS = 2000.0
 _CAMERA_OFFSET_MAX_MS = 5000.0
 _RENDER_MAX_LANES = 32
+# The 422 detail of a render asked of a take without a picture. The page
+# matches it exactly (recordModel.exportErrorCode).
+NO_CAMERA_DETAIL = "take has no camera"
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 
 # One lock per take: parts, finish, edit and delete of the same take never
@@ -2014,7 +2017,9 @@ async def start_render(job_id: str, take_id: str, request: Request) -> JSONRespo
     body: RenderBody = await _parse_body(request, RenderBody, empty_ok=True)
     camera = await asyncio.to_thread(camera_file, folder)
     if camera is None:
-        raise HTTPException(status_code=404, detail="take has no camera")
+        # 422, not 404: the take is there, it has no picture. A 404 here read
+        # as "the take was deleted" in Performance, which then forgot it.
+        raise HTTPException(status_code=422, detail=NO_CAMERA_DETAIL)
     if not await asyncio.to_thread(libx264_available):
         raise HTTPException(
             status_code=422, detail="this ffmpeg build cannot encode H.264 video (no libx264)"

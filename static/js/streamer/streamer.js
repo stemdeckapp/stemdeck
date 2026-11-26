@@ -2084,7 +2084,9 @@ function paintExport(st) {
   }
   s.expGo.hidden = busy;
   s.expGo.disabled = !take;
-  s.expGo.textContent = t(exportError && exportError.code !== "no-encoder" ? "streamer.export.retry" : "streamer.export.go");
+  // No encoder or no picture: trying again would fail the same way.
+  const retry = exportError && !["no-encoder", "no-camera"].includes(exportError.code);
+  s.expGo.textContent = t(retry ? "streamer.export.retry" : "streamer.export.go");
   s.expCancel.hidden = !busy;
   s.expBar.hidden = !busy;
   s.expReveal.hidden = !(st.state === "exported" && canRevealSaved());
@@ -2160,6 +2162,11 @@ async function runExport() {
       markExport("fail");
       forgetTake(job, takeId);
       exportNote = t("streamer.export.takeGone");
+    } else if (err?.code === "no-camera") {
+      // The take is there without a picture: kept, and nothing to retry.
+      markExport("fail");
+      exportError = { code: "no-camera" };
+      exportNote = t("streamer.export.noCamera");
     } else {
       markExport("fail");
       exportError = { code: err?.code || "failed" };

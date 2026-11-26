@@ -13,7 +13,7 @@ import { currentMixLanes, triggerDownload } from "../player.js";
 import { exportFxParam } from "../eqEngine.js";
 import { exportMasterParam } from "../masterEngine.js";
 import { waitForRender, cancelRender, renderDownloadUrl } from "../video/videoRender.js";
-import { buildRenderRequest, isNoEncoder } from "./recordModel.js";
+import { buildRenderRequest, exportErrorCode } from "./recordModel.js";
 import { transposeExportAvailable, mixerState } from "../state.js";
 import { transposeExportBlocked } from "../transposeExport.js";
 import { t } from "../i18n.js";
@@ -87,8 +87,9 @@ export async function exportTake({ jobId, takeId, body, filename, onProgress, on
   if (!res.ok) {
     const detail = await detailOf(res);
     const err = new Error(detail);
-    // 404: the take (or its picture) is no longer on the server.
-    err.code = isNoEncoder(res.status, detail) ? "no-encoder" : res.status === 404 ? "gone" : "failed";
+    // 404: the take is no longer on the server; 422 "no camera": it is,
+    // without a picture (recordModel.exportErrorCode).
+    err.code = exportErrorCode(res.status, detail);
     throw err;
   }
   // Cancel pressed while the POST was on its way: the server has a render

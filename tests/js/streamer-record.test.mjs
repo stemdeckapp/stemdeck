@@ -2,7 +2,7 @@
 import {
   RECORD_STATES, nextRecordState, isTakeOpen, startPoint, shouldAutoStop,
   outputPixels, videoBitrate, exportFileName, buildRenderRequest, isNoEncoder, BITRATE_MAX, CAMERA_CAP_BPS, rawExtension,
-  performanceTrackId,
+  performanceTrackId, exportErrorCode,
 } from "../../static/js/streamer/recordModel.js";
 
 let failed = 0;
@@ -125,6 +125,12 @@ check("the raw recording is named after what was recorded", rawExtension("video/
   check("an audio track of the name is never it", performanceTrackId([tracks[0]], null, "Performance") === null);
   check("none: no track, no list", performanceTrackId([], null, "Performance") === null && performanceTrackId(null, "k00000002", "Performance") === null);
 }
+
+// A refused export: what it means (the server's status and detail).
+check("no encoder: the raw recording is offered", exportErrorCode(422, "this ffmpeg build cannot encode H.264 video (no libx264)") === "no-encoder");
+check("no camera is a take without a picture, never a deleted take", exportErrorCode(422, "take has no camera") === "no-camera");
+check("a 404 is a take no longer there", exportErrorCode(404, "take not found") === "gone" && exportErrorCode(404, "take has no camera") === "gone");
+check("another 422 is a failure, matched exactly", exportErrorCode(422, "the take has no camera yet") === "failed" && exportErrorCode(500, "") === "failed");
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

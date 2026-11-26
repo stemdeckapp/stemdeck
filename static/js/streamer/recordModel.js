@@ -247,6 +247,24 @@ export function isNoEncoder(status, detail) {
   return status === 422 && /libx264|AAC encoder/i.test(String(detail || ""));
 }
 
+// The server's detail for a take without a picture (app/api/takes.py
+// NO_CAMERA_DETAIL), matched exactly: a looser match would read another 422
+// as this one.
+const NO_CAMERA_DETAIL = "take has no camera";
+
+/**
+ * What a refused export means, from its status and the server's detail:
+ * "no-encoder" (this ffmpeg cannot make MP4: the raw recording is offered),
+ * "no-camera" (the take is there and has no picture), "gone" (404: the take
+ * is no longer on the server), else "failed".
+ */
+export function exportErrorCode(status, detail) {
+  if (isNoEncoder(status, detail)) return "no-encoder";
+  if (status === 422 && String(detail || "") === NO_CAMERA_DETAIL) return "no-camera";
+  if (status === 404) return "gone";
+  return "failed";
+}
+
 // The instruments a take's live chain can be voiced for (fx/pedalSpecs.js
 // INSTRUMENTS; kept here so this model stays free of imports).
 const TAKE_FX_INSTRUMENTS = ["guitar", "bass", "voice"];
