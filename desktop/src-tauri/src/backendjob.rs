@@ -121,7 +121,7 @@ mod windows_impl {
         let job = match KillOnCloseJob::new() {
             Ok(job) => job,
             Err(e) => {
-                eprintln!("[stemdeck] no job object for a child process: {e}");
+                crate::shell_log(&format!("no job object for a child process: {e}"));
                 cmd.creation_flags(CREATE_NO_WINDOW);
                 return Ok((cmd.spawn()?, None));
             }
@@ -141,7 +141,9 @@ mod windows_impl {
             return Err(e);
         }
         if !assigned {
-            eprintln!("[stemdeck] child process not in its job object: {assign_error}");
+            crate::shell_log(&format!(
+                "child process not in its job object: {assign_error}"
+            ));
             return Ok((child, None));
         }
         Ok((child, Some(job)))
@@ -248,7 +250,7 @@ mod windows_impl {
         /// The tree the backend makes: cmd stands for the backend (or the
         /// venv launcher), the ping it starts for ffmpeg.
         fn tree() -> Command {
-            let mut cmd = Command::new("cmd");
+            let mut cmd = crate::childproc::command("cmd");
             cmd.args(["/d", "/c", "ping -n 120 127.0.0.1"])
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
@@ -283,7 +285,7 @@ mod windows_impl {
 
         #[test]
         fn the_backend_is_resumed_and_runs_to_its_end() {
-            let mut cmd = Command::new("cmd");
+            let mut cmd = crate::childproc::command("cmd");
             cmd.args(["/d", "/c", "exit 7"]);
             let (mut child, _job) = spawn_in_job(&mut cmd).expect("spawned");
             assert!(

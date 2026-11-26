@@ -1,5 +1,13 @@
+// A release build on Windows is a GUI program: no console window opens beside
+// the app. Debug builds keep the console, where the shell's stderr is read
+// while developing. With no console, child processes are started through
+// childproc so none opens a window of its own, and the shell's diagnostics go
+// to setup.log through shell_log.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod backendjob;
 mod certs;
+mod childproc;
 #[cfg(any(target_os = "linux", test))]
 mod dmabuf;
 mod dragout;
@@ -426,6 +434,8 @@ fn main() {
     let mut args = env::args().skip(1);
     if args.next().as_deref() == Some("--emit-lan-cert") {
         let dir = args.next().unwrap_or_else(|| ".".to_string());
+        #[cfg(windows)]
+        attach_parent_console();
         match certs::ensure(Path::new(&dir)) {
             Ok(c) => {
                 println!("{}", c.cert.display());
@@ -462,10 +472,10 @@ fn main() {
                     portable_root_check(is_portable_package(&root), || app_root_is_writable(&root));
                 if outcome == PortableRootCheck::NotWritable {
                     use tauri_plugin_dialog::DialogExt;
-                    eprintln!(
-                        "[stemdeck] portable folder is not writable: {}",
+                    shell_log(&format!(
+                        "portable folder is not writable: {}",
                         root.display()
-                    );
+                    ));
                     // Non-blocking show: the setup hook runs on the main
                     // thread, and the callback ends the process once the
                     // user has read the message.
@@ -525,7 +535,9 @@ fn main() {
             let data_dir = match local_data_dir() {
                 Ok(d) => d,
                 Err(e) => {
-                    eprintln!("[stemdeck] could not resolve data_dir, skipping version check: {e}");
+                    shell_log(&format!(
+                        "could not resolve data_dir, skipping version check: {e}"
+                    ));
                     return Ok(());
                 }
             };
@@ -585,16 +597,19 @@ fn main() {
                 });
                 let freed = prune_downloads(&data_dir, keep.as_deref());
                 if freed > 0 {
-                    eprintln!(
-                        "[stemdeck] freed {} MB of stale downloads",
-                        freed / 1_048_576
+                    shell_log_in(
+                        &data_dir,
+                        &format!("freed {} MB of stale downloads", freed / 1_048_576),
                     );
                 }
                 // Only update the version file if write succeeds. If it fails, skip
                 // cleanup — a missing version file would otherwise cause every launch
                 // to wipe WebKit data.
                 if let Err(e) = fs::write(&version_file, current) {
-                    eprintln!("[stemdeck] failed to write version file, skipping cleanup: {e}");
+                    shell_log_in(
+                        &data_dir,
+                        &format!("failed to write version file, skipping cleanup: {e}"),
+                    );
                 }
             }
             let _ = app; // suppress unused warning
@@ -1209,10 +1224,10 @@ fn mark_store_migration_done() {
     match local_data_dir() {
         Ok(d) => {
             if let Err(e) = fs::write(d.join("store_migration_done"), "") {
-                eprintln!("[stemdeck] failed to write migration flag: {e}");
+                shell_log_in(&d, &format!("failed to write migration flag: {e}"));
             }
         }
-        Err(e) => eprintln!("[stemdeck] could not write migration flag: {e}"),
+        Err(e) => shell_log(&format!("could not write migration flag: {e}")),
     }
 }
 
@@ -1232,7 +1247,7 @@ fn clear_webkit_data() {
     for path in &targets {
         if let Err(e) = fs::remove_dir_all(path) {
             if e.kind() != std::io::ErrorKind::NotFound {
-                eprintln!("[stemdeck] WebKit cleanup failed for {path}: {e}");
+                shell_log(&format!("WebKit cleanup failed for {path}: {e}"));
             }
         }
     }
@@ -2084,7 +2099,7 @@ fn apply_app_update_blocking(
         // above, keeps running under its own open handle until this process
         // actually exits; the *.old siblings are swept up on the next launch by
         // setup()'s post-update cleanup.
-        Command::new(&exe_path)
+        childproc::gui_command(&exe_path)
             .current_dir(&root)
             .spawn()
             .map_err(|e| format!("failed to relaunch the updated app: {e}"))?;
@@ -2281,7 +2296,7 @@ fn run_model_warmup(
         .ok_or_else(|| "Python not found".to_string())?;
     patch_pyvenv_cfg(&python);
 
-    let mut command = Command::new(&python);
+    let mut command = childproc::command(&python);
     command
         .args(["-m", "app.pipeline.warmup"])
         .current_dir(&backend_dir)
@@ -2518,7 +2533,9 @@ fn restart_backend_blocking(
     let spawned = stop_backend_and_wait(state, Duration::from_secs(15)).and_then(|()| {
         let port = port.unwrap_or_else(configured_port);
         if !wait_for_port_release(port, Duration::from_secs(5)) {
-            eprintln!("[stemdeck] port {port} is still held after the restart; using a free one");
+            shell_log(&format!(
+                "port {port} is still held after the restart; using a free one"
+            ));
         }
         spawn_backend(app_handle, port, true)
     });
@@ -2590,13 +2607,16 @@ fn spawn_backend(
     let https = if bind_host == ALL_INTERFACES {
         certs::ensure(&data_dir)
             .map_err(|e| {
-                eprintln!("stemdeck: no LAN certificate, https disabled: {e}");
+                shell_log_in(
+                    &data_dir,
+                    &format!("no LAN certificate, https disabled: {e}"),
+                );
                 e
             })
             .ok()
             .and_then(|cert| {
                 reserve_port(bind_host, HTTPS_PORT, after_stop)
-                    .map_err(|e| eprintln!("stemdeck: no port for https: {e}"))
+                    .map_err(|e| shell_log_in(&data_dir, &format!("no port for https: {e}")))
                     .ok()
                     .map(|(https_port, guard)| (cert, https_port, guard))
             })
@@ -2616,7 +2636,7 @@ fn spawn_backend(
     // lib/python3.X has no stdlib, so even `encodings` fails to import).
     // Only Windows, whose portable venv keeps the stdlib under base/Lib,
     // needs PYTHONHOME to locate the bundled stdlib.
-    // Compute before moving python into Command::new.
+    // Compute before moving python into childproc::command.
     #[cfg(windows)]
     let pythonhome = python
         .parent()
@@ -2624,7 +2644,7 @@ fn spawn_backend(
         .and_then(|(venv, bin_dir)| bundled_python_home(venv, bin_dir).map(|(home, _)| home));
 
     let instance_token = new_instance_token();
-    let mut cmd = Command::new(python);
+    let mut cmd = childproc::command(python);
     cmd.args([
         "-m",
         "uvicorn",
@@ -3199,7 +3219,7 @@ fn verify_mps_torch(python: &Path, state: &BackendState) -> bool {
     // stops setup with nothing written anywhere (#502). Nothing has been seen
     // to hang on the MPS path, but the asymmetry was the accident, not the
     // design.
-    let mut command = Command::new(python);
+    let mut command = childproc::command(python);
     command
         .args([
             "-c",
@@ -3270,7 +3290,7 @@ fn detect_nvidia_gpu(
 ) -> Option<(String, String, Option<String>)> {
     let smi = nvidia_smi_exe();
     append_to_setup_log(data_dir, &format!("GPU detection using: {smi}"));
-    let mut cmd = Command::new(&smi);
+    let mut cmd = childproc::command(&smi);
     cmd.args(["--query-gpu=name", "--format=csv,noheader"])
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -3300,7 +3320,7 @@ fn detect_nvidia_gpu(
     }
 
     // Read CUDA version from the standard nvidia-smi header.
-    let mut smi_cmd = Command::new(&smi);
+    let mut smi_cmd = childproc::command(&smi);
     smi_cmd.stdout(Stdio::piped()).stderr(Stdio::null());
     let smi_out = setup_probe_output(smi_cmd, state, Duration::from_secs(10), "nvidia-smi").ok()?;
     let smi_text = String::from_utf8_lossy(&smi_out.stdout);
@@ -3320,7 +3340,7 @@ fn detect_nvidia_gpu(
 
 #[cfg(not(target_os = "macos"))]
 fn detect_compute_cap(smi: &str, state: &BackendState) -> Option<String> {
-    let mut cmd = Command::new(smi);
+    let mut cmd = childproc::command(smi);
     cmd.args(["--query-gpu=compute_cap", "--format=csv,noheader"])
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -4029,7 +4049,7 @@ fn python_stdlib_ok(python: &Path) -> bool {
     if !python.is_file() {
         return false;
     }
-    let mut cmd = Command::new(python);
+    let mut cmd = childproc::command(python);
     cmd.args(["-c", "import encodings"]);
     // Only Windows needs PYTHONHOME: its portable venv keeps the stdlib under
     // base/Lib. macOS and Linux use python-build-standalone, which auto-detects
@@ -4359,7 +4379,7 @@ fn spawn_pip(
     } else {
         PIP_STALL_TIMEOUT
     };
-    let mut command = Command::new(python);
+    let mut command = childproc::command(python);
     command
         .args(["-m", "pip", "install"])
         .args(progress_args)
@@ -4423,7 +4443,7 @@ fn restore_cpu_torch(
 /// Windows and Linux bundles and the downloaded runtime pack.
 #[cfg(not(target_os = "macos"))]
 fn torch_site_packages(python: &Path, state: &BackendState) -> Option<PathBuf> {
-    let mut command = Command::new(python);
+    let mut command = childproc::command(python);
     command
         .args([
             "-c",
@@ -4454,7 +4474,7 @@ fn verify_torch_imports(python: &Path, state: &BackendState) -> Result<(), Strin
 #[cfg(not(target_os = "macos"))]
 fn verify_imports(python: &Path, module: &str, state: &BackendState) -> Result<(), String> {
     let code = format!("import {module}");
-    let mut command = Command::new(python);
+    let mut command = childproc::command(python);
     command
         .args(["-c", code.as_str()])
         .stdout(Stdio::null())
@@ -4805,7 +4825,7 @@ fn verify_cuda_torch(python: &Path, state: &BackendState) -> CudaVerify {
     // progress and an empty setup.log (#502). A probe that cannot answer is a
     // failed probe: fall back to CPU, which the caller already handles by
     // restoring the CPU wheels.
-    let mut command = Command::new(python);
+    let mut command = childproc::command(python);
     command
         .args([
             "-c",
@@ -4908,7 +4928,7 @@ fn open_url(url: String) -> Result<(), String> {
     #[cfg(windows)]
     {
         // Use explorer.exe directly to avoid cmd.exe interpreting '&' in query strings.
-        let mut cmd = Command::new("explorer.exe");
+        let mut cmd = childproc::gui_command("explorer.exe");
         cmd.arg(&url);
         with_user_env(&mut cmd)
             .spawn()
@@ -4916,14 +4936,14 @@ fn open_url(url: String) -> Result<(), String> {
     }
     #[cfg(target_os = "macos")]
     {
-        Command::new("open")
+        childproc::gui_command("open")
             .arg(&url)
             .spawn()
             .map_err(|e| format!("failed to open URL: {e}"))?;
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        Command::new("xdg-open")
+        childproc::gui_command("xdg-open")
             .arg(&url)
             .spawn()
             .map_err(|e| format!("failed to open URL: {e}"))?;
@@ -5133,7 +5153,7 @@ fn reveal_command(path: &Path) -> (&'static str, Vec<std::ffi::OsString>) {
 async fn reveal_saved(state: tauri::State<'_, BackendState>, token: String) -> Result<(), String> {
     let path = saved_file(&state, &token)?;
     let (program, args) = reveal_command(&path);
-    let mut child = with_user_env(Command::new(program).args(&args))
+    let mut child = with_user_env(childproc::gui_command(program).args(&args))
         .spawn()
         .map_err(|e| format!("could not open the file manager: {e}"))?;
     std::thread::spawn(move || {
@@ -5269,7 +5289,7 @@ async fn open_reaper_project(
             (std::ffi::OsString::from(p), a)
         }
     };
-    let mut child = with_user_env(Command::new(&program).args(&args))
+    let mut child = with_user_env(childproc::gui_command(&program).args(&args))
         .spawn()
         .map_err(|e| format!("could not open the project: {e}"))?;
     std::thread::spawn(move || {
@@ -5371,7 +5391,7 @@ async fn start_audio_drag(
     // can act on (a bad name, a failed render) has already happened above.
     app.run_on_main_thread(move || {
         if let Err(e) = dragout::begin_drag(&window, dest, icon) {
-            eprintln!("[stemdeck] could not start the drag: {e}");
+            shell_log(&format!("could not start the drag: {e}"));
         }
     })
     .map_err(|e| e.to_string())
@@ -5397,7 +5417,7 @@ fn stop_backend(state: &BackendState) -> bool {
     // (#140), on Windows too (#405).
     if let Some(child) = setup_child {
         if let Err(e) = child.stop() {
-            eprintln!("[stemdeck] {e}");
+            shell_log(&e);
         }
     }
 
@@ -5507,6 +5527,48 @@ fn cleanup_warning(path: &Path, result: std::io::Result<()>) -> Option<String> {
         }
         _ => None,
     }
+}
+
+/// Print a command-line answer to the terminal StemDeck was started from.
+///
+/// A release build on Windows is a GUI program, which Windows starts with no
+/// standard handles unless the caller redirected them. Output the caller
+/// captures (the Python test suite reads `--emit-lan-cert` through pipes)
+/// arrives either way; a plain terminal sees nothing until StemDeck attaches
+/// to its console. The terminal does not wait for a GUI program, so the lines
+/// can land after its next prompt.
+#[cfg(windows)]
+fn attach_parent_console() {
+    use windows_sys::Win32::System::Console::{
+        AttachConsole, GetStdHandle, ATTACH_PARENT_PROCESS, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE,
+    };
+    // SAFETY: plain Win32 calls with no pointers; a failed attach (no parent
+    // console, or one already attached in a debug build) leaves things as
+    // they were.
+    unsafe {
+        if GetStdHandle(STD_OUTPUT_HANDLE).is_null() || GetStdHandle(STD_ERROR_HANDLE).is_null() {
+            AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+    }
+}
+
+/// A diagnostic from the shell itself: to stderr, for a terminal or the
+/// journal, and to setup.log in this user's data directory. stderr alone is
+/// not enough: a release build on Windows has no console, so it goes nowhere
+/// there. Use `shell_log_in` where the data directory is already in hand.
+fn shell_log(msg: &str) {
+    eprintln!("[stemdeck] {msg}");
+    // Code under test never writes into the real data directory.
+    #[cfg(not(test))]
+    if let Ok(data_dir) = local_data_dir() {
+        append_to_setup_log(&data_dir, msg);
+    }
+}
+
+/// `shell_log`, into the setup.log of `data_dir`.
+fn shell_log_in(data_dir: &Path, msg: &str) {
+    eprintln!("[stemdeck] {msg}");
+    append_to_setup_log(data_dir, msg);
 }
 
 fn append_to_setup_log(data_dir: &Path, msg: &str) {
@@ -5691,7 +5753,10 @@ fn prune_downloads(data_dir: &Path, keep: Option<&Path>) -> u64 {
         };
         match removed {
             Ok(()) => freed += size,
-            Err(e) => eprintln!("[stemdeck] could not remove {}: {e}", path.display()),
+            Err(e) => shell_log_in(
+                data_dir,
+                &format!("could not remove {}: {e}", path.display()),
+            ),
         }
     }
     freed
@@ -5725,8 +5790,11 @@ fn prune_runtime_leftovers(data_dir: &Path) {
             continue;
         }
         match fs::remove_dir_all(&path) {
-            Ok(()) => eprintln!("[stemdeck] removed leftover {}", path.display()),
-            Err(e) => eprintln!("[stemdeck] could not remove {}: {e}", path.display()),
+            Ok(()) => shell_log_in(data_dir, &format!("removed leftover {}", path.display())),
+            Err(e) => shell_log_in(
+                data_dir,
+                &format!("could not remove {}: {e}", path.display()),
+            ),
         }
     }
 }
@@ -5880,7 +5948,7 @@ fn download_file(url: &str, target: &Path, timeout: Duration, label: &str) -> Re
     let mut last_detail = String::new();
     let mut last_code = None;
     for attempt in 0..MAX_ATTEMPTS {
-        let mut command = Command::new("curl");
+        let mut command = childproc::command("curl");
         command
             .args([
                 "--fail",
@@ -6177,7 +6245,7 @@ fn fit_min_size_to_screen(window: &tauri::WebviewWindow) {
     }
 
     if let Err(e) = window.set_min_size(Some(tauri::LogicalSize::new(width, height))) {
-        eprintln!("[stemdeck] could not relax the window minimum: {e}");
+        shell_log(&format!("could not relax the window minimum: {e}"));
         return;
     }
     // The declared default size is larger than the minimum, so a screen too
@@ -6706,8 +6774,7 @@ fn note_is_new(last: &Mutex<Option<String>>, note: &str) -> bool {
 
 fn log_ffmpeg_note(data_dir: &Path, note: &str) {
     if note_is_new(&LAST_FFMPEG_NOTE, note) {
-        eprintln!("{note}");
-        append_to_setup_log(data_dir, note);
+        shell_log_in(data_dir, note);
     }
 }
 
@@ -7146,9 +7213,12 @@ fn ensure_ffmpeg(data_dir: &Path) -> Result<(PathBuf, FfmpegSource), String> {
                 return Ok((existing, FfmpegSource::existing(explicit)));
             }
             Err(err) if env_path_override("STEMDECK_FFMPEG").is_some() => return Err(err),
-            Err(err) => eprintln!(
-                "FFmpeg at {} is present but unusable, looking for a replacement: {err}",
-                existing.display()
+            Err(err) => shell_log_in(
+                data_dir,
+                &format!(
+                    "FFmpeg at {} is present but unusable, looking for a replacement: {err}",
+                    existing.display()
+                ),
             ),
         }
     }
@@ -7364,7 +7434,7 @@ fn download_linux_ffmpeg(data_dir: &Path) -> Result<(), String> {
     let _ = fs::remove_dir_all(&extract_dir);
     fs::create_dir_all(&extract_dir)
         .map_err(|e| format!("failed to create {}: {e}", extract_dir.display()))?;
-    let status = Command::new("tar")
+    let status = childproc::command("tar")
         .args([
             "-xJf",
             &archive.display().to_string(),
@@ -7493,7 +7563,7 @@ fn unpack_fpcalc(archive: &Path, expected_sha256: &str, target: &Path) -> Result
 
 #[cfg(unix)]
 fn verify_fpcalc(path: &Path) -> Result<(), String> {
-    let mut command = Command::new(path);
+    let mut command = childproc::command(path);
     command
         .arg("-version")
         .stdout(Stdio::null())
@@ -7512,7 +7582,7 @@ fn verify_fpcalc(path: &Path) -> Result<(), String> {
 
 #[cfg(unix)]
 fn ffmpeg_has_chromaprint(ffmpeg: &Path) -> bool {
-    let mut command = Command::new(ffmpeg);
+    let mut command = childproc::command(ffmpeg);
     command
         .args(["-hide_banner", "-muxers"])
         .stdout(Stdio::piped())
@@ -7593,7 +7663,10 @@ fn spawn_fpcalc_setup(data_dir: PathBuf) {
     }
     thread::spawn(move || {
         if let Err(err) = ensure_fpcalc(&data_dir) {
-            eprintln!("[stemdeck] no fpcalc, song fingerprinting stays off: {err}");
+            shell_log_in(
+                &data_dir,
+                &format!("no fpcalc, song fingerprinting stays off: {err}"),
+            );
         }
     });
 }
@@ -7871,7 +7944,10 @@ fn pick_macos_system_ffmpeg(
             Ok(false) => {
                 usable.get_or_insert_with(|| candidate.clone());
             }
-            Err(err) => eprintln!("system FFmpeg at {} not used: {err}", candidate.display()),
+            Err(err) => shell_log(&format!(
+                "system FFmpeg at {} not used: {err}",
+                candidate.display()
+            )),
         }
     }
     usable
@@ -8031,10 +8107,13 @@ fn ensure_macos_ffmpeg(data_dir: &Path) -> Result<(PathBuf, FfmpegSource), Strin
             ExistingFfmpeg::Fail => {
                 return verified.map(|()| (existing, FfmpegSource::existing(explicit)))
             }
-            ExistingFfmpeg::Replace => eprintln!(
-                "FFmpeg at {} is present but unusable, looking for a replacement: {}",
-                existing.display(),
-                verified.err().unwrap_or_default()
+            ExistingFfmpeg::Replace => shell_log_in(
+                data_dir,
+                &format!(
+                    "FFmpeg at {} is present but unusable, looking for a replacement: {}",
+                    existing.display(),
+                    verified.err().unwrap_or_default()
+                ),
             ),
         }
     }
@@ -8364,7 +8443,7 @@ fn download_macos_ffmpeg_sources(
                 return Ok(macos_source_url(source, host, &override_url));
             }
             Err(err) => {
-                eprintln!("FFmpeg source failed ({}): {err}", source.label());
+                shell_log(&format!("FFmpeg source failed ({}): {err}", source.label()));
                 attempts.push(format!("{}: {err}", source.label()));
             }
         }
@@ -8417,7 +8496,7 @@ fn extract_single_binary_from_zip(
 
 #[cfg(unix)]
 fn make_executable(path: &Path) -> Result<(), String> {
-    let output = Command::new("chmod")
+    let output = childproc::command("chmod")
         .args(["+x", &path.display().to_string()])
         .stderr(Stdio::piped())
         .output()
@@ -8622,12 +8701,11 @@ fn check_encoder_listing(path: &Path, listing: &str) -> Result<bool, String> {
 }
 
 fn verify_ffmpeg_encoders(path: &Path) -> Result<bool, String> {
-    let mut command = Command::new(path);
+    let mut command = childproc::command(path);
     command
         .args(["-hide_banner", "-encoders"])
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    hide_console_window(&mut command);
     let output =
         command_output_with_timeout(command, Duration::from_secs(15), "FFmpeg encoder check")
             .map_err(|e| format!("failed to list FFmpeg encoders at {}: {e}", path.display()))?;
@@ -8673,12 +8751,11 @@ impl FfmpegCheckFailure {
 // as well.
 fn verify_ffmpeg(path: &Path) -> Result<bool, FfmpegCheckFailure> {
     use FfmpegCheckFailure::Other;
-    let mut command = Command::new(path);
+    let mut command = childproc::command(path);
     command
         .arg("-version")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    hide_console_window(&mut command);
     let output = command_output_with_timeout(command, Duration::from_secs(15), "FFmpeg check")
         .map_err(|e| Other(format!("failed to run FFmpeg at {}: {e}", path.display())))?;
     if !output.status.success() {
@@ -8736,12 +8813,11 @@ fn ffmpeg_too_old(build: &FfmpegBuild) -> bool {
 //
 // No encoder check: ffprobe does not encode. Running it is the whole test.
 fn verify_ffprobe(path: &Path) -> Result<(), String> {
-    let mut command = Command::new(path);
+    let mut command = childproc::command(path);
     command
         .arg("-version")
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
-    hide_console_window(&mut command);
     let output = command_output_with_timeout(command, Duration::from_secs(15), "ffprobe check")
         .map_err(|e| format!("failed to run ffprobe at {}: {e}", path.display()))?;
     if !output.status.success() {
@@ -8786,11 +8862,11 @@ fn check_pair_with(
     let full = verify_ffmpeg(ffmpeg).map_err(describe)?;
     verify_ffprobe(ffprobe)?;
     if !full && first_report(&NO_OGG_REPORTED, ffmpeg) {
-        eprintln!(
+        shell_log(&format!(
             "FFmpeg at {} has no {}: OGG export will be unavailable",
             ffmpeg.display(),
             OPTIONAL_FFMPEG_ENCODERS.join(", ")
-        );
+        ));
     }
     Ok(full)
 }
@@ -8931,12 +9007,11 @@ fn read_ffmpeg_replace_record(data_dir: &Path) -> Option<FfmpegReplaceRecord> {
 
 // stdout of `ffmpeg -version`, or None when it does not run.
 fn ffmpeg_version_text(path: &Path) -> Option<String> {
-    let mut command = Command::new(path);
+    let mut command = childproc::command(path);
     command
         .arg("-version")
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    hide_console_window(&mut command);
     let output =
         command_output_with_timeout(command, Duration::from_secs(15), "FFmpeg version").ok()?;
     output
@@ -8970,11 +9045,14 @@ fn managed_ffmpeg_needs_replacing(data_dir: &Path, existing: &Path) -> bool {
         DEFAULT_WINDOWS_FFMPEG_URL,
     );
     if replace {
-        eprintln!(
-            "FFmpeg {} at {} was built with gcc {}, a known-bad build",
-            build.version.as_deref().unwrap_or("(unknown version)"),
-            existing.display(),
-            build.gcc_major.unwrap_or_default()
+        shell_log_in(
+            data_dir,
+            &format!(
+                "FFmpeg {} at {} was built with gcc {}, a known-bad build",
+                build.version.as_deref().unwrap_or("(unknown version)"),
+                existing.display(),
+                build.gcc_major.unwrap_or_default()
+            ),
         );
     }
     replace
@@ -9005,7 +9083,7 @@ fn swap_in_staged_dir(live: &Path, staged: &Path, old: &Path) -> Result<(), Stri
         ));
     }
     if let Err(e) = fs::remove_dir_all(old) {
-        eprintln!("could not remove {}: {e}", old.display());
+        shell_log(&format!("could not remove {}: {e}", old.display()));
     }
     Ok(())
 }
@@ -9061,7 +9139,10 @@ fn replace_stale_ffmpeg_or_keep(data_dir: &Path) {
     let pin = DEFAULT_WINDOWS_FFMPEG_URL;
     let (message, rejected) = match replace_managed_ffmpeg(data_dir) {
         Ok(()) => {
-            eprintln!("Replaced a known-bad FFmpeg build with the pinned one");
+            shell_log_in(
+                data_dir,
+                "Replaced a known-bad FFmpeg build with the pinned one",
+            );
             let _ = update_setup_config(data_dir, [("ffmpegReplace", serde_json::Value::Null)]);
             return;
         }
@@ -9070,9 +9151,12 @@ fn replace_stale_ffmpeg_or_keep(data_dir: &Path) {
     };
     let previous = read_ffmpeg_replace_record(data_dir);
     let record = next_replace_record(previous.as_ref(), pin, rejected);
-    eprintln!(
-        "Keeping the current FFmpeg, replacing it failed (attempt {}): {message}",
-        record.attempts
+    shell_log_in(
+        data_dir,
+        &format!(
+            "Keeping the current FFmpeg, replacing it failed (attempt {}): {message}",
+            record.attempts
+        ),
     );
     let _ = update_setup_config(
         data_dir,
@@ -9096,8 +9180,7 @@ fn write_setup_config(
     let ffprobe = ffprobe_beside(ffmpeg);
     let arch = binary_arch(ffmpeg);
     if let Some(notice) = translated_ffmpeg_notice(host, arch) {
-        eprintln!("{notice}");
-        append_to_setup_log(data_dir, notice);
+        shell_log_in(data_dir, notice);
     }
     let updated_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -9394,16 +9477,6 @@ fn command_output_with_timeout(
     child_output_with_timeout(child, timeout, label)
 }
 
-#[cfg(windows)]
-fn hide_console_window(command: &mut Command) {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
-    command.creation_flags(CREATE_NO_WINDOW);
-}
-
-#[cfg(not(windows))]
-fn hide_console_window(_command: &mut Command) {}
-
 #[cfg(test)]
 mod tests {
     use std::env;
@@ -9684,7 +9757,7 @@ mod tests {
         // 512 KiB on each stream is comfortably past any pipe buffer. A short
         // timeout keeps the failure mode obvious: without concurrent draining
         // this returns Err(timed out) instead of the output.
-        let mut command = Command::new("sh");
+        let mut command = crate::childproc::command("sh");
         command
             .arg("-c")
             .arg("yes stdoutstdoutstdout | head -c 524288; yes errerrerr | head -c 524288 >&2")
@@ -9718,7 +9791,7 @@ mod tests {
         //
         // Stands in for the probe with a process that never exits, since a real
         // wedged CUDA context cannot be summoned in a test.
-        let mut command = Command::new("sh");
+        let mut command = crate::childproc::command("sh");
         command
             .arg("-c")
             .arg("sleep 300")
@@ -9752,7 +9825,7 @@ mod tests {
         // Ten seconds of steady output against a two second stall budget. Under
         // the old fixed deadline this child is killed; under a stall budget it
         // must be left alone, because it was never quiet.
-        let mut command = Command::new("sh");
+        let mut command = crate::childproc::command("sh");
         command
             .arg("-c")
             .arg("for i in $(seq 20); do echo \"Progress $i of 20\"; sleep 0.5; done")
@@ -9782,7 +9855,7 @@ mod tests {
     fn a_download_that_goes_quiet_is_given_up_on() {
         // The other half: silence is what a genuine stall looks like, and it
         // still has to end. One line, then nothing.
-        let mut command = Command::new("sh");
+        let mut command = crate::childproc::command("sh");
         command
             .arg("-c")
             .arg("echo 'Progress 1 of 100'; sleep 300")
@@ -9822,7 +9895,7 @@ mod tests {
         // have ended that one too.
         use std::os::windows::process::CommandExt;
         let dir = make_tmp();
-        let mut command = Command::new("cmd");
+        let mut command = crate::childproc::command("cmd");
         command
             .args(["/d", "/c"])
             .raw_arg(
@@ -9881,7 +9954,7 @@ mod tests {
         #[cfg(windows)]
         let command = {
             use std::os::windows::process::CommandExt;
-            let mut command = Command::new("cmd");
+            let mut command = crate::childproc::command("cmd");
             command.args(["/d", "/c"]).raw_arg(
                 "start /b cmd /d /c \"type nul > started & ping -n 4 127.0.0.1 >nul & type nul > late\" & ping -n 21 127.0.0.1 >nul",
             );
@@ -9889,7 +9962,7 @@ mod tests {
         };
         #[cfg(unix)]
         let command = {
-            let mut command = Command::new("sh");
+            let mut command = crate::childproc::command("sh");
             command.args(["-c", "touch started; (sleep 3; touch late) & sleep 20"]);
             command
         };
@@ -10101,7 +10174,7 @@ mod tests {
             // the file fails with ETXTBSY. Run it once, retrying only that.
             let mut attempts = 0;
             loop {
-                match Command::new(&path).status() {
+                match crate::childproc::command(&path).status() {
                     Err(e) if e.raw_os_error() == Some(libc::ETXTBSY) && attempts < 100 => {
                         attempts += 1;
                         std::thread::sleep(Duration::from_millis(10));
@@ -10292,7 +10365,7 @@ mod tests {
         #[cfg(windows)]
         let mut command = {
             use std::os::windows::process::CommandExt;
-            let mut command = Command::new("cmd");
+            let mut command = crate::childproc::command("cmd");
             command
                 .args(["/d", "/c"])
                 .raw_arg("for /l %i in (1,1,8) do @(echo tick 1>&2 & ping -n 2 127.0.0.1 >nul)");
@@ -10300,7 +10373,7 @@ mod tests {
         };
         #[cfg(unix)]
         let mut command = {
-            let mut command = Command::new("sh");
+            let mut command = crate::childproc::command("sh");
             command.args([
                 "-c",
                 "for i in 1 2 3 4 5 6 7 8; do echo tick >&2; sleep 1; done",
@@ -11653,7 +11726,7 @@ mod tests {
         let data_ffmpeg = PathBuf::from("/data/ffmpeg");
 
         let (ffmpeg, ffprobe) = pair("/opt/homebrew/bin");
-        let mut cmd = std::process::Command::new("x");
+        let mut cmd = crate::childproc::command("x");
         apply_ffmpeg_choice(
             &mut cmd,
             &BackendFfmpeg::Env(ffmpeg.clone(), ffprobe.clone()),
@@ -11676,7 +11749,7 @@ mod tests {
             ]
         );
 
-        let mut cmd = std::process::Command::new("x");
+        let mut cmd = crate::childproc::command("x");
         apply_ffmpeg_choice(
             &mut cmd,
             &BackendFfmpeg::Env("ffmpeg".into(), "ffprobe".into()),
@@ -11693,7 +11766,7 @@ mod tests {
         );
         assert!(entries.iter().all(|e| !e.as_os_str().is_empty()));
 
-        let mut cmd = std::process::Command::new("x");
+        let mut cmd = crate::childproc::command("x");
         apply_ffmpeg_choice(&mut cmd, &BackendFfmpeg::Inherit, || None, &inherited).unwrap();
         assert_eq!(cmd.get_envs().count(), 0);
     }
@@ -13609,7 +13682,7 @@ configuration: --cc=clang\n";
             ),
             ("TMPDIR", None),
         ];
-        let mut command = Command::new("explorer.exe");
+        let mut command = crate::childproc::gui_command("explorer.exe");
         super::restore_env(&mut command, &saved);
         let envs: Vec<(&OsStr, Option<&OsStr>)> = command.get_envs().collect();
         assert!(envs.contains(&(
@@ -13647,7 +13720,7 @@ configuration: --cc=clang\n";
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join("portable.txt"), "").unwrap();
 
-        let status = Command::new(env::current_exe().unwrap())
+        let status = crate::childproc::command(env::current_exe().unwrap())
             .args(["--exact", "tests::ensure_workspace_in_child", "--ignored"])
             .env("STEMDECK_WORKSPACE_CHILD", "1")
             .env("STEMDECK_ROOT", &root)
@@ -14272,13 +14345,13 @@ configuration: --cc=clang\n";
     fn briefly_alive_child() -> Child {
         #[cfg(windows)]
         let mut cmd = {
-            let mut c = Command::new("cmd");
+            let mut c = crate::childproc::command("cmd");
             c.args(["/C", "ping", "-n", "2", "127.0.0.1"]);
             c
         };
         #[cfg(not(windows))]
         let mut cmd = {
-            let mut c = Command::new("sh");
+            let mut c = crate::childproc::command("sh");
             c.args(["-c", "sleep 1"]);
             c
         };

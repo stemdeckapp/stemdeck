@@ -1,0 +1,6 @@
+# A child process made with a bare Command::new gets its own console window
+# on Windows, because the release build has no console to share
+# (src/childproc.rs).
+disallowed-methods = [
+    { path = "std::process::Command::new", reason = "use childproc::command, or childproc::gui_command for a program that shows its own window" },
+]
