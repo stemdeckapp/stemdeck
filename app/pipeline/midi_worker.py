@@ -135,6 +135,80 @@ def _write_code(exc: OSError) -> str:
     return "disk" if exc.errno in (errno.ENOSPC, getattr(errno, "EDQUOT", -1)) else "io"
 
 
+def load_model(model_path: Path):
+    """The vendored engine's ONNX model, refused when it loads as anything
+    else. The engine must already be on sys.path (_install_engine)."""
+    from basic_pitch import inference
+
+    model = inference.Model(str(model_path))
+    if model.model_type != inference.Model.MODEL_TYPES.ONNX:
+        raise RuntimeError(f"loaded as {model.model_type}, not ONNX")
+    return model
+
+
+def model_output(model, audio: Path, on_pct=None) -> dict:
+    """The model's frame, onset and contour activations over the whole file.
+
+    inference.run_inference, window by window, so each window can be a
+    progress line (``on_pct``, 5 to 90). The same constants and the same
+    calls in the same order: the output is Basic Pitch's own."""
+    import numpy as np
+    from basic_pitch import inference
+    from basic_pitch.constants import AUDIO_N_SAMPLES, FFT_HOP
+
+    n_overlapping_frames = 30
+    overlap_len = n_overlapping_frames * FFT_HOP
+    hop_size = AUDIO_N_SAMPLES - overlap_len
+    output: dict[str, list] = {"note": [], "onset": [], "contour": []}
+    total = None
+    original_length = 0
+    windows = inference.get_audio_input(audio, overlap_len, hop_size)
+    for done, (window, _times, original_length) in enumerate(windows, start=1):
+        if total is None:
+            padded = original_length + overlap_len // 2
+            total = max(1, -(-padded // hop_size))
+            if on_pct is not None:
+                on_pct(5)
+        for key, value in model.predict(window).items():
+            output[key].append(value)
+        if on_pct is not None:
+            on_pct(5 + min(85, 85 * done // total))
+    if total is None:
+        raise RuntimeError("the audio has no samples")
+    return {
+        key: inference.unwrap_output(
+            np.concatenate(output[key]), original_length, n_overlapping_frames
+        )
+        for key in output
+    }
+
+
+def output_notes(output: dict, params: dict) -> list:
+    """Note events (start s, end s, MIDI pitch, amplitude, bends) from the
+    model's activations, under ``params`` (midi.run_params)."""
+    import numpy as np
+    from basic_pitch import note_creation
+    from basic_pitch.constants import AUDIO_SAMPLE_RATE, FFT_HOP
+
+    min_note_len = int(
+        np.round(params["minimum_note_length"] / 1000 * (AUDIO_SAMPLE_RATE / FFT_HOP))
+    )
+    # model_output_to_notes zeroes the activations outside the frequency
+    # range in place: a caller that decodes one output more than once passes
+    # a copy each time.
+    _midi, notes = note_creation.model_output_to_notes(
+        output,
+        onset_thresh=params["onset_threshold"],
+        frame_thresh=params["frame_threshold"],
+        min_note_len=min_note_len,
+        min_freq=params["minimum_frequency"],
+        max_freq=params["maximum_frequency"],
+        multiple_pitch_bends=False,
+        melodia_trick=params["melodia_trick"],
+    )
+    return notes
+
+
 def transcribe(args: argparse.Namespace) -> int:
     seconds = audio_seconds(args.audio)
     if seconds is None:
@@ -147,9 +221,9 @@ def transcribe(args: argparse.Namespace) -> int:
     plan = json.loads(args.tempo)
 
     try:
-        import numpy as np
-        from basic_pitch import inference, note_creation
-        from basic_pitch.constants import AUDIO_N_SAMPLES, AUDIO_SAMPLE_RATE, FFT_HOP
+        import numpy  # noqa: F401
+        from basic_pitch import inference, note_creation  # noqa: F401
+        from basic_pitch.constants import AUDIO_N_SAMPLES, AUDIO_SAMPLE_RATE, FFT_HOP  # noqa: F401
     except Exception as exc:
         print(f"engine import failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         # "import": every run would fail the same way (midi.availability).
@@ -160,48 +234,9 @@ def transcribe(args: argparse.Namespace) -> int:
 
     emit("progress", pct=1)
     try:
-        model = inference.Model(str(args.model))
-        if model.model_type != inference.Model.MODEL_TYPES.ONNX:
-            raise RuntimeError(f"loaded as {model.model_type}, not ONNX")
-        # inference.run_inference, window by window, so each window is a
-        # progress line. The same constants and the same calls in the same
-        # order: the output is Basic Pitch's own.
-        n_overlapping_frames = 30
-        overlap_len = n_overlapping_frames * FFT_HOP
-        hop_size = AUDIO_N_SAMPLES - overlap_len
-        output: dict[str, list] = {"note": [], "onset": [], "contour": []}
-        total = None
-        original_length = 0
-        windows = inference.get_audio_input(args.audio, overlap_len, hop_size)
-        for done, (window, _times, original_length) in enumerate(windows, start=1):
-            if total is None:
-                padded = original_length + overlap_len // 2
-                total = max(1, -(-padded // hop_size))
-                emit("progress", pct=5)
-            for key, value in model.predict(window).items():
-                output[key].append(value)
-            emit("progress", pct=5 + min(85, 85 * done // total))
-        if total is None:
-            raise RuntimeError("the audio has no samples")
-        unwrapped = {
-            key: inference.unwrap_output(
-                np.concatenate(output[key]), original_length, n_overlapping_frames
-            )
-            for key in output
-        }
-        min_note_len = int(
-            np.round(params["minimum_note_length"] / 1000 * (AUDIO_SAMPLE_RATE / FFT_HOP))
-        )
-        _midi, notes = note_creation.model_output_to_notes(
-            unwrapped,
-            onset_thresh=params["onset_threshold"],
-            frame_thresh=params["frame_threshold"],
-            min_note_len=min_note_len,
-            min_freq=params["minimum_frequency"],
-            max_freq=params["maximum_frequency"],
-            multiple_pitch_bends=False,
-            melodia_trick=params["melodia_trick"],
-        )
+        model = load_model(args.model)
+        output = model_output(model, args.audio, lambda pct: emit("progress", pct=pct))
+        notes = output_notes(output, params)
     except Exception as exc:
         print(f"engine failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         emit("error", code="engine")
