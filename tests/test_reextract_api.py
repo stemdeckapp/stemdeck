@@ -83,6 +83,28 @@ async def test_a_re_extract_runs_and_its_state_is_served(jobs_dir, client, monke
     assert not _pipeline_lock.locked()
 
 
+async def test_a_run_reads_as_ended_only_once_the_lock_is_free(jobs_dir, client, monkeypatch):
+    """The run's outcome is shown after the pipeline lock is released: a page
+    that sees the run end can start the next one, never a "busy". Shown from
+    the worker thread, it raced the release (seen on CI)."""
+    _job, values = _song(jobs_dir)
+    monkeypatch.setattr(rx, "separate", FakeRun(values, "guitar", _noise(99)))
+    seen: list[tuple[str, bool]] = []
+    publish = rx.publish_final
+
+    def watch(job, final):
+        seen.append((final["state"], _pipeline_lock.locked()))
+        publish(job, final)
+
+    monkeypatch.setattr(rx, "publish_final", watch)
+    async with client as c:
+        r = await c.post(f"/api/jobs/{JOB}/reextract", json={"stem": "guitar", "model": SIX})
+        assert r.status_code == 202, r.text
+        state = await _settled(c)
+    assert state["stem_reextract"]["state"] == "done"
+    assert seen == [("done", False)]
+
+
 async def test_undo_and_keep(jobs_dir, client, monkeypatch):
     _job, values = _song(jobs_dir)
     stems = jobs_dir / JOB / "stems"

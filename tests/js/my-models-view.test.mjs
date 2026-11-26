@@ -38,6 +38,7 @@ import {
   stemsText,
   uploadFields,
   uploadPct,
+  userSourceView,
 } from "../../static/js/myModelsView.js";
 
 let pass = 0,
@@ -198,6 +199,15 @@ eq("the meta line", metaLine(READY, t, "en"), "912 MB · separates Guitar · SHA
 eq("the source line, with the declared licence", sourceLine(READY, t), "From Hugging Face: owner/guitar@0123456789ab. Licence declared by its source: MIT. StemDeck does not check it.");
 eq("an upload's source line", sourceLine({ source: { kind: "upload", label: "vocals.ckpt", license_declared: null } }, t), "From your computer: vocals.ckpt.");
 eq("no source, no line", sourceLine({}, t), "");
+// The Source line: always "added by you", linked to where it was added from.
+eq("added from a link: the link", userSourceView({ source: { kind: "hf", link: "https://huggingface.co/owner/guitar" } }, t), {
+  before: "Source: added by you, ",
+  link: { text: "huggingface.co/owner/guitar", url: "https://huggingface.co/owner/guitar" },
+  after: "",
+});
+eq("added from files: no link", userSourceView({ source: { kind: "upload", link: null } }, t), { before: "Source: added by you", link: null, after: "" });
+eq("an older server sends no link", userSourceView({ source: { kind: "hf" } }, t).link, null);
+eq("European Portuguese says por si", userSourceView({}, (k, v) => String(TRANSLATIONS["pt-PT"][k] ?? TRANSLATIONS.pt[k]).replace(/\{(\w+)\}/g, (_, x) => v[x] ?? "")).before, "Fonte: adicionado por si");
 
 // Codes the server added late: the gates, and linear attention as a config refusal.
 eq("gates_missing has its own sentence", reasonText("gates_missing", t), en["settings.myModels.reason.gates_missing"]);

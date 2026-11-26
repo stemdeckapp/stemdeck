@@ -1,0 +1,1222 @@
+--- a/src/model/ymt3.py
++++ b/src/model/ymt3.py
+@@ -8,43 +8,24 @@
+ #
+ # Please see the details in the LICENSE file.
+ """ymt3.py"""
+-import os
+ from typing import Union, Optional, Tuple, Dict, List, Any
+-from collections import Counter
+ 
+ import torch
+ import torch.nn as nn
+-from torch.nn import CrossEntropyLoss
+-import torchaudio  # for debugging audio
+ import pytorch_lightning as pl
+-import numpy as np
+-import wandb
+-from einops import rearrange
+ 
+ from transformers import T5Config
+ from model.t5mod import T5EncoderYMT3, T5DecoderYMT3, MultiChannelT5Decoder
+ from model.t5mod_helper import task_cond_dec_generate
+ from model.perceiver_mod import PerceiverTFEncoder
+ from model.perceiver_helper import PerceiverTFConfig
+-from model.conformer_mod import ConformerYMT3Encoder
+-from model.conformer_helper import ConformerYMT3Config
+ from model.lm_head import LMHead
+-from model.pitchshift_layer import PitchShiftLayer
+ from model.spectrogram import get_spectrogram_layer_from_audio_cfg
+ from model.conv_block import PreEncoderBlockRes3B
+ from model.conv_block import PreEncoderBlockHFTT, PreEncoderBlockRes3BHFTT  # added for hFTT-like pre-encoder
+ from model.projection_layer import get_projection_layer, get_multi_channel_projection_layer
+-from model.optimizers import get_optimizer
+-from model.lr_scheduler import get_lr_scheduler
+-
+-from utils.note_event_dataclasses import Note
+-from utils.note2event import mix_notes
+-from utils.event2note import merge_zipped_note_events_and_ties_to_notes, DECODING_ERR_TYPES
+-from utils.metrics import compute_track_metrics
+-from utils.metrics import AMTMetrics
+-# from utils.utils import write_model_output_as_npy
+-from utils.utils import write_model_output_as_midi, create_inverse_vocab, write_err_cnt_as_json
+-from utils.utils import Timer
++
++from utils.utils import create_inverse_vocab
+ from utils.task_manager import TaskManager
+ 
+ from config.config import audio_cfg as default_audio_cfg
+@@ -111,7 +92,7 @@
+         self.use_task_cond_decoder = bool(model_cfg["use_task_conditional_decoder"])
+ 
+         # Select Encoder type, Model-specific Config
+-        assert model_cfg["encoder_type"] in ["t5", "perceiver-tf", "conformer"]
++        assert model_cfg["encoder_type"] in ["t5", "perceiver-tf"]
+         assert model_cfg["decoder_type"] in ["t5", "multi-t5"]
+         self.encoder_type = model_cfg["encoder_type"]  # {"t5", "perceiver-tf", "conformer"}
+         self.decoder_type = model_cfg["decoder_type"]  # {"t5", "multi-t5"}
+@@ -262,10 +243,6 @@
+         #     "lm_head": self.lm_head,
+         # })
+ 
+-        # Tables (for logging)
+-        columns = ['Ep', 'Track ID', 'Pred Events', 'Actual Events', 'Pred Notes', 'Actual Notes']
+-        self.sample_table = wandb.Table(columns=columns)
+-
+         # Output MIDI
+         if write_output_dir is not None:
+             if write_output_vocab is None:
+@@ -280,12 +257,10 @@
+ 
+         # Generate and update T5Config
+         t5_basename = self.model_cfg["t5_basename"]
+-        if t5_basename in T5_BASE_CFG.keys():
+-            # Load from pre-defined config in config.py
+-            t5_config = T5Config(**T5_BASE_CFG[t5_basename])
+-        else:
+-            # Load from HuggingFace hub
+-            t5_config = T5Config.from_pretrained(t5_basename)
++        if t5_basename not in T5_BASE_CFG.keys():
++            raise ValueError(f"unknown T5 base config: {t5_basename}")
++        # Load from pre-defined config in config.py
++        t5_config = T5Config(**T5_BASE_CFG[t5_basename])
+ 
+         # Create encoder, decoder, lm_head and embed_tokens
+         if self.encoder_type == "t5":
+@@ -294,10 +269,6 @@
+             perceivertf_config = PerceiverTFConfig()
+             perceivertf_config.update(self.model_cfg["encoder"]["perceiver-tf"])
+             self.encoder = PerceiverTFEncoder(perceivertf_config)
+-        elif self.encoder_type == "conformer":
+-            conformer_config = ConformerYMT3Config()
+-            conformer_config.update(self.model_cfg["encoder"]["conformer"])
+-            self.encoder = ConformerYMT3Encoder(conformer_config)
+ 
+         if self.decoder_type == "t5":
+             self.decoder = T5DecoderYMT3(self.model_cfg["decoder"]["t5"], t5_config)
+@@ -306,155 +277,6 @@
+ 
+         # `shift_right` function for decoding
+         self.shift_right_fn = self.decoder._shift_right
+-
+-    def setup(self, stage: str) -> None:
+-        # Defining metrics
+-        if self.hparams.eval_vocab is None:
+-            extra_classes_per_dataset = [None]
+-        else:
+-            extra_classes_per_dataset = [
+-                list(v.keys()) if v is not None else None for v in self.hparams.eval_vocab
+-            ]  # e.g. [['Piano'], ['Guitar'], ['Piano'], ['Piano', 'Strings', 'Winds'], None]
+-
+-        # For direct addition of extra metrics using full metric name
+-        extra_metrics = None
+-        if self.hparams.add_melody_metric_to_singing is True:
+-            extra_metrics = ["melody_rpa_Singing Voice", "melody_rca_Singing Voice", "melody_oa_Singing Voice"]
+-
+-        # Add pitch class metric
+-        if self.hparams.add_pitch_class_metric is not None:
+-            for sublist in extra_classes_per_dataset:
+-                for name in self.hparams.add_pitch_class_metric:
+-                    if sublist is not None and name in sublist:
+-                        sublist += [name + "_pc"]
+-
+-        extra_classes_unique = list(
+-            set(item for sublist in extra_classes_per_dataset if sublist is not None
+-                for item in sublist))  # e.g. ['Strings', 'Winds', 'Guitar', 'Piano']
+-        dm = self.trainer.datamodule
+-
+-        # Train/Vaidation-only
+-        if stage == "fit":
+-            self.val_metrics_macro = AMTMetrics(prefix=f'validation/macro_', extra_classes=extra_classes_unique)
+-            self.val_metrics = nn.ModuleList()  # val_metric is a list of AMTMetrics objects
+-            for i in range(dm.num_val_dataloaders):
+-                self.val_metrics.append(
+-                    AMTMetrics(prefix=f'validation/({dm.get_val_dataset_name(i)})',
+-                               extra_classes=extra_classes_per_dataset[i],
+-                               error_types=DECODING_ERR_TYPES))
+-
+-            # Add pitchshift layer
+-            if self.shared_cfg["AUGMENTATION"]["train_pitch_shift_range"] in [None, [0, 0]]:
+-                self.pitchshift = None
+-            else:
+-                # torchaudio pitchshifter requires a dummy input for initialization in DDP
+-                input_shape = (self.shared_cfg["BSZ"]["train_local"], 1, self.audio_cfg["input_frames"])
+-                self.pitchshift = PitchShiftLayer(
+-                    pshift_range=self.shared_cfg["AUGMENTATION"]["train_pitch_shift_range"],
+-                    expected_input_shape=input_shape,
+-                    device=self.device)
+-
+-        # Test-only
+-        elif stage == "test":
+-            # self.test_metrics_macro = AMTMetrics(
+-            #     prefix=f'test/macro_', extra_classes=extra_classes_unique)
+-            self.test_metrics = nn.ModuleList()
+-            for i in range(dm.num_test_dataloaders):
+-                self.test_metrics.append(
+-                    AMTMetrics(prefix=f'test/({dm.get_test_dataset_name(i)})',
+-                               extra_classes=extra_classes_per_dataset[i],
+-                               extra_metrics=extra_metrics,
+-                               error_types=DECODING_ERR_TYPES))
+-
+-            # Test pitch shift layer: debug only
+-            if self.test_pitch_shift_layer is not None:
+-                self.test_pitch_shift_semitone = int(self.test_pitch_shift_layer)
+-                self.pitchshift = PitchShiftLayer(
+-                    pshift_range=[self.test_pitch_shift_semitone, self.test_pitch_shift_semitone])
+-
+-    def configure_optimizers(self) -> None:
+-        """Configure optimizer and scheduler"""
+-        optimizer, base_lr = get_optimizer(models_dict=self.named_parameters(),
+-                                           optimizer_name=self.hparams.optimizer_name,
+-                                           base_lr=self.hparams.base_lr,
+-                                           weight_decay=self.hparams.weight_decay)
+-
+-        if self.hparams.optimizer_name.lower() == 'adafactor' and self.hparams.base_lr == None:
+-            print("Using AdaFactor with auto learning rate and no scheduler")
+-            return [optimizer]
+-        if self.hparams.optimizer_name.lower() == 'dadaptadam':
+-            print("Using dAdaptAdam with auto learning rate and no scheduler")
+-            return [optimizer]
+-        elif self.hparams.base_lr == None:
+-            print(f"Using default learning rate {base_lr} of {self.hparams.optimizer_name} as base learning rate.")
+-            self.hparams.base_lr = base_lr
+-
+-        scheduler_cfg = self.shared_cfg["LR_SCHEDULE"]
+-        if self.hparams.max_steps != -1:
+-            # overwrite total_steps
+-            scheduler_cfg["total_steps"] = self.hparams.max_steps
+-        _lr_scheduler = get_lr_scheduler(optimizer,
+-                                         scheduler_name=self.hparams.scheduler_name,
+-                                         base_lr=base_lr,
+-                                         scheduler_cfg=scheduler_cfg)
+-
+-        lr_scheduler = {'scheduler': _lr_scheduler, 'interval': 'step', 'frequency': 1}
+-        return [optimizer], [lr_scheduler]
+-
+-    def forward(
+-            self,
+-            x: torch.FloatTensor,
+-            target_tokens: torch.LongTensor,
+-            # task_tokens: Optional[torch.LongTensor] = None,
+-            **kwargs) -> Dict:
+-        """ Forward pass with teacher-forcing for training and validation.
+-        Args:
+-            x: (B, 1, T) waveform with default T=32767
+-            target_tokens: (B, C, N) tokenized sequence of length N=event_length
+-            task_tokens: (B, C, task_len) tokenized task
+-
+-        Returns:
+-            {
+-                'logits': (B, N + task_len + 1, vocab_size)
+-                'loss': (1, )
+-            }
+-
+-        NOTE: all the commented shapes are in the case of original MT3 setup.
+-        """
+-        x = self.spectrogram(x)  # mel-/spectrogram: (b, 256, 512) or (B, T, F)
+-        x = self.pre_encoder(x)  # projection to d_model: (B, 256, 512)
+-
+-        # TODO: task_cond_encoder would not work properly because of 3-d task_tokens
+-        # if task_tokens is not None and task_tokens.numel() > 0 and self.use_task_cond_encoder is True:
+-        #     # append task embedding to encoder input
+-        #     task_embed = self.embed_tokens(task_tokens)  # (B, task_len, 512)
+-        #     x = torch.cat([task_embed, x], dim=1)  # (B, task_len + 256, 512)
+-        enc_hs = self.encoder(inputs_embeds=x)["last_hidden_state"]  # (B, T', D)
+-        enc_hs = self.pre_decoder(enc_hs)  # (B, T', D) or (B, K, T, D)
+-
+-        # if task_tokens is not None and task_tokens.numel() > 0 and self.use_task_cond_decoder is True:
+-        #     # append task token to decoder input and output label
+-        #     labels = torch.cat([task_tokens, target_tokens], dim=2)  # (B, C, task_len + N)
+-        # else:
+-        #     labels = target_tokens  # (B, C, N)
+-        labels = target_tokens  # (B, C, N)
+-        if labels.shape[1] == 1:  # for single-channel decoders, e.g. t5.
+-            labels = labels.squeeze(1)  # (B, N)
+-
+-        dec_input_ids = self.shift_right_fn(labels)  # t5:(B, N), multi-t5:(B, C, N)
+-        dec_inputs_embeds = self.embed_tokens(dec_input_ids)  # t5:(B, N, D), multi-t5:(B, C, N, D)
+-        dec_hs, _ = self.decoder(inputs_embeds=dec_inputs_embeds, encoder_hidden_states=enc_hs, return_dict=False)
+-
+-        if self.model_cfg["tie_word_embeddings"] is True:
+-            dec_hs = dec_hs * (self.model_cfg["decoder"][self.decoder_type]["d_model"]**-0.5)
+-
+-        logits = self.lm_head(dec_hs)
+-
+-        loss = None
+-        labels = labels.masked_fill(labels == 0, value=-100)  # ignore pad tokens for loss
+-        loss_fct = CrossEntropyLoss(ignore_index=-100)
+-        loss = loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1))
+-        return {"logits": logits, "loss": loss}
+ 
+     def inference(self,
+                   x: torch.FloatTensor,
+@@ -504,464 +326,3 @@
+             return pred_ids
+         else:
+             return pred_ids, x_ps
+-
+-    def inference_file(
+-        self,
+-        bsz: int,
+-        audio_segments: torch.FloatTensor,  # (n_items, 1, segment_len): from a single file
+-        note_token_array: Optional[torch.LongTensor] = None,
+-        task_token_array: Optional[torch.LongTensor] = None,
+-        # subtask_key: Optional[str] = "default"
+-    ) -> Tuple[List[np.ndarray], Optional[torch.Tensor]]:
+-        """ Inference from audio batch by autoregressive decoding:
+-        Args:
+-            bsz: batch size
+-            audio_segments: (n_items, 1, segment_len): segmented audio from a single file
+-            note_token_array: (n_items, max_token_len): Optional. If token_array is None, will not return loss.
+-            subtask_key: (str): If None, not using subtask prefix. By default, using "default" defined in task manager.
+-        """
+-        # if subtask_key is not None:
+-        #     _subtask_token = torch.LongTensor(
+-        #         self.task_manager.get_eval_subtask_prefix_dict()[subtask_key]).to(self.device)
+-
+-        n_items = audio_segments.shape[0]
+-        loss = 0.
+-        pred_token_array_file = []  # each element is (B, C, L) np.ndarray
+-        x_ps_concat = []
+-
+-        for i in range(0, n_items, bsz):
+-            if i + bsz > n_items:  # last batch can be smaller
+-                x = audio_segments[i:n_items].to(self.device)
+-                # if subtask_key is not None:
+-                #     b = n_items - i  # bsz for the last batch
+-                #     task_tokens = _subtask_token.expand((b, -1))  # (b, task_len)
+-                if note_token_array is not None:
+-                    target_tokens = note_token_array[i:n_items].to(self.device)
+-                if task_token_array is not None and task_token_array.numel() > 0:
+-                    task_tokens = task_token_array[i:n_items].to(self.device)
+-                else:
+-                    task_tokens = None
+-            else:
+-                x = audio_segments[i:i + bsz].to(self.device)  # (bsz, 1, segment_len)
+-                # if subtask_key is not None:
+-                #     task_tokens = _subtask_token.expand((bsz, -1))  # (bsz, task_len)
+-                if note_token_array is not None:
+-                    target_tokens = note_token_array[i:i + bsz].to(self.device)  # (bsz, token_len)
+-                if task_token_array is not None and task_token_array.numel() > 0:
+-                    task_tokens = task_token_array[i:i + bsz].to(self.device)
+-                else:
+-                    task_tokens = None
+-
+-            # token prediction (fast-autoregressive decoding)
+-            # if subtask_key is not None:
+-            #     preds = self.inference(x, task_tokens).detach().cpu().numpy()
+-            # else:
+-            #     preds = self.inference(x).detach().cpu().numpy()
+-
+-            if self.test_pitch_shift_layer is not None:  # debug only
+-                preds, x_ps = self.inference(x, task_tokens)
+-                preds = preds.detach().cpu().numpy()
+-                x_ps_concat.append(x_ps.detach().cpu())
+-            else:
+-                preds = self.inference(x, task_tokens).detach().cpu().numpy()
+-            if len(preds) != len(x):
+-                raise ValueError(f'preds: {len(preds)}, x: {len(x)}')
+-            pred_token_array_file.append(preds)
+-
+-            # validation loss (by teacher forcing)
+-            if note_token_array is not None:
+-                loss_weight = x.shape[0] / n_items
+-                loss += self(x, target_tokens)['loss'] * loss_weight
+-                # loss += self(x, target_tokens, task_tokens)['loss'] * loss_weight
+-            else:
+-                loss = None
+-
+-        if self.test_pitch_shift_layer is not None:  # debug only
+-            if self.hparams.write_output_dir is not None:
+-                x_ps_concat = torch.cat(x_ps_concat, dim=0)
+-                return pred_token_array_file, loss, x_ps_concat.flatten().unsqueeze(0)
+-        else:
+-            return pred_token_array_file, loss
+-
+-    def training_step(self, batch, batch_idx) -> torch.Tensor:
+-        # batch: {
+-        # 'dataset1': [Tuple[audio_segments(b, 1, t), tokens(b, max_token_len), ...]]
+-        # 'dataset2': [Tuple[audio_segments(b, 1, t), tokens(b, max_token_len), ...]]
+-        # 'dataset3': ...
+-        # }
+-        audio_segments, note_tokens, pshift_steps = [torch.cat(t, dim=0) for t in zip(*batch.values())]
+-
+-        if self.pitchshift is not None:
+-            # Pitch shift
+-            n_groups = len(batch)
+-            audio_segments = torch.chunk(audio_segments, n_groups, dim=0)
+-            pshift_steps = torch.chunk(pshift_steps, n_groups, dim=0)
+-            for p in pshift_steps:
+-                assert p.eq(p[0]).all().item()
+-
+-            audio_segments = torch.cat([self.pitchshift(a, p[0].item()) for a, p in zip(audio_segments, pshift_steps)],
+-                                       dim=0)
+-
+-        loss = self(audio_segments, note_tokens)['loss']
+-        self.log('train_loss',
+-                 loss,
+-                 on_step=True,
+-                 on_epoch=True,
+-                 prog_bar=True,
+-                 batch_size=note_tokens.shape[0],
+-                 sync_dist=True)
+-        # print('lr', self.trainer.optimizers[0].param_groups[0]['lr'])
+-        return loss
+-
+-    def validation_step(self, batch, batch_idx, dataloader_idx=0) -> Dict:
+-        # File-wise validation
+-        if self.task_manager.num_decoding_channels == 1:
+-            bsz = self.shared_cfg["BSZ"]["validation"]
+-        else:
+-            bsz = self.shared_cfg["BSZ"]["validation"] // self.task_manager.num_decoding_channels * 3
+-        # audio_segments, notes_dict, note_token_array, task_token_array = batch
+-        audio_segments, notes_dict, note_token_array = batch
+-        task_token_array = None
+-
+-        # Loop through the tensor in chunks of bsz (=subbsz actually)
+-        n_items = audio_segments.shape[0]
+-        start_secs_file = [32767 * i / 16000 for i in range(n_items)]
+-        with Timer() as t:
+-            pred_token_array_file, loss = self.inference_file(bsz, audio_segments, note_token_array, task_token_array)
+-            """
+-            notes_dict: # Ground truth notes
+-                {
+-                    'mtrack_id': int,
+-                    'program': List[int],
+-                    'is_drum': bool,
+-                    'duration_sec': float,
+-                    'notes': List[Note],
+-                }
+-            """
+-            # Process a list of channel-wise token arrays for a file
+-            num_channels = self.task_manager.num_decoding_channels
+-            pred_notes_in_file = []
+-            n_err_cnt = Counter()
+-            for ch in range(num_channels):
+-                pred_token_array_ch = [arr[:, ch, :] for arr in pred_token_array_file]  # (B, L)
+-                zipped_note_events_and_tie, list_events, ne_err_cnt = self.task_manager.detokenize_list_batches(
+-                    pred_token_array_ch, start_secs_file, return_events=True)
+-                pred_notes_ch, n_err_cnt_ch = merge_zipped_note_events_and_ties_to_notes(zipped_note_events_and_tie)
+-                pred_notes_in_file.append(pred_notes_ch)
+-                n_err_cnt += n_err_cnt_ch
+-            pred_notes = mix_notes(pred_notes_in_file)  # This is the mixed notes from all channels
+-
+-            if self.hparams.write_output_dir is not None:
+-                track_info = [notes_dict[k] for k in notes_dict.keys() if k.endswith("_id")][0]
+-                dataset_info = [k for k in notes_dict.keys() if k.endswith('_id')][0][:-3]
+-                # write_model_output_as_npy(zipped_note_events_and_tie, self.hparams.write_output_dir,
+-                #                           track_info)
+-                write_model_output_as_midi(pred_notes,
+-                                           self.hparams.write_output_dir,
+-                                           track_info,
+-                                           self.midi_output_inverse_vocab,
+-                                           output_dir_suffix=str(dataset_info) + '_' +
+-                                           str(self.hparams.eval_subtask_key))
+-            # generate sample text to display in log table
+-            # pred_events_text = [str([list_events[0][:200]])]
+-            # pred_notes_text = [str([pred_notes[:200]])]
+-
+-            # this is local GPU metric per file, not global metric in DDP
+-            drum_metric, non_drum_metric, instr_metric = compute_track_metrics(
+-                pred_notes,
+-                notes_dict['notes'],
+-                eval_vocab=self.hparams.eval_vocab[dataloader_idx],
+-                eval_drum_vocab=self.hparams.eval_drum_vocab,
+-                onset_tolerance=self.hparams.onset_tolerance,
+-                add_pitch_class_metric=self.hparams.add_pitch_class_metric)
+-            self.val_metrics[dataloader_idx].bulk_update(drum_metric)
+-            self.val_metrics[dataloader_idx].bulk_update(non_drum_metric)
+-            self.val_metrics[dataloader_idx].bulk_update(instr_metric)
+-            self.val_metrics_macro.bulk_update(drum_metric)
+-            self.val_metrics_macro.bulk_update(non_drum_metric)
+-            self.val_metrics_macro.bulk_update(instr_metric)
+-
+-        # Log sample table: predicted notes and ground truth notes
+-        # if batch_idx in (0, 1) and self.global_rank == 0:
+-        #     actual_notes_text = [str([notes_dict['notes'][:200]])]
+-        #     actual_tokens = token_array[0, :200].detach().cpu().numpy().tolist()
+-        #     actual_events_text = [str(self.tokenizer._decode(actual_tokens))]
+-        #     track_info = [notes_dict[k] for k in notes_dict.keys() if k.endswith("_id")]
+-        #     self.sample_table.add_data(self.current_epoch, track_info, pred_events_text,
+-        #                                actual_events_text, pred_notes_text, actual_notes_text)
+-        #     self.logger.log_table('Samples', self.sample_table.columns, self.sample_table.data)
+-
+-        decoding_time_sec = t.elapsed_time()
+-        self.log('val_loss', loss, prog_bar=True, batch_size=n_items, sync_dist=True)
+-        # self.val_metrics[dataloader_idx].bulk_update_errors({'decoding_time': decoding_time_sec})
+-
+-    def on_validation_epoch_end(self) -> None:
+-        for val_metrics in self.val_metrics:
+-            self.log_dict(val_metrics.bulk_compute(), sync_dist=True)
+-            val_metrics.bulk_reset()
+-        self.log_dict(self.val_metrics_macro.bulk_compute(), sync_dist=True)
+-        self.val_metrics_macro.bulk_reset()
+-
+-    def test_step(self, batch, batch_idx, dataloader_idx=0) -> Dict:
+-        # File-wise evaluation
+-        if self.task_manager.num_decoding_channels == 1:
+-            bsz = self.shared_cfg["BSZ"]["validation"]
+-        else:
+-            bsz = self.shared_cfg["BSZ"]["validation"] // self.task_manager.num_decoding_channels * 3
+-        # audio_segments, notes_dict, note_token_array, task_token_array = batch
+-        audio_segments, notes_dict, note_token_array = batch
+-        task_token_array = None
+-
+-        # Test pitch shift layer: debug only
+-        if self.test_pitch_shift_layer is not None and self.test_pitch_shift_semitone != 0:
+-            for n in notes_dict['notes']:
+-                if n.is_drum == False:
+-                    n.pitch = n.pitch + self.test_pitch_shift_semitone
+-
+-        # Loop through the tensor in chunks of bsz (=subbsz actually)
+-        n_items = audio_segments.shape[0]
+-        start_secs_file = [32767 * i / 16000 for i in range(n_items)]
+-
+-        if self.test_pitch_shift_layer is not None and self.hparams.write_output_dir is not None:
+-            pred_token_array_file, loss, x_ps = self.inference_file(bsz, audio_segments, None, None)
+-        else:
+-            pred_token_array_file, loss = self.inference_file(bsz, audio_segments, None, None)
+-        if len(pred_token_array_file) > 0:
+-
+-            # Process a list of channel-wise token arrays for a file
+-            num_channels = self.task_manager.num_decoding_channels
+-            pred_notes_in_file = []
+-            n_err_cnt = Counter()
+-            for ch in range(num_channels):
+-                pred_token_array_ch = [arr[:, ch, :] for arr in pred_token_array_file]  # (B, L)
+-                zipped_note_events_and_tie, list_events, ne_err_cnt = self.task_manager.detokenize_list_batches(
+-                    pred_token_array_ch, start_secs_file, return_events=True)
+-                pred_notes_ch, n_err_cnt_ch = merge_zipped_note_events_and_ties_to_notes(zipped_note_events_and_tie)
+-                pred_notes_in_file.append(pred_notes_ch)
+-                n_err_cnt += n_err_cnt_ch
+-            pred_notes = mix_notes(pred_notes_in_file)  # This is the mixed notes from all channels
+-
+-            if self.test_pitch_shift_layer is not None and self.hparams.write_output_dir is not None:
+-                # debug only
+-                wav_output_dir = os.path.join(self.hparams.write_output_dir, f"model_output_{dataset_info}")
+-                os.makedirs(wav_output_dir, exist_ok=True)
+-                wav_output_file = os.path.join(wav_output_dir, f"{track_info}_ps_{self.test_pitch_shift_semitone}.wav")
+-                torchaudio.save(wav_output_file, x_ps.squeeze(1), 16000, bits_per_sample=16)
+-
+-            drum_metric, non_drum_metric, instr_metric = compute_track_metrics(
+-                pred_notes,
+-                notes_dict['notes'],
+-                eval_vocab=self.hparams.eval_vocab[dataloader_idx],
+-                eval_drum_vocab=self.hparams.eval_drum_vocab,
+-                onset_tolerance=self.hparams.onset_tolerance,
+-                add_pitch_class_metric=self.hparams.add_pitch_class_metric,
+-                add_melody_metric=['Singing Voice'] if self.hparams.add_melody_metric_to_singing else None,
+-                add_frame_metric=True,
+-                add_micro_metric=True,
+-                add_multi_f_metric=True)
+-
+-            if self.hparams.write_output_dir is not None and self.global_rank == 0:
+-                # write model output to file
+-                track_info = [notes_dict[k] for k in notes_dict.keys() if k.endswith("_id")][0]
+-                dataset_info = [k for k in notes_dict.keys() if k.endswith('_id')][0][:-3]
+-                f_score = f"OnF{non_drum_metric['onset_f']:.2f}_MulF{instr_metric['multi_f']:.2f}"
+-                write_model_output_as_midi(pred_notes,
+-                                           self.hparams.write_output_dir,
+-                                           track_info,
+-                                           self.midi_output_inverse_vocab,
+-                                           output_dir_suffix=str(dataset_info) + '_' +
+-                                           str(self.hparams.eval_subtask_key) + '_' + f_score)
+-                write_err_cnt_as_json(track_info, self.hparams.write_output_dir,
+-                                      str(dataset_info) + '_' + str(self.hparams.eval_subtask_key) + '_' + f_score,
+-                                      n_err_cnt, ne_err_cnt)
+-
+-            # Test with optimal octave shift
+-            if self.hparams.test_optimal_octave_shift:
+-                track_info = [notes_dict[k] for k in notes_dict.keys() if k.endswith("_id")][0]
+-                dataset_info = [k for k in notes_dict.keys() if k.endswith('_id')][0][:-3]
+-                score = [instr_metric['onset_f_Bass']]
+-                ref_notes_plus = []
+-                ref_notes_minus = []
+-                for note in notes_dict['notes']:
+-                    if note.is_drum == True:
+-                        ref_notes_plus.append(note)
+-                        ref_notes_minus.append(note)
+-                    else:
+-                        ref_notes_plus.append(
+-                            Note(is_drum=note.is_drum,
+-                                 program=note.program,
+-                                 onset=note.onset,
+-                                 offset=note.offset,
+-                                 pitch=note.pitch + 12,
+-                                 velocity=note.velocity))
+-                        ref_notes_minus.append(
+-                            Note(is_drum=note.is_drum,
+-                                 program=note.program,
+-                                 onset=note.onset,
+-                                 offset=note.offset,
+-                                 pitch=note.pitch - 12,
+-                                 velocity=note.velocity))
+-
+-                drum_metric_plus, non_drum_metric_plus, instr_metric_plus = compute_track_metrics(
+-                    pred_notes,
+-                    ref_notes_plus,
+-                    eval_vocab=self.hparams.eval_vocab[dataloader_idx],
+-                    eval_drum_vocab=self.hparams.eval_drum_vocab,
+-                    onset_tolerance=self.hparams.onset_tolerance,
+-                    add_pitch_class_metric=self.hparams.add_pitch_class_metric)
+-                drum_metric_minus, non_drum_metric_minus, instr_metric_minus = compute_track_metrics(
+-                    ref_notes_minus,
+-                    notes_dict['notes'],
+-                    eval_vocab=self.hparams.eval_vocab[dataloader_idx],
+-                    eval_drum_vocab=self.hparams.eval_drum_vocab,
+-                    onset_tolerance=self.hparams.onset_tolerance,
+-                    add_pitch_class_metric=self.hparams.add_pitch_class_metric)
+-
+-                score.append(instr_metric_plus['onset_f_Bass'])
+-                score.append(instr_metric_minus['onset_f_Bass'])
+-                max_index = score.index(max(score))
+-                if max_index == 0:
+-                    print(f"ZERO: {track_info}, z/p/m: {score[0]:.2f}/{score[1]:.2f}/{score[2]:.2f}")
+-                elif max_index == 1:
+-                    # plus
+-                    instr_metric['onset_f_Bass'] = instr_metric_plus['onset_f_Bass']
+-                    print(f"PLUS: {track_info}, z/p/m: {score[0]:.2f}/{score[1]:.2f}/{score[2]:.2f}")
+-                    write_model_output_as_midi(ref_notes_plus,
+-                                               self.hparams.write_output_dir,
+-                                               track_info + '_ref_octave_plus',
+-                                               self.midi_output_inverse_vocab,
+-                                               output_dir_suffix=str(dataset_info) + '_' +
+-                                               str(self.hparams.eval_subtask_key))
+-                else:
+-                    # minus
+-                    instr_metric['onset_f_Bass'] = instr_metric_minus['onset_f_Bass']
+-                    print(f"MINUS: {track_info}, z/p/m: {score[0]:.2f}/{score[1]:.2f}/{score[2]:.2f}")
+-                    write_model_output_as_midi(ref_notes_minus,
+-                                               self.hparams.write_output_dir,
+-                                               track_info + '_ref_octave_minus',
+-                                               self.midi_output_,
+-                                               output_dir_suffix=str(dataset_info) + '_' +
+-                                               str(self.hparams.eval_subtask_key))
+-
+-            self.test_metrics[dataloader_idx].bulk_update(drum_metric)
+-            self.test_metrics[dataloader_idx].bulk_update(non_drum_metric)
+-            self.test_metrics[dataloader_idx].bulk_update(instr_metric)
+-            # self.test_metrics_macro.bulk_update(drum_metric)
+-            # self.test_metrics_macro.bulk_update(non_drum_metric)
+-            # self.test_metrics_macro.bulk_update(instr_metric)
+-
+-    def on_test_epoch_end(self) -> None:
+-        # all_gather is done seeminglesly by torchmetrics
+-        for test_metrics in self.test_metrics:
+-            self.log_dict(test_metrics.bulk_compute(), sync_dist=True)
+-            test_metrics.bulk_reset()
+-        # self.log_dict(self.test_metrics_macro.bulk_compute(), sync_dist=True)
+-        # self.test_metrics_macro.bulk_reset()
+-
+-
+-def test_case_forward_mt3():
+-    import torch
+-    from config.config import audio_cfg, model_cfg, shared_cfg
+-    from model.ymt3 import YourMT3
+-    model = YourMT3()
+-    model.eval()
+-    x = torch.randn(2, 1, 32767)
+-    labels = torch.randint(0, 596, (2, 1, 1024), requires_grad=False)  # (B, C=1, T)
+-    task_tokens = torch.LongTensor([])
+-    output = model.forward(x, labels, task_tokens)
+-    logits, loss = output['logits'], output['loss']
+-    assert logits.shape == (2, 1024, 596)  # (B, N, vocab_size)
+-
+-
+-def test_case_inference_mt3():
+-    import torch
+-    from config.config import audio_cfg, model_cfg, shared_cfg
+-    from model.ymt3 import YourMT3
+-    model_cfg["num_max_positions"] = 1024 + 3 + 1
+-    model = YourMT3(model_cfg=model_cfg)
+-    model.eval()
+-    x = torch.randn(2, 1, 32767)
+-    task_tokens = torch.randint(0, 596, (2, 3), requires_grad=False)
+-    pred_ids = model.inference(x, task_tokens, max_token_length=10)  # (2, 3, 9) (B, C, L-task_len)
+-    # TODO: need to check the length of pred_ids when task_tokens is not None
+-
+-
+-def test_case_forward_enc_perceiver_tf_dec_t5():
+-    import torch
+-    from model.ymt3 import YourMT3
+-    from config.config import audio_cfg, model_cfg, shared_cfg
+-    model_cfg["encoder_type"] = "perceiver-tf"
+-    audio_cfg["codec"] = "spec"
+-    audio_cfg["hop_length"] = 300
+-
+-    model = YourMT3(audio_cfg=audio_cfg, model_cfg=model_cfg)
+-    model.eval()
+-
+-    x = torch.randn(2, 1, 32767)
+-    labels = torch.randint(0, 596, (2, 1, 1024), requires_grad=False)
+-
+-    # forward
+-    output = model.forward(x, labels)
+-    logits, loss = output['logits'], output['loss']  # logits: (2, 1024, 596) (B, N, vocab_size)
+-
+-    # inference
+-    pred_ids = model.inference(x, None, max_token_length=3)  # (2, 1, 3) (B, C, L)
+-
+-
+-def test_case_forward_enc_conformer_dec_t5():
+-    import torch
+-    from model.ymt3 import YourMT3
+-    from config.config import audio_cfg, model_cfg, shared_cfg
+-    model_cfg["encoder_type"] = "conformer"
+-    audio_cfg["codec"] = "melspec"
+-    audio_cfg["hop_length"] = 128
+-    model = YourMT3(audio_cfg=audio_cfg, model_cfg=model_cfg)
+-    model.eval()
+-
+-    x = torch.randn(2, 1, 32767)
+-    labels = torch.randint(0, 596, (2, 1024), requires_grad=False)
+-
+-    # forward
+-    output = model.forward(x, labels)
+-    logits, loss = output['logits'], output['loss']  # logits: (2, 1024, 596) (B, N, vocab_size)
+-
+-    # inference
+-    pred_ids = model.inference(x, None, 20)  # (2, 1, 20) (B, C, L)
+-
+-
+-def test_case_enc_perceiver_tf_dec_multi_t5():
+-    import torch
+-    from model.ymt3 import YourMT3
+-    from config.config import audio_cfg, model_cfg, shared_cfg
+-    model_cfg["encoder_type"] = "perceiver-tf"
+-    model_cfg["decoder_type"] = "multi-t5"
+-    model_cfg["encoder"]["perceiver-tf"]["attention_to_channel"] = True
+-    model_cfg["encoder"]["perceiver-tf"]["num_latents"] = 26
+-    audio_cfg["codec"] = "spec"
+-    audio_cfg["hop_length"] = 300
+-    model = YourMT3(audio_cfg=audio_cfg, model_cfg=model_cfg)
+-    model.eval()
+-
+-    x = torch.randn(2, 1, 32767)
+-    labels = torch.randint(0, 596, (2, 13, 200), requires_grad=False)  # (B, C, T)
+-
+-    # x = model.spectrogram(x)
+-    # x = model.pre_encoder(x)  # (2, 110, 128, 128) (B, T, C, D)
+-    # enc_hs = model.encoder(inputs_embeds=x)["last_hidden_state"]  # (2, 110, 128, 128) (B, T, C, D)
+-    # enc_hs = model.pre_decoder(enc_hs)  # (2, 13, 110, 512) (B, C, T, D)
+-
+-    # dec_input_ids = model.shift_right_fn(labels)  # (2, 13, 200) (B, C, T)
+-    # dec_inputs_embeds = model.embed_tokens(dec_input_ids)  # (2, 13, 200, 512) (B, C, T, D)
+-    # dec_hs, _ = model.decoder(
+-    #     inputs_embeds=dec_inputs_embeds, encoder_hidden_states=enc_hs, return_dict=False)
+-    # logits = model.lm_head(dec_hs)  # (2, 13, 200, 596) (B, C, T, vocab_size)
+-
+-    # forward
+-    x = torch.randn(2, 1, 32767)
+-    labels = torch.randint(0, 596, (2, 13, 200), requires_grad=False)  # (B, C, T)
+-    output = model.forward(x, labels)
+-    logits, loss = output['logits'], output['loss']  # (2, 13, 200, 596) (B, C, T, vocab_size)
+-
+-    # inference
+-    model.max_total_token_length = 123  # to save time..
+-    pred_ids = model.inference(x, None)  # (2, 13, 123) (B, C, L)
+--- a/src/utils/utils.py
++++ b/src/utils/utils.py
+@@ -7,82 +7,7 @@
+ #     http://www.apache.org/licenses/LICENSE-2.0
+ #
+ # Please see the details in the LICENSE file.
+-import os
+-import json
+-import time
+-import hashlib
+-import requests
+-import tarfile
+-import warnings
+-import argparse
+-from typing import Tuple, Union, Optional, List, Dict, Any
+-from tqdm import tqdm
+-import numpy as np
+-from collections import Counter
+-from utils.note_event_dataclasses import Note
+-from utils.note2event import note2note_event
+-from utils.midi import note_event2midi
+-from utils.note2event import slice_multiple_note_events_and_ties_to_bundle
+-from utils.event2note import merge_zipped_note_events_and_ties_to_notes
+-from utils.metrics import compute_track_metrics
+-from utils.tokenizer import EventTokenizer, NoteEventTokenizer
+-from utils.note_event_dataclasses import Note, NoteEvent, Event
+-from config.vocabulary import GM_INSTR_FULL, GM_INSTR_CLASS_PLUS
+-from config.config import shared_cfg
+-
+-
+-def get_checksum(file_path: os.PathLike, buffer_size: int = 65536) -> str:
+-    md5 = hashlib.md5()
+-    with open(file_path, "rb") as f:
+-        while True:
+-            data = f.read(buffer_size)
+-            if not data:
+-                break
+-            md5.update(data)
+-    return md5.hexdigest()
+-
+-
+-def download_and_extract(data_home: os.PathLike,
+-                         url: str,
+-                         remove_tar_file: bool = True,
+-                         check_sum: Optional[str] = None,
+-                         zenodo_token: Optional[str] = None) -> None:
+-
+-    file_name = url.split("/")[-1].split("?")[0]
+-    tar_path = os.path.join(data_home, file_name)
+-
+-    if not os.path.exists(data_home):
+-        os.makedirs(data_home)
+-
+-    if zenodo_token is not None:
+-        url_with_token = f"{url}&token={zenodo_token}" if "?download=1" in url else f"{url}?token={zenodo_token}"
+-    else:
+-        url_with_token = url
+-
+-    response = requests.get(url_with_token, stream=True)
+-
+-    # Check HTTP Status
+-    if response.status_code != 200:
+-        print(f"Failed to download file. Status code: {response.status_code}")
+-        return
+-
+-    total_size = int(response.headers.get('content-length', 0))
+-
+-    with open(tar_path, "wb") as f:
+-        for chunk in tqdm(response.iter_content(chunk_size=8192), total=total_size // 8192, unit='KB', desc=file_name):
+-            f.write(chunk)
+-
+-    _check_sum = get_checksum(tar_path)
+-    print(f"Checksum (md5): {_check_sum}")
+-
+-    if check_sum is not None and check_sum != _check_sum:
+-        raise ValueError(f"Checksum doesn't match! Expected: {check_sum}, Actual: {_check_sum}")
+-
+-    with tarfile.open(tar_path, "r:gz") as tar:
+-        tar.extractall(data_home)
+-
+-    if remove_tar_file:
+-        os.remove(tar_path)
++from typing import Dict
+ 
+ 
+ def create_inverse_vocab(vocab: Dict) -> Dict:
+@@ -143,418 +68,3 @@
+             "primary_program": drum_program,
+         }
+     return program2channel_vocab, num_channels
+-
+-
+-def write_model_output_as_npy(data, output_dir, track_id):
+-    output_dir = os.path.join(output_dir, "model_output")
+-    os.makedirs(output_dir, exist_ok=True)
+-    output_file = os.path.join(output_dir, f"output_{track_id}.npy")
+-    np.save(output_file, data, allow_pickle=True)
+-
+-
+-def write_model_output_as_midi(notes: List[Note],
+-                               output_dir: os.PathLike,
+-                               track_id: str,
+-                               output_inverse_vocab: Optional[Dict] = None,
+-                               output_dir_suffix: Optional[str] = None) -> None:
+-
+-    if output_dir_suffix is not None:
+-        output_dir = os.path.join(output_dir, f"model_output/{output_dir_suffix}")
+-    else:
+-        output_dir = os.path.join(output_dir, "model_output")
+-    os.makedirs(output_dir, exist_ok=True)
+-    output_file = os.path.join(output_dir, f"{track_id}.mid")
+-
+-    if output_inverse_vocab is not None:
+-        # Convert the note events to the output vocabulary
+-        new_notes = []
+-        for note in notes:
+-            if note.is_drum:
+-                new_notes.append(note)
+-            else:
+-                new_notes.append(
+-                    Note(is_drum=note.is_drum,
+-                         program=output_inverse_vocab.get(note.program, [note.program])[0],
+-                         onset=note.onset,
+-                         offset=note.offset,
+-                         pitch=note.pitch,
+-                         velocity=note.velocity))
+-
+-    note_events = note2note_event(new_notes, return_activity=False)
+-    note_event2midi(note_events, output_file, output_inverse_vocab=output_inverse_vocab)
+-
+-
+-def write_err_cnt_as_json(
+-    track_id: str,
+-    output_dir: os.PathLike,
+-    output_dir_suffix: Optional[str] = None,
+-    note_err_cnt: Optional[Counter] = None,
+-    note_event_err_cnt: Optional[Counter] = None,
+-):
+-
+-    if output_dir_suffix is not None:
+-        output_dir = os.path.join(output_dir, f"model_output/{output_dir_suffix}")
+-    else:
+-        output_dir = os.path.join(output_dir, "model_output")
+-    os.makedirs(output_dir, exist_ok=True)
+-    output_file = os.path.join(output_dir, f"error_count_{track_id}.json")
+-
+-    output_dict = {}
+-    if note_err_cnt is not None:
+-        output_dict['note_err_cnt'] = dict(note_err_cnt)
+-    if note_event_err_cnt is not None:
+-        output_dict['note_event_err_cnt'] = dict(note_event_err_cnt)
+-    output_str = json.dumps(output_dict, indent=4)
+-
+-    with open(output_file, 'w') as json_file:
+-        json_file.write(output_str)
+-
+-
+-class Timer:
+-    """A simple timer class to measure elapsed time.
+-    Usage:
+-
+-    with Timer() as t:
+-        # Your code here
+-        time.sleep(2)
+-    t.print_elapsed_time()
+-
+-    """
+-
+-    def __init__(self) -> None:
+-        self.start_time = None
+-        self.end_time = None
+-
+-    def start(self) -> None:
+-        self.start_time = time.time()
+-
+-    def stop(self) -> None:
+-        self.end_time = time.time()
+-
+-    def elapsed_time(self) -> float:
+-        if self.start_time is None:
+-            raise ValueError("Timer has not been started yet.")
+-        if self.end_time is None:
+-            raise ValueError("Timer has not been stopped yet.")
+-        return self.end_time - self.start_time
+-
+-    def print_elapsed_time(self, message: Optional[str] = None) -> float:
+-        elapsed_seconds = self.elapsed_time()
+-        minutes, seconds = divmod(elapsed_seconds, 60)
+-        milliseconds = (elapsed_seconds % 1) * 1000
+-        if message is not None:
+-            text = f"⏰ {message}: {int(minutes)}m {int(seconds)}s {milliseconds:.2f}ms"
+-        else:
+-            text = f"⏰ elapse time: {int(minutes)}m {int(seconds)}s {milliseconds:.2f}ms"
+-        print(text)
+-        return elapsed_seconds
+-
+-    def reset(self) -> None:
+-        self.start_time = None
+-        self.end_time = None
+-
+-    def __enter__(self) -> 'Timer':
+-        self.start()
+-        return self
+-
+-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+-        self.stop()
+-
+-
+-def merge_file_lists(file_lists: List[Dict]) -> Dict[int, Any]:
+-    """ Merge file lists from different datasets, and return a reindexed 
+-    dictionary of file list."""
+-    merged_file_list = {}
+-    index = 0
+-    for file_list in file_lists:
+-        for v in file_list.values():
+-            merged_file_list[index] = v
+-            index += 1
+-    return merged_file_list
+-
+-
+-def merge_splits(splits: List[str], dataset_name: Union[str, List[str]]) -> Dict[int, Any]:
+-    """ 
+-    merge_splits:
+-    - Merge multiple splits from different datasets, and return a reindexed 
+-    dictionary of file list. 
+-    - It is also possible to merge splits from different datasets.
+-    
+-    """
+-    n_splits = len(splits)
+-    if n_splits > 1 and isinstance(dataset_name, str):
+-        dataset_name = [dataset_name] * n_splits
+-    elif n_splits > 1 and isinstance(dataset_name, list) and len(dataset_name) != n_splits:
+-        raise ValueError("The number of dataset names in list must be equal to the number of splits.")
+-    else:
+-        pass
+-
+-    # load file_list dictionaries
+-    data_home = shared_cfg['PATH']['data_home']
+-    file_lists = []  # list of dictionaries
+-    for i, s in enumerate(splits):
+-        json_file = (f"{data_home}/yourmt3_indexes/{dataset_name[i]}_{s}_file_list.json")
+-
+-        # Fix for missing file_list with incomplete dataset package
+-        if not os.path.exists(json_file):
+-            warnings.warn(
+-                f"File list {json_file} does not exist. If you don't have a complete package of dataset, ignore this warning..."
+-            )
+-            return {}
+-
+-        with open(json_file, 'r') as j:
+-            file_lists.append(json.load(j))
+-    merged_file_list = merge_file_lists(file_lists)  # reindexed, merged file list
+-    return merged_file_list
+-
+-
+-def reindex_file_list_keys(file_list: Dict[str, Any]) -> Dict[int, Any]:
+-    """ Reindex file list keys from 0 to total count."""
+-    reindexed_file_list = {}
+-    for i, (k, v) in enumerate(file_list.items()):
+-        reindexed_file_list[i] = v
+-    return reindexed_file_list
+-
+-
+-def remove_ids_from_file_list(file_list: Dict[str, Any],
+-                              selected_ids: List[int],
+-                              reindex: bool = True) -> Dict[int, Any]:
+-    """ Remove selected ids from file list."""
+-    key = None
+-    for v in file_list.values():
+-        # search keys that contain 'id'
+-        for k in v.keys():
+-            if 'id' in k:
+-                key = k
+-                break
+-        if key:
+-            break
+-
+-    if key is None:
+-        raise ValueError("No key contains 'id'.")
+-
+-    # generate new filelist by removing selected ids
+-    selected_ids = [str(id) for id in selected_ids]  # ids to str
+-    file_list = {k: v for k, v in file_list.items() if str(v[key]) not in selected_ids}
+-    if reindex:
+-        return reindex_file_list_keys(file_list)
+-    else:
+-        return file_list
+-
+-
+-def deduplicate_splits(split_a: Union[str, Dict],
+-                       split_b: Union[str, Dict],
+-                       dataset_name: Optional[str] = None,
+-                       reindex: bool = True) -> Dict[int, Any]:
+-    """Remove overlapping splits in file_list A with splits from file_list B,
+-    and return a reindexed dictionary of files."""
+-    data_home = shared_cfg['PATH']['data_home']
+-
+-    if isinstance(split_a, str):
+-        json_file_a = (f"{data_home}/yourmt3_indexes/{dataset_name}_{split_a}_file_list.json")
+-        with open(json_file_a, 'r') as j:
+-            file_list_a = json.load(j)
+-    elif isinstance(split_a, dict):
+-        file_list_a = split_a
+-
+-    if isinstance(split_b, str):
+-        json_file_b = (f"{data_home}/yourmt3_indexes/{dataset_name}_{split_b}_file_list.json")
+-        with open(json_file_b, 'r') as j:
+-            file_list_b = json.load(j)
+-    elif isinstance(split_b, dict):
+-        file_list_b = split_b
+-
+-    # Get the key that contains 'id' from file_list_a splits
+-    id_key = None
+-    for v in file_list_a.values():
+-        for k in v.keys():
+-            if 'id' in k:
+-                id_key = k
+-                break
+-        if id_key:
+-            break
+-    if id_key is None:
+-        raise ValueError("No key contains 'id' in file_list_a.")
+-
+-    # Get IDs from file_list_b splits
+-    ids_b = set(str(v.get(id_key, '')) for v in file_list_b.values())
+-
+-    # Extract IDs from file_list_a splits
+-    ids_a = [str(v.get(id_key, '')) for v in file_list_a.values()]
+-
+-    # Remove IDs from file_list_a that are also in file_list_b
+-    ids_to_remove = list(set(ids_a).intersection(ids_b))
+-    filtered_file_list_a = remove_ids_from_file_list(file_list_a, ids_to_remove, reindex)
+-
+-    return filtered_file_list_a
+-
+-
+-def merge_vocab(vocab_list: List[Dict]) -> Dict[str, Any]:
+-    """ Merge file lists from different datasets, and return a reindexed 
+-    dictionary of file list."""
+-    merged_vocab = {}
+-    for vocab in vocab_list:
+-        for k, v in vocab.items():
+-            if k not in merged_vocab.keys():
+-                merged_vocab[k] = v
+-    return merged_vocab
+-
+-
+-def assert_note_events_almost_equal(actual_note_events,
+-                                    predicted_note_events,
+-                                    ignore_time=False,
+-                                    ignore_activity=True,
+-                                    delta=5.1e-3):
+-    """
+-    Asserts that the given lists of Note instances are equal up to a small
+-    floating-point tolerance, similar to `assertAlmostEqual` of `unittest`.
+-    Tolerance is 5e-3 by default, which is 5 ms for 100 ticks-per-second.
+-
+-    If `ignore_time` is True, then the time field is ignored. (useful for 
+-    comparing tie note events, default is False)
+-
+-    If `ignore_activity` is True, then the activity field is ignored (default
+-    is True).
+-    """
+-    assert len(actual_note_events) == len(predicted_note_events)
+-    for j, (actual_note_event, predicted_note_event) in enumerate(zip(actual_note_events, predicted_note_events)):
+-        if ignore_time is False:
+-            assert abs(actual_note_event.time - predicted_note_event.time) <= delta, (j, actual_note_event,
+-                                                                                      predicted_note_event)
+-        assert actual_note_event.is_drum == predicted_note_event.is_drum, (j, actual_note_event, predicted_note_event)
+-        assert actual_note_event.program == predicted_note_event.program, (j, actual_note_event, predicted_note_event)
+-        assert actual_note_event.pitch == predicted_note_event.pitch, (j, actual_note_event, predicted_note_event)
+-        assert actual_note_event.velocity == predicted_note_event.velocity, (j, actual_note_event, predicted_note_event)
+-        if ignore_activity is False:
+-            assert actual_note_event.activity == predicted_note_event.activity, (j, actual_note_event,
+-                                                                                 predicted_note_event)
+-
+-
+-def note_event2token2note_event_sanity_check(note_events: List[NoteEvent],
+-                                             notes: List[Note],
+-                                             report_err_cnt=False) -> Counter:
+-    # slice note events
+-    max_time = note_events[-1].time
+-    num_segs = int(max_time * 16000 // 32757 + 1)
+-    seg_len_sec = 32767 / 16000
+-    start_times = [i * seg_len_sec for i in range(num_segs)]
+-    note_event_segments = slice_multiple_note_events_and_ties_to_bundle(
+-        note_events,
+-        start_times,
+-        seg_len_sec,
+-    )
+-
+-    # encode
+-    tokenizer = NoteEventTokenizer()
+-    token_array = np.zeros((num_segs, 1024), dtype=np.int32)
+-    for i, tup in enumerate(list(zip(*note_event_segments.values()))):
+-        padded_tokens = tokenizer.encode_plus(*tup)
+-        token_array[i, :] = padded_tokens
+-
+-    # decode: warning: Invalid pitch event without program or velocity --> solved
+-    zipped_note_events_and_tie, list_events, err_cnt = tokenizer.decode_list_batches([token_array],
+-                                                                                     start_times,
+-                                                                                     return_events=True)
+-    if report_err_cnt:
+-        # report error and do not break..
+-        err_cnt_all = err_cnt
+-    else:
+-        assert len(err_cnt) == 0
+-        err_cnt_all = Counter()
+-
+-    # First check, the number of empty note_events and tie_note_events
+-    cnt_org_empty = 0
+-    cnt_recon_empty = 0
+-    for i, (recon_note_events, recon_tie_note_events, _, _) in enumerate(zipped_note_events_and_tie):
+-        org_note_events = note_event_segments['note_events'][i]
+-        org_tie_note_events = note_event_segments['tie_note_events'][i]
+-        if org_note_events == []:
+-            cnt_org_empty += 1
+-        if recon_note_events == []:
+-            cnt_recon_empty += 1
+-
+-    # assert len(org_note_events) == len(recon_note_events)  # passed after bug fix
+-
+-    # Check the reconstruction of note_events
+-    for i, (recon_note_events, recon_tie_note_events, _, _) in enumerate(zipped_note_events_and_tie):
+-        org_note_events = note_event_segments['note_events'][i]
+-        org_tie_note_events = note_event_segments['tie_note_events'][i]
+-
+-        org_note_events.sort(key=lambda n_ev: (n_ev.time, n_ev.is_drum, n_ev.program, n_ev.velocity, n_ev.pitch))
+-        org_tie_note_events.sort(key=lambda n_ev: (n_ev.program, n_ev.pitch))
+-        recon_note_events.sort(key=lambda n_ev: (n_ev.time, n_ev.is_drum, n_ev.program, n_ev.velocity, n_ev.pitch))
+-        recon_tie_note_events.sort(key=lambda n_ev: (n_ev.program, n_ev.pitch))
+-
+-        #assert_note_events_almost_equal(org_note_events, recon_note_events)
+-        # assert_note_events_almost_equal(
+-        #     org_tie_note_events, recon_tie_note_events, ignore_time=True)
+-
+-    # Check notes: of course this fails.. and a lot of warning for cut off 20s
+-    recon_notes, err_cnt = merge_zipped_note_events_and_ties_to_notes(zipped_note_events_and_tie, fix_offset=False)
+-    # assert len(err_cnt) == 0  # this error is due to the cut off 5 seconds...
+-
+-    # Check metric
+-    drum_metric, non_drum_metric, instr_metric = compute_track_metrics(recon_notes,
+-                                                                       notes,
+-                                                                       eval_vocab=GM_INSTR_FULL,
+-                                                                       onset_tolerance=0.005)  # 5ms
+-    if not np.isnan(non_drum_metric['offset_f']) and non_drum_metric['offset_f'] != 1.0:
+-        warnings.warn(f"non_drum_metric['offset_f'] = {non_drum_metric['offset_f']}")
+-        assert non_drum_metric['onset_f'] > 0.99
+-    if not np.isnan(drum_metric['onset_f_drum']) and non_drum_metric['offset_f'] != 1.0:
+-        warnings.warn(f"drum_metric['offset_f'] = {drum_metric['offset_f']}")
+-        assert drum_metric['offset_f'] > 0.99
+-    return err_cnt_all + Counter(err_cnt)
+-
+-
+-def str2bool(v):
+-    """
+-    Converts a string value to a boolean value.
+-
+-    Args:
+-        v: The string value to convert.
+-
+-    Returns:
+-        The boolean value equivalent of the input string.
+-
+-    Raises:
+-        ArgumentTypeError: If the input string is not a valid boolean value.
+-    """
+-    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+-        return True
+-    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+-        return False
+-    else:
+-        raise argparse.ArgumentTypeError('Boolean value expected.')
+-
+-
+-def freq_to_midi(freq):
+-    return round(69 + 12 * np.log2(freq / 440))
+-
+-
+-def dict_iterator(d: Dict):
+-    """
+-    This function is used to iterate over a dictionary of lists.
+-    As an output, it yields a newly created instance of a dictionary 
+-    """
+-    for values in zip(*d.values()):
+-        yield {k: [v] for k, v in zip(d.keys(), values)}
+-
+-
+-def extend_dict(dict1: dict, dict2: dict) -> None:
+-    """
+-    Extends the lists in dict1 with the corresponding lists in dict2. 
+-    Modifies dict1 in-place and does not return anything.
+-    
+-    Args:
+-        dict1 (dict): The dictionary to be extended.
+-        dict2 (dict): The dictionary with lists to extend dict1.
+-        
+-    Example:
+-        dict1 = {'a': [1,2,3], 'b':[4,5,6]}
+-        dict2 = {'a':[10], 'b':[17]}
+-        extend_dict_in_place(dict1, dict2)
+-        print(dict1)  # Outputs: {'a': [1, 2, 3, 10], 'b': [4, 5, 6, 17]}
+-    """
+-    for key in dict1:
+-        dict1[key].extend(dict2[key])

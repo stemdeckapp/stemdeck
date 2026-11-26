@@ -25,6 +25,7 @@ import { eqSections, nodeQ } from "./eqMath.js";
 import { createMasterEffect } from "./masterFx.js";
 import { PARAM_RAMP, XFADE, rampTo } from "./fx/ramp.js";
 import { createChainHosts } from "./fx/chainHost.js";
+import { createDip } from "./laneDip.js";
 
 export { PARAM_RAMP, XFADE };
 // The old branch is let go a little after its fade has reached 0.
@@ -158,9 +159,10 @@ export function createFxSlot(ctx) {
 /**
  * Everything an engine needs for effects, in one place so both engines carry
  * the same code: a slot per playback source (inserted between its gain and
- * its VU analyser), the master slot (between the master gain and the
- * destination), the remembered EQ per lane (a source decoded after the EQ
- * was set still gets it), and the spectrum taps.
+ * its VU analyser, after the source's dip node, laneDip.js), the master
+ * slot (between the master gain and the destination), the remembered EQ per
+ * lane (a source decoded after the EQ was set still gets it), and the
+ * spectrum taps.
  *
  * `membersOf(name)` returns the engine's playback sources whose controlName is
  * `name`; each carries `.fx` (its slot) once attachSource() has run.
@@ -171,8 +173,11 @@ export function createFxSlot(ctx) {
  * be put in or taken out while the song plays. A source connects to
  * sourceInput(member): the lane gain itself while the lane has no chain,
  * exactly as before chains existed.
+ *
  */
-export function createEngineFx(ctx, membersOf, { members = () => [], liveNodes = () => [], onLatencyChange = null } = {}) {
+export function createEngineFx(ctx, membersOf, {
+  members = () => [], liveNodes = () => [], onLatencyChange = null,
+} = {}) {
   const laneEq = new Map();
   const taps = createTapRegistry(ctx);
   const chains = createChainHosts(ctx, { members, membersOf, liveNodes, onLatencyChange });
@@ -228,11 +233,18 @@ export function createEngineFx(ctx, membersOf, { members = () => [], liveNodes =
   }
 
   return {
-    /** Wire gain -> slot -> analyser for one source and give it its EQ. */
+    /**
+     * Wire gain -> dip -> slot -> analyser for one source and give it its EQ.
+     * The dip (laneDip.js, `source.dip`) is the node a rewire while playing
+     * dips, so the lane gain only ever carries the user's level.
+     */
     attachSource(source, gain, analyser) {
       const slot = createFxSlot(ctx);
-      gain.connect(slot.input);
+      const dip = createDip(ctx);
+      gain.connect(dip);
+      dip.connect(slot.input);
       slot.output.connect(analyser);
+      source.dip = dip;
       source.fx = slot;
       const eq = laneEq.get(source.controlName);
       if (eq) slot.setEq(eq, { immediate: true });

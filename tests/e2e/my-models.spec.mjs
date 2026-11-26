@@ -1,4 +1,6 @@
-// Settings > Separation > My models (static/js/myModels.js, myModelsView.js).
+// Settings > Models > My models (static/js/myModels.js, myModelsView.js). The
+// section is in the Models tab; the stem selects that offer a model of yours
+// are in the Separation tab, so a test that picks one goes there first.
 //
 // No test adds a real model: that needs a model file of hundreds of MB, a
 // network for the link route and torch for the check. /api/my-models is
@@ -28,7 +30,7 @@ function readyEntry(id, name, stems, extra = {}) {
   return {
     id, name, status: "ready", pct: 100, step: null, code: null, size: 912_000_000, sha256: SHA, stems,
     arch: "bs_roformer", params: 228_000_000,
-    source: { kind: "hf", label: `owner/${name}@0123456789ab`, license_declared: "MIT" },
+    source: { kind: "hf", label: `owner/${name}@0123456789ab`, license_declared: "MIT", link: `https://huggingface.co/owner/${encodeURIComponent(name)}` },
     added_at: 1_790_000_000, checked_at: 1_790_000_100, cpu_rtf: 2.5, usable: true, missing: false, ...extra,
   };
 }
@@ -141,9 +143,15 @@ async function openMyModels(page, { language = null, expand = true } = {}) {
   await seedLibrary(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.locator("#settingsBtn").click();
-  await page.locator('.settings-tab[data-tab="separation"]').click();
+  await page.locator('.settings-tab[data-tab="models"]').click();
   await expect(group(page)).toBeVisible();
   if (expand) await page.locator(".my-models-toggle").click();
+}
+
+/** The Separation tab, where the stem selects are. */
+async function toSeparation(page) {
+  await page.locator('.settings-tab[data-tab="separation"]').click();
+  await expect(page.locator('.settings-pane[data-pane="separation"]')).toBeVisible();
 }
 
 const group = (page) => page.locator(".my-models-group");
@@ -228,6 +236,9 @@ test("files from the computer need the config file too, and go up as multipart",
   }
   await expect(row(page, "user_cccccccccccc").locator(".my-model-status")).toHaveText("Checking the model...");
   await expect(row(page, "user_cccccccccccc").locator(".my-model-source")).toHaveText("From your computer: drums.safetensors.");
+  // Added from files: "added by you", with no link.
+  await expect(row(page, "user_cccccccccccc").locator(".my-model-source-by")).toHaveText("Source: added by you");
+  await expect(row(page, "user_cccccccccccc").locator(".my-model-source-by a")).toHaveCount(0);
 });
 
 test("a refused add says the server's reason in the page's own words", async ({ page }) => {
@@ -256,6 +267,12 @@ test("a refused model shows why; Check again and Remove act on it", async ({ pag
   await expect(refused.locator(".my-model-reason")).toHaveText("The model file does not match its config file.");
   await expect(row(page, GUITAR_ID).locator(".my-model-meta")).toHaveText("912 MB · separates Guitar · SHA-256 3f9a12...c21e");
   await expect(row(page, GUITAR_ID).locator(".my-model-source")).toHaveText("From Hugging Face: owner/Guitar RoFormer@0123456789ab. Licence declared by its source: MIT. StemDeck does not check it.");
+  // Added from a link: "added by you", linked to where it came from, opened
+  // outside the app (target="_blank", main.js and open_url).
+  const by = row(page, GUITAR_ID).locator(".my-model-source-by");
+  await expect(by).toHaveText("Source: added by you, huggingface.co/owner/Guitar%20RoFormer ↗");
+  await expect(by.locator("a")).toHaveAttribute("href", "https://huggingface.co/owner/Guitar%20RoFormer");
+  await expect(by.locator("a")).toHaveAttribute("target", "_blank");
 
   await refused.locator(".my-model-check").click();
   await expect.poll(() => state.log.check).toEqual([VOCALS_ID]);
@@ -276,6 +293,7 @@ test("a refused model shows why; Check again and Remove act on it", async ({ pag
 test("a model of yours is offered for its stems only, never recommended, and posts its id", async ({ page }) => {
   const state = await stubMyModels(page, { models: [readyEntry(GUITAR_ID, "Guitar RoFormer", ["guitar"])] });
   await openMyModels(page, { expand: false });
+  await toSeparation(page);
   // Guitar is a select now, with its built-in model, the user's, then Add.
   await expect(select(page, "guitar").locator("option")).toHaveText(["HTDemucs 6s (Recommended)", "Guitar RoFormer (yours)", "Add a model..."]);
   await expect(select(page, "piano").locator("option")).toHaveText(["HTDemucs 6s (Recommended)", "Add a model..."]);
@@ -314,11 +332,14 @@ test("a ready model whose file changed, and one whose file went, both say so", a
   await expect(select(page, "vocals").locator(`option[value="${VOCALS_ID}"]`)).toHaveCount(0);
 });
 
-test("Add a model... opens the section at the link field and is never posted", async ({ page }) => {
+test("Add a model... opens the Models tab at the link field and is never posted", async ({ page }) => {
   const state = await stubMyModels(page);
   await openMyModels(page, { expand: false });
   await expect(page.locator(".my-models-body")).toBeHidden();
+  await toSeparation(page);
   await select(page, "piano").selectOption({ label: "Add a model..." });
+  await expect(page.locator(".settings-tab.active")).toHaveAttribute("data-tab", "models");
+  await expect(page.locator('.settings-pane[data-pane="models"]')).toBeVisible();
   await expect(page.locator(".my-models-body")).toBeVisible();
   await expect(page.locator(".my-models-link")).toBeFocused();
   await expect(select(page, "piano")).toHaveValue("htdemucs_6s");
@@ -340,7 +361,9 @@ test("with online sources off, the link field is off and says why; files still w
   await expect(add(page)).toBeEnabled();
   // "Add a model..." lands on the file button, the first control that works.
   await page.locator(".my-models-toggle").click();
+  await toSeparation(page);
   await select(page, "bass").selectOption({ label: "Add a model..." });
+  await expect(page.locator(".settings-tab.active")).toHaveAttribute("data-tab", "models");
   await expect(page.locator(".my-models-file-btn")).toBeFocused();
   expect(state.log.link).toEqual([]);
 });
@@ -392,7 +415,7 @@ test("at phone width the form and the rows stack and nothing runs off the side",
   await page.setViewportSize({ width: 375, height: 812 });
   await stubMyModels(page, { models: [readyEntry(GUITAR_ID, "A guitar model with a long name that has to wrap somewhere", ["guitar"])] });
   await openMyModels(page);
-  const pane = page.locator('.settings-pane[data-pane="separation"]');
+  const pane = page.locator('.settings-pane[data-pane="models"]');
   const overflow = await pane.evaluate((el) => el.scrollWidth - el.clientWidth);
   expect(overflow).toBeLessThanOrEqual(0);
   for (const sel of [".my-models-link", ".my-models-add", `.my-model-row[data-id="${GUITAR_ID}"] .my-model-remove`]) {
@@ -400,4 +423,39 @@ test("at phone width the form and the rows stack and nothing runs off the side",
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(375);
   }
+});
+
+test("the section is in the Models tab, and no longer in Separation", async ({ page }) => {
+  await stubMyModels(page);
+  await openMyModels(page, { expand: false });
+  await expect(page.locator('.settings-pane[data-pane="models"] .my-models-group')).toHaveCount(1);
+  await expect(page.locator('.settings-pane[data-pane="separation"] .my-models-group')).toHaveCount(0);
+  // Every element id the section had is still there, once.
+  for (const id of ["myModelsBody", "myModelsNotice", "myModelsLink", "myModelsFile", "myModelsConfig", "myModelsListTitle", "myModelsMissing"]) {
+    await expect(page.locator(`#${id}`)).toHaveCount(1);
+  }
+});
+
+test("Add or remove models in Models, in the Separation tab, opens the Models tab", async ({ page }) => {
+  await stubMyModels(page);
+  await openMyModels(page, { expand: false });
+  await toSeparation(page);
+  const link = page.locator('.settings-pane[data-pane="separation"] .models-open');
+  await expect(link).toHaveText("Add or remove models in Models");
+  await link.click();
+  await expect(page.locator(".settings-tab.active")).toHaveAttribute("data-tab", "models");
+  await expect(page.locator('.settings-tab[data-tab="models"]')).toBeFocused();
+  await expect(group(page)).toBeVisible();
+});
+
+test("each model of yours says what it is used for, and follows a new choice", async ({ page }) => {
+  const state = await stubMyModels(page, { models: [readyEntry(GUITAR_ID, "Guitar RoFormer", ["guitar"])] });
+  await openMyModels(page);
+  const used = row(page, GUITAR_ID).locator(".my-model-used");
+  await expect(used).toHaveText("Not used for any stem now.");
+  await toSeparation(page);
+  await select(page, "guitar").selectOption(GUITAR_ID);
+  await expect.poll(() => state.log.settingsPosts).toContainEqual({ stem_models: { guitar: GUITAR_ID } });
+  await page.locator('.settings-tab[data-tab="models"]').click();
+  await expect(used).toHaveText("Used for: Guitar.");
 });

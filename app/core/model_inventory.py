@@ -1,0 +1,457 @@
+"""Settings, Models: every built-in model, what it is for, and what it holds on disk.
+
+Read-only. GET /api/models (app/api/config.py) serves inventory(), and the page
+groups it by purpose and adds what each model is used for from the per-stem
+choices it already has (/api/settings). Nothing here downloads, loads or
+removes a model: the Download button is app/core/model_get.py, and its state
+rides along in the answer's "download".
+
+Each entry names no path, only states and sizes: the folders are this
+machine's (a user name, a drive), and the page has no use for them.
+
+    {"id", "group", "use", "name", "stems", "license", "source", "state",
+     "size_bytes", "download_bytes", "available", "downloadable"}
+
+group is "separation", "transcription" or "analysis". use says what the
+model does inside its group: "stems" (it separates the stems listed),
+"lead_backing" (the Karaoke split of the vocals), "midi" (Basic Pitch),
+"midi_piano" (the second piano engine, piano_hr), "midi_multi" (YourMT3+,
+which transcribes several stems), "lyrics", "lyrics_gpu",
+"lyrics_cpu" (Whisper) or "beats" (beat_this).
+
+state is one of:
+    "downloaded"      every file is there (a pinned file at its pinned size)
+    "partial"         some of its files are there, not all
+    "not_downloaded"  none of them; the first job that needs it fetches it
+    "built_in"        it ships inside StemDeck (Basic Pitch): nothing to fetch
+    "unknown"         where it would be could not be worked out (torch does
+                      not load, #730), so nothing is claimed
+
+size_bytes is what its files hold on disk now (None when nothing is there or
+the state is unknown); download_bytes is what a full download is, when the
+code knows it.
+
+downloadable says the Download button can fetch it here: a model this
+install can run whose files the code has pinned (model_get.plan_for). The
+page offers the button only while it is not_downloaded or partial.
+
+source is who made the model and the page they publish it on,
+{"author", "url"}: the original author's own page, never a re-upload, read
+from that page itself (_SOURCES). None when it is not verified: a model a
+deployment swapped in through the environment, which the code knows only by
+its file name.
+
+Where each model lives is asked of the code that downloads it, never worked
+out again here: stem_models.model_path() for the separation models (torch.hub's
+checkpoints folder, and MODELS_DIR for Kim), model_cache.vocal_split_artifacts()
+for the Karaoke split, piano_hr.checkpoint_path() for the second piano engine
+and ymt3.weights_path() for YourMT3+ (MODELS_DIR), model_cache.beat_this_artifacts() for the beat model,
+transcribe.whisper_models_dir() for Whisper. Two models the code does not place
+are left out: the song-sections model, which the Hugging Face hub caches under
+a layout only allin1_infer names, and the models a person added, which
+GET /api/my-models lists with their sizes.
+
+Removing a built-in model is not offered: a separation or a split that is
+running may be reading the file, and torch.hub or audio-separator would fetch
+it again on the next job anyway. That needs its own design (holding the
+pipeline lock, and a state for "removed, fetch on next use").
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import logging
+from collections.abc import Callable, Iterable
+from pathlib import Path
+from typing import Any
+
+from app.core import midi_engines, stem_models
+from app.core.config import (
+    BEAT_MODEL_CHECKPOINT,
+    BEAT_THIS_FINAL0_SIZE,
+    KARAOKE_2_SIZE,
+    MODELS_DIR,
+    TRANSCRIBE_MODEL_CPU,
+    TRANSCRIBE_MODEL_GPU,
+    VOCAL_SPLIT_MODEL,
+    WHISPER_FILES,
+)
+
+logger = logging.getLogger("stemdeck.models")
+
+# The default Karaoke split model and its licence (docs/models.md). A model a
+# deployment swapped in with STEMDECK_KARAOKE_MODEL is listed by its file name,
+# with no licence: the code does not know it.
+_KARAOKE_DEFAULT = "UVR_MDXNET_KARA_2.onnx"
+_KARAOKE_NAME = "UVR-MDX-NET Karaoke 2"
+_KARAOKE_LICENSE = "MIT"
+# Whisper's file for a model name, where it is not "<name>.pt": the basename of
+# its address in whisper._MODELS (openai-whisper 20250625). Read from here, not
+# from the package, because importing whisper loads numba, seconds of work the
+# server never needs. A name missing from this table and not "<name>.pt" reads
+# as not downloaded, which is wrong only in what it shows.
+_WHISPER_FILES = {"turbo": "large-v3-turbo.pt", "large": "large-v3.pt"}
+# What a full download is: the pinned size of each default file (config.py:
+# WHISPER_FILES, BEAT_THIS_FINAL0_SIZE, KARAOKE_2_SIZE). A file at another
+# size is a download cut short, so it reads as partial, never downloaded.
+_WHISPER_BYTES = {name: size for name, (_url, _sha, size) in WHISPER_FILES.items()}
+_BEAT_BYTES = BEAT_THIS_FINAL0_SIZE
+_KARAOKE_BYTES = KARAOKE_2_SIZE
+_WHISPER_LICENSE = "MIT"
+# beat_this states "The code and the published model weights are released
+# under the MIT license" (github.com/CPJKU/beat_this, README, License). A
+# checkpoint a deployment named with STEMDECK_BEAT_MODEL may be a file of its
+# own, so only the published default carries it.
+_BEAT_LICENSE = "MIT"
+
+# Who made each model, and the page they publish it on: the original author's
+# own page, never a re-upload or a mirror. Each read on that page on
+# 2026-11-26 (docs/models.md, "Where each model comes from"):
+#   Demucs: the repository's README and LICENSE (MIT), the paper by Rouard,
+#     Massa and Defossez that it cites for Hybrid Transformer Demucs.
+#   Kim: the model card at the pinned revision (stem_models.KIM_REVISION).
+#   Karaoke 2: UVR's README, "UVR's core developers trained all of the models
+#     provided in this package", the core developers being Anjok07 and aufr33.
+#   Basic Pitch: Spotify's repository. ByteDance: Zenodo record 4034264, by
+#     Qiuqiang Kong. YourMT3+: the model card at huggingface.co/mimbres,
+#     Sungkyun Chang's account. Whisper: OpenAI's repository, whose README
+#     says the code and the model weights are MIT (the files StemDeck fetches
+#     are the ones its package names). beat_this: its repository, by Foscarin,
+#     Schlueter and Widmer at JKU Linz.
+_DEMUCS_SOURCE = ("Meta AI (Rouard, Massa, Défossez)", "https://github.com/facebookresearch/demucs")
+_SOURCES: dict[str, tuple[str, str]] = {
+    "htdemucs_6s": _DEMUCS_SOURCE,
+    "htdemucs_ft": _DEMUCS_SOURCE,
+    "kim_mel_roformer": ("Kimberley Jensen", "https://huggingface.co/KimberleyJSN/melbandroformer"),
+    "uvr_karaoke_2": (
+        "Ultimate Vocal Remover (Anjok07, aufr33)",
+        "https://github.com/Anjok07/ultimatevocalremovergui",
+    ),
+    "basic_pitch": ("Spotify", "https://github.com/spotify/basic-pitch"),
+    "piano_hr": ("Qiuqiang Kong (ByteDance)", "https://zenodo.org/records/4034264"),
+    "ymt3": ("Sungkyun Chang", "https://huggingface.co/mimbres/YourMT3"),
+    "whisper": ("OpenAI", "https://github.com/openai/whisper"),
+    "beat_this": (
+        "Foscarin, Schlüter and Widmer (JKU Linz)",
+        "https://github.com/CPJKU/beat_this",
+    ),
+}
+
+
+def source_of(key: str) -> dict[str, str] | None:
+    """{"author", "url"} for the model ``key`` names, or None when it is not
+    verified."""
+    known = _SOURCES.get(key)
+    return {"author": known[0], "url": known[1]} if known else None
+
+
+STATES = ("downloaded", "partial", "not_downloaded", "built_in", "unknown")
+
+
+def _file_size(path: Path) -> int | None:
+    """The size of a regular file, or None when there is none."""
+    try:
+        return path.stat().st_size if path.is_file() else None
+    except OSError:
+        return None
+
+
+def _disk(
+    files: Iterable[tuple[Path, int | None]],
+) -> tuple[str, int | None]:
+    """(state, size on disk) for a model made of ``files``: each a path and
+    the size it must be, or None when any non-empty file counts."""
+    total = 0
+    present = 0
+    complete = 0
+    count = 0
+    for path, expected in files:
+        count += 1
+        size = _file_size(path)
+        if size is None or size <= 0:
+            continue
+        present += 1
+        total += size
+        if expected is None or size == expected:
+            complete += 1
+    if count and complete == count:
+        return "downloaded", total
+    if present:
+        return "partial", total
+    return "not_downloaded", None
+
+
+def _located(where: Callable[[], Iterable[tuple[Path, int | None]]]) -> tuple[str, int | None]:
+    """_disk() of the files ``where`` names, or "unknown" when naming them
+    failed (torch.hub's folder needs torch, which may not load)."""
+    try:
+        files = list(where())
+    except Exception:  # noqa: BLE001 -- the list must answer; "unknown" claims nothing
+        logger.info("models: a model's folder could not be worked out", exc_info=True)
+        return "unknown", None
+    return _disk(files)
+
+
+def _has_package(name: str) -> bool:
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def _entry(
+    model_id: str,
+    group: str,
+    use: str,
+    name: str,
+    *,
+    stems: Iterable[str] = (),
+    license: str | None,
+    source: dict[str, str] | None,
+    state: str,
+    size: int | None,
+    download_bytes: int | None,
+    available: bool,
+) -> dict[str, Any]:
+    return {
+        "id": model_id,
+        "group": group,
+        "use": use,
+        "name": name,
+        "stems": list(stems),
+        "license": license,
+        "source": source,
+        "state": state,
+        "size_bytes": size,
+        "download_bytes": download_bytes,
+        "available": bool(available),
+        "downloadable": False,
+    }
+
+
+def _separation() -> list[dict[str, Any]]:
+    out = []
+    for model in stem_models.MODELS.values():
+        state, size = _located(
+            lambda m=model: [(stem_models.model_path(f), f.size) for f in m.files]
+        )
+        try:
+            available = stem_models.model_available(model.id)
+        except Exception:  # noqa: BLE001 -- a lookup that fails is "cannot run"
+            available = False
+        out.append(
+            _entry(
+                model.id,
+                "separation",
+                "stems",
+                model.name,
+                stems=[s for s in (*stem_models.SELECTABLE_STEMS, "other") if s in model.stems],
+                license=model.license,
+                source=source_of(model.id),
+                state=state,
+                size=size,
+                download_bytes=model.download_bytes,
+                available=available,
+            )
+        )
+    return out
+
+
+def _karaoke() -> dict[str, Any]:
+    from app.core.model_cache import vocal_split_artifacts
+
+    default = VOCAL_SPLIT_MODEL == _KARAOKE_DEFAULT
+    # The model file only: the indexes beside it are audio-separator's own.
+    state, size = _located(
+        lambda: [
+            (
+                vocal_split_artifacts(MODELS_DIR, VOCAL_SPLIT_MODEL)[0],
+                _KARAOKE_BYTES if default else None,
+            )
+        ]
+    )
+    try:
+        from app.pipeline.vocal_split_status import capability
+
+        available = capability().get("available") is True
+    except Exception:  # noqa: BLE001
+        available = False
+    return _entry(
+        "uvr_karaoke_2" if default else "karaoke",
+        "separation",
+        "lead_backing",
+        _KARAOKE_NAME if default else VOCAL_SPLIT_MODEL,
+        stems=["lead_backing"],
+        license=_KARAOKE_LICENSE if default else None,
+        source=source_of("uvr_karaoke_2") if default else None,
+        state=state,
+        size=size,
+        download_bytes=_KARAOKE_BYTES if default else None,
+        available=available,
+    )
+
+
+def _basic_pitch() -> dict[str, Any]:
+    from app.pipeline import midi, midi_file
+
+    try:
+        available = midi.availability()[0]
+    except Exception:  # noqa: BLE001
+        available = False
+    return _entry(
+        midi_file.ENGINE_ID,
+        "transcription",
+        "midi",
+        midi_file.ENGINE_LABEL,
+        stems=list(midi_engines.get(midi_file.ENGINE_ID).stems),
+        license=midi_file.ENGINE_LICENCE,
+        source=source_of("basic_pitch"),
+        state="built_in",
+        size=_file_size(midi_file.MODEL_PATH),
+        download_bytes=None,
+        available=available,
+    )
+
+
+def _piano_hr() -> dict[str, Any]:
+    from app.core.config import PIANO_HR_CHECKPOINT_SIZE
+    from app.pipeline import midi, piano_hr
+
+    try:
+        available = midi.engine_availability(piano_hr.ENGINE_ID)[0]
+    except Exception:  # noqa: BLE001
+        available = False
+    state, size = _located(lambda: [(piano_hr.checkpoint_path(), PIANO_HR_CHECKPOINT_SIZE)])
+    return _entry(
+        piano_hr.ENGINE_ID,
+        "transcription",
+        "midi_piano",
+        piano_hr.ENGINE_LABEL,
+        stems=["piano"],
+        # The weights' licence: the code is MIT (GET /api/transcribe/status).
+        license=piano_hr.MODEL_LICENCE,
+        source=source_of("piano_hr"),
+        state=state,
+        size=size,
+        download_bytes=PIANO_HR_CHECKPOINT_SIZE,
+        available=available,
+    )
+
+
+def _ymt3() -> dict[str, Any]:
+    from app.pipeline import midi, ymt3
+
+    try:
+        available = midi.engine_availability(ymt3.ENGINE_ID)[0]
+    except Exception:  # noqa: BLE001
+        available = False
+    # What stays on disk is the weights file; the checkpoint it is made from
+    # is there only between its download and its conversion.
+    state, size = _located(lambda: [(ymt3.weights_path(), ymt3.WEIGHTS.size)])
+    if state == "not_downloaded" and ymt3.model_state() == "partial":
+        state = "partial"
+    return _entry(
+        ymt3.ENGINE_ID,
+        "transcription",
+        "midi_multi",
+        ymt3.ENGINE_LABEL,
+        stems=list(midi_engines.get(ymt3.ENGINE_ID).stems),
+        license=ymt3.MODEL_LICENCE,
+        source=source_of("ymt3"),
+        state=state,
+        size=size,
+        download_bytes=midi_engines.get(ymt3.ENGINE_ID).download_bytes,
+        available=available,
+    )
+
+
+def whisper_file(name: str) -> str:
+    """The file Whisper keeps model ``name`` in."""
+    return _WHISPER_FILES.get(name, f"{name}.pt")
+
+
+def _whisper() -> list[dict[str, Any]]:
+    from app.pipeline.transcribe import whisper_models_dir
+
+    available = _has_package("whisper")
+    if TRANSCRIBE_MODEL_GPU == TRANSCRIBE_MODEL_CPU:
+        roles = [(TRANSCRIBE_MODEL_GPU, "lyrics")]
+    else:
+        roles = [(TRANSCRIBE_MODEL_GPU, "lyrics_gpu"), (TRANSCRIBE_MODEL_CPU, "lyrics_cpu")]
+    out = []
+    for name, use in roles:
+        state, size = _located(
+            lambda n=name: [(whisper_models_dir() / whisper_file(n), _WHISPER_BYTES.get(n))]
+        )
+        out.append(
+            _entry(
+                f"whisper_{name}",
+                "analysis",
+                use,
+                f"Whisper {name}",
+                license=_WHISPER_LICENSE,
+                source=source_of("whisper"),
+                state=state,
+                size=size,
+                download_bytes=_WHISPER_BYTES.get(name),
+                available=available,
+            )
+        )
+    return out
+
+
+def _beat_this() -> dict[str, Any]:
+    from app.core.model_cache import beat_this_artifacts
+
+    default = BEAT_MODEL_CHECKPOINT == "final0"
+    state, size = _located(
+        lambda: [
+            (p, _BEAT_BYTES if default else None)
+            for p in beat_this_artifacts(BEAT_MODEL_CHECKPOINT)
+        ]
+    )
+    return _entry(
+        "beat_this",
+        "analysis",
+        "beats",
+        f"Beat This! ({BEAT_MODEL_CHECKPOINT})",
+        license=_BEAT_LICENSE if default else None,
+        source=source_of("beat_this") if default else None,
+        state=state,
+        size=size,
+        download_bytes=_BEAT_BYTES if default else None,
+        available=_has_package("beat_this"),
+    )
+
+
+def _downloadable(entry: dict[str, Any]) -> bool:
+    from app.core import model_get
+
+    if not entry["available"] or entry["state"] in ("built_in", "unknown"):
+        return False
+    return model_get.plan_for(entry["id"]) is not None
+
+
+def inventory() -> dict[str, Any]:
+    """GET /api/models. Blocking (file lookups, and torch's folder may import
+    torch): the route runs it in the thread pool."""
+    from app.core import model_get
+
+    models = [
+        *_separation(),
+        _karaoke(),
+        _basic_pitch(),
+        _piano_hr(),
+        _ymt3(),
+        *_whisper(),
+        _beat_this(),
+    ]
+    for entry in models:
+        entry["downloadable"] = _downloadable(entry)
+    return {
+        "models": models,
+        # Built-in models are listed, never removed here (the module docstring).
+        "remove": False,
+        # The Download button's run, if any (model_get.snapshot).
+        "download": model_get.snapshot(),
+    }

@@ -257,13 +257,15 @@ def ensure_checkpoint(
     attempts: int,
     model_file: Any = KIM_CHECKPOINT,
     path: Path | None = None,
+    on_bytes: Callable[[int], None] | None = None,
 ) -> Path:
     """The checkpoint on disk, downloaded when it is missing or not its full
     size. The download says itself on stderr the way torch.hub does
     ('Downloading: "<url>" to <path>', then its progress), so the worker's
     parent shows it as the model download and holds it to that stall limit.
     A file of the right size is used as it is; load() checks its SHA-256 only
-    when it does not read."""
+    when it does not read. ``on_bytes`` is told the bytes received so far
+    (Settings > Models' Download button, app/pipeline/model_get_worker.py)."""
     from app.core.model_download import fetch_verified_file
 
     path = path or checkpoint_path(model_file)
@@ -282,6 +284,7 @@ def ensure_checkpoint(
         model_file.size,
         read_timeout=read_timeout,
         attempts=attempts,
+        on_bytes=on_bytes,
     )
     return path
 

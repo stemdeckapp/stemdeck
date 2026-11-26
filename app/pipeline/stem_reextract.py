@@ -255,16 +255,25 @@ def _update(job: Job, **fields: Any) -> None:
     _set(job, stem_reextract={**(job.stem_reextract or {}), **fields})
 
 
-def _finish(job: Job, state: str, code: str | None = None, **fields: Any) -> None:
-    _update(
-        job,
-        state=state,
-        phase=None,
-        code=code,
-        finished_at=time.time(),
+def _final(state: str, code: str | None = None, **fields: Any) -> dict[str, Any]:
+    """The run record's last fields: how it ended."""
+    return {
+        "state": state,
+        "phase": None,
+        "code": code,
+        "finished_at": time.time(),
         **({"progress": 1.0} if state == "done" else {}),
         **fields,
-    )
+    }
+
+
+def _finish(job: Job, state: str, code: str | None = None, **fields: Any) -> None:
+    _update(job, **_final(state, code, **fields))
+
+
+def publish_final(job: Job, final: dict[str, Any]) -> None:
+    """Show how a run ended (reextract_stem's return with publish=False)."""
+    _update(job, **final)
 
 
 class _Mirror:
@@ -323,15 +332,27 @@ def _work_dir(job_dir: Path) -> Path:
     return work
 
 
-def reextract_stem(job: Job, job_dir: Path, stem: str, model_id: str, source: Path | None) -> None:
+def reextract_stem(
+    job: Job,
+    job_dir: Path,
+    stem: str,
+    model_id: str,
+    source: Path | None,
+    *,
+    publish: bool = True,
+) -> dict[str, Any]:
     """Separate ``stem`` again with ``model_id`` and swap it in. ``source``:
     the upload kept beside the song, or None to fetch its link again. Never
-    raises: the outcome is in job.stem_reextract."""
+    raises: returns how the run ended, and with ``publish`` shows it in
+    job.stem_reextract. The route passes publish=False and shows it once it
+    has released the pipeline lock, so a run never reads as ended while a
+    new one would still be refused as busy."""
     stems_dir = job_dir / "stems"
     if not job.stem_reextract_running():
         _set(job, stem_reextract=start_state(stem, model_id, "reextract"))
     stand_in = _new_stand_in(job)
     work: Path | None = None
+    final = _final("error", "failed")
     try:
         check_model(stem, model_id)
         check_stems(stems_dir, stem)
@@ -387,8 +408,7 @@ def reextract_stem(job: Job, job_dir: Path, stem: str, model_id: str, source: Pa
             ratio,
             result.gain,
         )
-        _finish(
-            job,
+        final = _final(
             "done",
             used_model=used,
             fallback=dict(fallback) if isinstance(fallback, dict) else None,
@@ -396,21 +416,24 @@ def reextract_stem(job: Job, job_dir: Path, stem: str, model_id: str, source: Pa
         )
     except ReextractRefused as e:
         logger.info("[%s] re-extract of %s refused: %s", job.id, stem, e.code)
-        _finish(job, "error", e.code)
+        final = _final("error", e.code)
     except OnlineSourcesOff:
-        _finish(job, "error", "online_sources_off")
+        final = _final("error", "online_sources_off")
     except JobCancelled:
-        _finish(job, "cancelled")
+        final = _final("cancelled")
     except Exception:
         if stand_in.cancel_requested:
-            _finish(job, "cancelled")
+            final = _final("cancelled")
         else:
             logger.exception("[%s] re-extract of %s failed", job.id, stem)
-            _finish(job, "error", "failed")
+            final = _final("error", "failed")
     finally:
         _drop_stand_in(job)
         if work is not None:
             shutil.rmtree(work, ignore_errors=True)
+    if publish:
+        publish_final(job, final)
+    return final
 
 
 def undo_stem(job: Job, job_dir: Path, stem: str) -> None:

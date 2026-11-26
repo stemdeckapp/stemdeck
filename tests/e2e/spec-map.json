@@ -50,6 +50,7 @@
     "static/js/mode.js",
     "static/js/audioEngine.js",
     "static/js/chunkedAudioEngine.js",
+    "static/js/laneDip.js",
     "static/js/audioContext.js",
     "static/js/utils.js",
     "static/js/constants.js",
@@ -263,7 +264,7 @@
     {
       "why": "Effects chains (Advanced mode): the engine, the pedals, the FX row and the export prints",
       "paths": [
-        "static/js/fx/**", "static/js/fxEngine.js", "static/js/fxChain.js", "static/css/fx.css",
+        "static/js/fx/**", "static/js/fxEngine.js", "static/js/fxChain.js", "static/js/laneDip.js", "static/css/fx.css",
         "static/js/audioEngine.js", "static/js/chunkedAudioEngine.js",
         "app/core/fx_prints.py"
       ],
@@ -366,6 +367,36 @@
       "why": "The phone page and the QR code that opens it",
       "paths": ["static/mobile/**", "static/js/shared/**", "app/api/qr.py"],
       "specs": ["mobile-transpose", "mobile-vocal-mode", "network-transpose-warning", "library-order", "online-sources"]
+    },
+    {
+      "why": "The MIDI chip on every lane and its row (Advanced mode): the chip under the Model chip in the lane header's Model column, the row laid out after the EQ, effects and model rows, and its pure rules (when the chip shows, what each state offers and says, the refusals, the .mid name and URL)",
+      "paths": ["static/js/laneMidiRows.js", "static/js/laneMidiView.js", "static/js/eq/eqRows.js", "static/css/eq.css", "static/css/daw.css"],
+      "specs": ["lane-midi", "lane-model", "eq-panels", "lane-alignment", "help-mode", "track-header"]
+    },
+    {
+      "why": "Settings > Transcription: each lane's Auto or Off and engine selects (only the engines that can take the lane), the engine's download, size and speed note, the Detail select and the engines it does not change, the notice and the engine lines from /api/transcribe/status, and the settings-applied event the lanes' MIDI chips follow",
+      "paths": ["static/js/transcriptionSettings.js", "static/js/laneMidiView.js", "static/js/catalog.js", "static/css/settings.css"],
+      "specs": ["transcription-settings", "lane-midi", "settings-nav", "settings-scroll", "help-mode"]
+    },
+    {
+      "why": "Include MIDI in the Export menu (index.html, laneMidiRows.js) and the midi=1 the stems zip request adds (player.js _stemsZipRequest)",
+      "paths": ["static/index.html", "static/js/player.js", "static/js/laneMidiRows.js"],
+      "specs": ["lane-midi", "export-menu", "export-all-stems", "reaper-export"]
+    },
+    {
+      "why": "The transcription routes, the engines' worker (Basic Pitch; ByteDance Piano Transcription and its checkpoint download; YourMT3+, its checkpoint download and the conversion to its weights) behind the MIDI chip, the Transcription tab and the zip's .mid files",
+      "paths": ["app/api/midi.py", "app/pipeline/midi*.py", "app/pipeline/piano_hr.py", "app/pipeline/ymt3*.py", "app/core/model_fetch.py", "app/core/midi_engines.py", "app/core/tensor_file.py", "app/core/pinned_file.py", "app/_vendor/transcribe/**", "app/_vendor/piano_hr/**", "app/_vendor/ymt3/**", "app/api/stems.py"],
+      "specs": ["lane-midi", "transcription-settings", "export-all-stems"]
+    },
+    {
+      "why": "Seeing, hearing and downloading a lane's MIDI: the piano roll with the waveform (the Drums lane's named rows), drawn behind or in front of it as the row's data-midi-source says (waves.css), the Stem/MIDI/Both switch and its sound rendered into either engine as the lane's alternate source (addAltSource, altSource.js), the download button's Audio, MIDI, Audio and MIDI choice, and the stem level the sound is matched to (stem_level.py, the notes answer's stem_rms)",
+      "paths": ["static/js/laneMidiPlay.js", "static/js/midiNotesView.js", "static/js/midiSynth.js", "static/js/midiRender.js", "static/js/audioEngine.js", "static/js/chunkedAudioEngine.js", "static/js/altSource.js", "static/css/waves.css", "app/pipeline/stem_level.py"],
+      "specs": ["lane-midi", "help-mode", "lane-alignment", "track-header", "eq-panels", "transpose", "speed-control"]
+    },
+    {
+      "why": "Settings > Models: the built-in models by purpose and their pure view (grouping, Used for, the Source line and its link, the state badge and size, the Download button and its Cancel), the read-only /api/models route and inventory behind it, and the links from Separation and Transcription; My models lives in this tab",
+      "paths": ["static/js/modelsSettings.js", "static/js/modelsView.js", "static/js/sourceLink.js", "app/core/model_inventory.py", "app/core/model_get.py", "app/pipeline/model_get_worker.py", "app/api/config.py", "static/js/catalog.js", "static/css/settings.css"],
+      "specs": ["models-settings", "my-models", "settings-nav", "help-mode"]
     }
   ]
 }

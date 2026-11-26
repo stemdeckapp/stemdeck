@@ -919,3 +919,94 @@ def test_a_cached_checkpoint_that_is_not_its_pin_is_removed_before_a_load(tmp_pa
     assert removed == [str(hub / "bad-bbbb.th")]
     assert sorted(p.name for p in hub.iterdir()) == ["good-aaaa.th"]
     assert model_download.drop_unverified("no_such_model") == []
+
+
+# The download step a MIDI run starts for the piano_hr checkpoint
+# (app/core/model_fetch.py): fetch_verified_file in a process of its own,
+# which the run can stop at once, with progress on a JSON-line stdout.
+
+
+def test_a_verified_download_reports_its_bytes(serve, tmp_path):
+    server = serve(lambda conn, n: conn.sendall(_response(BODY)))
+    seen: list[int] = []
+    model_download.fetch_verified_file(
+        server.url("piano.pth"),
+        str(tmp_path / "piano.pth"),
+        SHA,
+        len(BODY),
+        read_timeout=5,
+        attempts=1,
+        progress=False,
+        on_bytes=seen.append,
+    )
+    assert seen and seen == sorted(seen) and seen[-1] == len(BODY)
+
+
+def _fetch_step(url: str, dst, tmp_path, sha256: str = SHA, size: int = len(BODY)):
+    import json
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    env = dict(os.environ)
+    for key, sub in (
+        ("STEMDECK_JOBS_DIR", "jobs"),
+        ("STEMDECK_DATA_DIR", "data"),
+        ("STEMDECK_CACHE_DIR", "cache"),
+    ):
+        env[key] = str(tmp_path / sub)
+    env["STEMDECK_MODEL_DOWNLOAD_ATTEMPTS"] = "1"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "app.core.model_fetch",
+            "--url",
+            url,
+            "--dst",
+            str(dst),
+            "--sha256",
+            sha256,
+            "--size",
+            str(size),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        cwd=Path(__file__).resolve().parent.parent,
+        env=env,
+    )
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    # The protocol is JSON lines only; anything else fails here.
+    return result, [json.loads(line) for line in lines]
+
+
+def test_the_download_step_keeps_the_pinned_file(serve, tmp_path):
+    server = serve(lambda conn, n: conn.sendall(_response(BODY)))
+    dst = tmp_path / "models" / "piano_hr" / "piano.pth"
+    dst.parent.mkdir(parents=True)
+    result, events = _fetch_step(server.url("piano.pth"), dst, tmp_path)
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert events[0] == {"event": "progress", "pct": 0}
+    assert events[-2:] == [{"event": "progress", "pct": 100}, {"event": "done"}]
+    assert dst.read_bytes() == BODY and _leftovers(dst) == []
+
+
+def test_the_download_step_refuses_a_file_that_is_not_the_pinned_one(serve, tmp_path):
+    server = serve(lambda conn, n: conn.sendall(_response(BODY[:-1] + b"X")))
+    dst = tmp_path / "dl" / "piano.pth"
+    result, events = _fetch_step(server.url("piano.pth"), dst, tmp_path)
+    assert result.returncode != 0
+    assert events[-1] == {"event": "error", "code": "download"}
+    assert "did not match its checksum" in result.stderr
+    assert not dst.exists() and _leftovers(dst) == []
+
+
+def test_the_download_step_says_a_folder_it_cannot_write_is_not_a_download_failure(serve, tmp_path):
+    server = serve(lambda conn, n: conn.sendall(_response(BODY)))
+    blocker = tmp_path / "not-a-folder"
+    blocker.write_bytes(b"")
+    result, events = _fetch_step(server.url("piano.pth"), blocker / "piano.pth", tmp_path)
+    assert result.returncode != 0
+    assert events[-1] == {"event": "error", "code": "io"}

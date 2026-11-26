@@ -25,6 +25,9 @@ import { notifyFailure, setReleasePending, dismissFailuresByJobId, dismissFailur
 // variable names for track objects and table rows in several scopes.
 import { wireVideoEncoderSetting } from "./videoEncoderSettings.js";
 import { SETTINGS_ANSWER_EVENT, SETTINGS_APPLIED_EVENT, wireSeparationSettings } from "./separationSettings.js";
+import { wireTranscriptionSettings } from "./transcriptionSettings.js";
+import { ENGINES, MIDI_LANES } from "./laneMidiView.js";
+import { wireModelsSettings } from "./modelsSettings.js";
 import { wireDonateDialog } from "./donate.js";
 import { isDevVersion, isNewerRelease } from "./releaseVersion.js";
 import { searchSettings, countBySection, highlightParts, nextTabIndex } from "./settingsNav.js";
@@ -5153,11 +5156,8 @@ function wirePrivacySettings(overlay) {
   if (!sw) return;
   if (!crashReportsAvailable()) {
     // A server, Docker or a browser: nothing to switch, and nothing is sent.
-    overlay.querySelectorAll("[data-pane='privacy'] .crash-desktop-only").forEach((el) => { el.hidden = true; });
-    const note = overlay.querySelector(".crash-reports-server-note");
-    if (note) note.hidden = false;
-    const exampleNote = overlay.querySelector(".crash-reports-example-server");
-    if (exampleNote) exampleNote.hidden = false;
+    // The pane shows only the sentence that says so (settings.css).
+    overlay.querySelector("[data-pane='privacy']")?.classList.add("privacy-server");
     return;
   }
   loadCrashReportExample(overlay);
@@ -6012,6 +6012,10 @@ function openResetConfirm() {
 const SETTINGS_ICON = {
   general: '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>',
   separation: '<path d="M3 12h5M8 12c3 0 4-6 8-6h5M8 12c3 0 4 6 8 6h5M8 12h13"/>',
+  // A piano roll: the notes a transcription writes, as bars on a grid.
+  transcription: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9h4M10 13h7M6 17h5"/>',
+  // A package: the models StemDeck downloads, and the ones a person adds.
+  models: '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.27 6.96 12 12.01l8.73-5.05M12 22.08V12"/>',
   library: '<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/>',
   details: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
   export: '<path d="M12 3v12M7 8l5-5 5 5"/><path d="M5 15v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/>',
@@ -6025,6 +6029,8 @@ const SETTINGS_ICON = {
 const SETTINGS_SECTIONS = [
   { id: "general", label: "settings.tab.general", text: "General", desc: "settings.desc.general" },
   { id: "separation", label: "settings.tab.separation", text: "Separation", desc: "settings.desc.separation" },
+  { id: "transcription", label: "settings.tab.transcription", text: "Transcription", desc: "settings.desc.transcription" },
+  { id: "models", label: "settings.tab.models", text: "Models", desc: "settings.desc.models" },
   { id: "library", label: "settings.tab.library", text: "Library", desc: "settings.desc.library" },
   { id: "details", label: "settings.tab.songDetails", text: "Song details", desc: "settings.desc.details" },
   { id: "export", label: "settings.tab.export", text: "Export", desc: "settings.desc.export" },
@@ -6063,6 +6069,29 @@ function settingsNavHtml() {
 // dialog is built, so it is in the user's language before the settings load,
 // and stays so if they never do; a language switch rebuilds the dialog.
 const IDLE_UNLOAD_MAX_DEFAULT = 1440;
+
+// Settings > Transcription: a row per lane (laneMidiView.MIDI_LANES) with its
+// Auto or Off and its engine. Every built-in engine is an option;
+// transcriptionSettings.js leaves only those that can take the lane, and
+// writes each lane's sentence and the engine select's name with the lane in it.
+function transcriptionLaneRows() {
+  const engines = ENGINES.map((id) => `<option value="${id}" data-i18n="settings.midi.engineName.${id}">${id}</option>`).join("");
+  return MIDI_LANES.map((lane) => `
+            <div class="settings-row transcription-lane" data-lane="${lane}">
+              <div class="settings-row-text">
+                <div class="settings-row-title" data-i18n="stem.${lane}">${lane}</div>
+                <div class="settings-row-desc transcription-lane-desc" data-lane="${lane}"></div>
+                <p class="settings-row-desc transcription-engine-note" data-lane="${lane}" role="status" hidden></p>
+              </div>
+              <div class="transcription-lane-controls">
+                <select class="settings-select set-transcribe-lane" data-field="transcribe_${lane}" aria-label="${lane}" data-i18n-aria-label="stem.${lane}">
+                  <option value="auto" data-i18n="settings.midi.auto">Auto</option>
+                  <option value="off" data-i18n="settings.midi.off">Off</option>
+                </select>
+                <select class="settings-select settings-select-wide set-transcribe-engine" data-field="transcribe_${lane}_engine" aria-label="${lane} engine">${engines}</select>
+              </div>
+            </div>`).join("");
+}
 
 const unitField = (input, unitKey, unitText) =>
   `<span class="settings-unit-field">${input}<span class="settings-unit" data-i18n="${unitKey}">${unitText}</span></span>`;
@@ -6195,6 +6224,7 @@ function openLibraryEditor() {
         <div class="settings-group stem-models-group" hidden>
           <h4 class="settings-group-title" data-i18n="settings.group.stemModels">Model for each stem</h4>
           <p class="settings-group-desc" data-i18n="settings.stemModels.desc">Which model separates each stem. A change applies to the next track. Best quality applies to the Demucs models only.</p>
+          <p class="settings-group-desc models-open-line"><button class="models-open" type="button" data-open-tab="models" data-i18n="settings.models.open">Add or remove models in Models</button></p>
           <div class="settings-section">
             <div class="stem-models-summary">
               <p class="settings-row-desc set-stem-models-why" hidden></p>
@@ -6247,8 +6277,55 @@ function openLibraryEditor() {
             </div>
           </div>
         </div>
-        <!-- My models, wired by static/js/myModels.js. Shown only when the
-             server answers GET /api/my-models; an older server has no route. -->
+      </div>
+      <!-- MIDI from every lane, wired by static/js/transcriptionSettings.js.
+           The notice is always on show. The engine lines, the reason it cannot
+           run here and each lane's engine list come from GET /api/transcribe/status. -->
+      <div class="settings-pane hidden" data-pane="transcription" id="settings-pane-transcription" role="tabpanel" aria-labelledby="settings-tab-transcription">
+        <div class="settings-group">
+          <h4 class="settings-group-title" data-i18n="settings.group.midi">MIDI from the lanes</h4>
+          <p class="settings-group-desc" data-i18n="settings.midi.enginesDesc">Each lane has its own engine. Basic Pitch comes with StemDeck and is quick. YourMT3+ hears which instrument plays each note and keeps only the lane's own: it was the most accurate on the drums, bass, piano and other lanes, and downloads its model the first time. ByteDance Piano Transcription is best for solo piano.</p>
+          <p class="settings-group-desc models-open-line"><button class="models-open" type="button" data-open-tab="models" data-i18n="settings.models.openTranscription">See the transcription models in Models</button></p>
+          <div class="settings-section">
+            <div class="settings-row settings-row-stack transcription-notice">
+              <div class="settings-row-text">
+                <div class="settings-row-title" data-i18n="settings.midi.noticeTitle">Your responsibility</div>
+                <p class="settings-row-desc transcription-notice-text" data-i18n="settings.midi.notice">Transcription runs on this computer and sends nothing anywhere. You alone are responsible for having the rights to what you transcribe.</p>
+                <p class="settings-row-desc transcription-engine" hidden></p>
+                <p class="settings-row-desc transcription-unavailable" role="status" hidden></p>
+              </div>
+            </div>
+${transcriptionLaneRows()}
+            <div class="settings-row">
+              <div class="settings-row-text">
+                <div class="settings-row-title" data-i18n="settings.midi.detail.title">Detail</div>
+                <p class="settings-row-desc transcription-detail-desc" data-detail="balanced" data-i18n="settings.midi.detail.balancedDesc">Balanced: the notes most songs need, with few stray ones.</p>
+                <p class="settings-row-desc transcription-detail-desc" data-detail="detailed" data-i18n="settings.midi.detail.detailedDesc">Detailed: quiet and short notes too, with more stray ones to delete.</p>
+                <p class="settings-row-desc transcription-detail-desc" data-detail="clean" data-i18n="settings.midi.detail.cleanDesc">Clean: only clear notes, so some quiet ones are left out.</p>
+                <p class="settings-row-desc transcription-detail-not-for" hidden></p>
+              </div>
+              <select class="settings-select settings-select-wide set-transcribe-detail" data-field="transcribe_detail" aria-label="Detail" data-i18n-aria-label="settings.midi.detail.title">
+                <option value="balanced" data-i18n="settings.midi.detail.balanced">Balanced</option>
+                <option value="detailed" data-i18n="settings.midi.detail.detailed">Detailed</option>
+                <option value="clean" data-i18n="settings.midi.detail.clean">Clean</option>
+              </select>
+            </div>
+            <div class="transcription-msg" role="status" aria-live="polite"></div>
+          </div>
+        </div>
+      </div>
+      <!-- Models: every built-in model by purpose, drawn by static/js/modelsSettings.js
+           from GET /api/models (hidden on a server without the route), then My models. -->
+      <div class="settings-pane hidden" data-pane="models" id="settings-pane-models" role="tabpanel" aria-labelledby="settings-tab-models">
+        <div class="settings-group models-builtin-group" hidden>
+          <h4 class="settings-group-title" data-i18n="settings.models.builtIn.title">Built-in models</h4>
+          <p class="settings-group-desc" data-i18n="settings.models.builtIn.desc">The models StemDeck comes with. Each one downloads the first time a track needs it and stays on this computer.</p>
+          <div class="models-inventory"></div>
+          <p class="settings-row-desc models-remove-note" data-i18n="settings.models.removeNote">Built-in models cannot be removed here: a separation that is running may be reading one, and the next track would download it again.</p>
+        </div>
+        <!-- My models, wired by static/js/myModels.js (from separationSettings.js,
+             whose stem selects offer them). Shown only when the server answers
+             GET /api/my-models; an older server has no route. -->
         <div class="settings-group my-models-group" hidden>
           <h4 class="settings-group-title my-models-head">
             <button class="my-models-toggle" type="button" aria-expanded="false" aria-controls="myModelsBody"><span class="my-models-chevron" aria-hidden="true"></span><span data-i18n="settings.myModels.title">Advanced: My models</span></button>
@@ -6590,9 +6667,11 @@ function openLibraryEditor() {
            works the same with it off. wirePrivacySettings asks the shell for
            the state: the page never decides it. -->
       <div class="settings-pane hidden" data-pane="privacy" id="settings-pane-privacy" role="tabpanel" aria-labelledby="settings-tab-privacy">
+        <!-- A server shows this sentence and nothing else: the pane gets
+             .privacy-server (wirePrivacySettings), which hides every sibling. -->
+        <p class="settings-server-note crash-reports-server-note" data-i18n="settings.crashReports.serverNote">This StemDeck runs as a server, and a server never sends crash reports. They exist only in the desktop app, and only once they are turned on there.</p>
         <div class="settings-group">
           <h4 class="settings-group-title" data-i18n="settings.group.crashReports">Crash reports</h4>
-          <p class="settings-server-note crash-reports-server-note" hidden data-i18n="settings.crashReports.serverNote">This StemDeck runs as a server, and a server never sends crash reports. They exist only in the desktop app, and only once they are turned on there.</p>
           <div class="settings-section">
             <div class="settings-row crash-reports-row crash-desktop-only">
               <div class="settings-row-text">
@@ -6625,7 +6704,6 @@ function openLibraryEditor() {
               <div class="settings-row-text">
                 <div class="settings-row-title" data-i18n="settings.crashReports.exampleTitle">Example report</div>
                 <div class="settings-row-desc crash-desktop-only" id="crashReportsExampleDesc" data-i18n="settings.crashReports.exampleDesc">Made-up sample data, not taken from your computer. It shows the exact shape a real report has. The fake folder path, song file name, email address and web address in the sample error are already replaced, as they would be in a real report.</div>
-                <div class="settings-row-desc crash-reports-example-server" hidden data-i18n="settings.crashReports.exampleServer">In the desktop app, an example report shows here. A server sends no reports, so there is nothing to show.</div>
               </div>
               <textarea class="settings-registry-view crash-reports-example crash-desktop-only" readonly spellcheck="false" aria-label="Example report (read only)" data-i18n-aria-label="settings.crashReports.exampleAria" aria-describedby="crashReportsExampleDesc" data-i18n="settings.logs.loading">Loading…</textarea>
             </div>
@@ -6770,6 +6848,14 @@ function openLibraryEditor() {
     selectSettingsTab(overlay, tabs[next].dataset.tab, { deferRecording: true });
   });
 
+  // "Add or remove models in Models" and the like: open that section, with
+  // focus on its tab, as a click on the tab would.
+  overlay.querySelectorAll("[data-open-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      selectSettingsTab(overlay, btn.dataset.openTab);
+      overlay.querySelector(`.settings-tab[data-tab="${btn.dataset.openTab}"]`)?.focus();
+    });
+  });
   overlay.querySelector('[data-pane="registry"] .settings-registry-reload')
     ?.addEventListener("click", () => loadRegistryView(overlay));
   overlay.querySelector(".settings-logs-refresh")?.addEventListener("click", () => loadLogsView(overlay));
@@ -6838,6 +6924,8 @@ function openLibraryEditor() {
   wireLanguageSetting(overlay);
   wireGeneralSettings(overlay);
   wireSeparationSettings(overlay);
+  wireTranscriptionSettings(overlay);
+  wireModelsSettings(overlay);
   wireOnlineSources(overlay);
   wirePrivacySettings(overlay);
   wireVideoEncoderSetting(overlay, showError);
