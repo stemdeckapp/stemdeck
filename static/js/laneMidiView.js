@@ -490,6 +490,8 @@ export function errorKey(code) {
 /** The refusal codes POST /api/jobs/{id}/midi (and cancel, remove) answer with. */
 export const REFUSAL_CODES = Object.freeze([
   "job_not_found", "stem_not_supported", "bad_detail", "disabled", "busy", "no_stem", "too_long", "engine_unavailable",
+  // Settings > Models is downloading the engine's weights (app/core/model_get.py).
+  "model_downloading",
 ]);
 
 /** The code of a refused request: the body's own, else read from the status. */

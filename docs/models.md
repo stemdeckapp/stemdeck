@@ -23,6 +23,17 @@ page itself on 2026-11-26 (`_SOURCES` in `app/core/model_inventory.py`).
 | Whisper turbo, Whisper small | OpenAI | https://github.com/openai/whisper | MIT (its README: code and weights) |
 | Beat This! (final0) | Foscarin, Schlüter and Widmer (JKU Linz) | https://github.com/CPJKU/beat_this | MIT (its README: code and weights) |
 
+A model that is not downloaded, or only partly, has a **Download** button
+beside its state, so it can be fetched before the first song needs it: the
+same file from the same address its own code would fetch, checked against
+its pinned size and SHA-256 before it takes its name. While it runs the state
+says "Downloading X of Y MB" and the button is **Cancel**; nothing of a
+cancelled or failed download is kept. Karaoke 2, beat_this's `final0` and the
+two Whisper files are pinned for this in `app/core/config.py` (the address,
+the size, and a SHA-256 measured on 2026-11-26, cross-checked against what
+each host publishes: UVR's own model index for Karaoke 2, the file share's
+SHA-1 for beat_this, the SHA-256 in Whisper's own addresses).
+
 A model a deployment swapped in through the environment
 (`STEMDECK_KARAOKE_MODEL`, `STEMDECK_BEAT_MODEL`) says **Source: not
 verified**, with no link and no licence: StemDeck knows it only by its name. A

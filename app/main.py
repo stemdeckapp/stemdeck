@@ -378,6 +378,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from app.api.my_models import cancel_all as cancel_my_models
 
     cancel_my_models()
+    # And a built-in model's download (Settings > Models); what it left goes.
+    from app.api.config import cancel_all as cancel_model_download
+
+    cancel_model_download()
     # A MIDI run's worker stops too; the run is recorded as interrupted.
     from app.api.midi import cancel_all as cancel_midi
 

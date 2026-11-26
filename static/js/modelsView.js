@@ -3,8 +3,14 @@
 // browser. modelsSettings.js draws the list from what these return.
 //
 // Server: GET /api/models (app/core/model_inventory.py)
-//   { models: [{ id, group, use, name, stems, license, state, size_bytes,
-//     download_bytes, available }], remove: false }
+//   { models: [{ id, group, use, name, stems, license, source, state,
+//     size_bytes, download_bytes, available, downloadable }], remove: false,
+//     download: <the Download button's run> }
+// The run (app/core/model_get.py), also GET /api/models/download:
+//   { state: idle | running | done | failed | cancelled, model, phase:
+//     download | prepare | null, bytes, total, error_code }
+// POST /api/models/{id}/download starts one (202), POST
+// /api/models/download/cancel stops it; a refusal is { detail, code }.
 // group is separation, transcription or analysis; use is stems,
 // lead_backing, midi (Basic Pitch), midi_piano (ByteDance Piano
 // Transcription), midi_multi (YourMT3+), lyrics, lyrics_gpu, lyrics_cpu or
@@ -180,4 +186,71 @@ export function stateView(entry, t, locale) {
     state,
     text: full ? t("settings.models.state.notDownloaded", { size: full }) : t("settings.models.state.notDownloadedNoSize"),
   };
+}
+
+// ── The Download button ──
+
+/** The codes a failed run or a refused start can carry, each with its
+ *  sentence (settings.models.downloadError.<code>). */
+export const DOWNLOAD_ERRORS = ["network", "disk", "checksum", "io", "prepare", "failed", "busy", "not_found", "lost"];
+
+/** Polling while a download runs, and the polls in a row that may fail
+ *  before the page stops and says so. */
+export const DOWNLOAD_POLL_MS = 500;
+export const DOWNLOAD_POLL_FAILS = 5;
+
+/** Whether an answer is the Download button's run. */
+export function isDownloadState(d) {
+  return isObj(d) && typeof d.state === "string" && ["idle", "running", "done", "failed", "cancelled"].includes(d.state);
+}
+
+/** Whether a run is going on now. */
+export function downloadRunning(d) {
+  return isDownloadState(d) && d.state === "running";
+}
+
+/** Whether a row offers Download: the server can fetch the model here, and
+ *  it is not on disk, or only part of it is. */
+export function canDownload(entry) {
+  return isObj(entry) && entry.downloadable === true && entry.available !== false
+    && (entry.state === "not_downloaded" || entry.state === "partial");
+}
+
+/** The sentence for a download error code; one this page does not know gets the general one. */
+export function downloadErrorText(code, t) {
+  return t(`settings.models.downloadError.${DOWNLOAD_ERRORS.includes(code) ? code : "failed"}`);
+}
+
+function wholeMb(bytes, locale) {
+  const n = Math.max(0, Math.round(Number(bytes) / 1_000_000));
+  try {
+    return new Intl.NumberFormat(locale || undefined, { maximumFractionDigits: 0 }).format(n);
+  } catch {
+    return String(n);
+  }
+}
+
+/**
+ * What the run says on this row, or null when the run is not this model's
+ * or says nothing here:
+ *   { active: true, text }   running: "Downloading 120 of 913 MB", or
+ *                            "Preparing the model" while YourMT3+'s weights
+ *                            are made from what it downloaded
+ *   { active: false, error } its last run failed, in the page's own words
+ */
+export function downloadView(entry, d, t, locale) {
+  if (!isDownloadState(d) || !isObj(entry) || d.model !== entry.id) return null;
+  if (d.state === "running") {
+    if (d.phase === "prepare") return { active: true, text: t("settings.models.state.preparing") };
+    const total = Number(d.total) > 0 ? d.total : entry.download_bytes;
+    const done = wholeMb(d.bytes || 0, locale);
+    return {
+      active: true,
+      text: Number(total) > 0
+        ? t("settings.models.state.downloading", { done, total: wholeMb(total, locale) })
+        : t("settings.models.state.downloadingNoTotal", { done }),
+    };
+  }
+  if (d.state === "failed") return { active: false, error: downloadErrorText(d.error_code, t) };
+  return null;
 }

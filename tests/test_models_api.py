@@ -15,7 +15,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core import model_cache, model_inventory, stem_models
+from app.core import config, model_cache, model_inventory, stem_models
 from app.main import app
 
 SIX = stem_models.MODELS["htdemucs_6s"]
@@ -109,10 +109,11 @@ def test_sizes_on_disk_and_partial_downloads(client, folders):
     # Two of the fine-tuned bag's four checkpoints, one at the wrong size.
     _write(hub / FT.files[0].relpath, FT.files[0].size)
     _write(hub / FT.files[1].relpath, 1000)
-    _write(folders["models"] / "audio-separator" / "UVR_MDXNET_KARA_2.onnx", 5000)
-    _write(hub / "beat_this-final0.ckpt", 7000)
+    _write(folders["models"] / "audio-separator" / "UVR_MDXNET_KARA_2.onnx", config.KARAOKE_2_SIZE)
+    _write(hub / "beat_this-final0.ckpt", config.BEAT_THIS_FINAL0_SIZE)
+    # A Whisper download cut short: never "downloaded", always partial.
     _write(folders["whisper"] / "small.pt", 9000)
-    _write(folders["whisper"] / "large-v3-turbo.pt", 11000)
+    _write(folders["whisper"] / "large-v3-turbo.pt", config.WHISPER_FILES["turbo"][2])
 
     models = _by_id(client.get("/api/models").json())
     assert models["htdemucs_6s"]["state"] == "downloaded"
@@ -121,12 +122,26 @@ def test_sizes_on_disk_and_partial_downloads(client, folders):
     assert models["htdemucs_ft"]["size_bytes"] == FT.files[0].size + 1000
     assert models["kim_mel_roformer"]["state"] == "not_downloaded"
     assert models["uvr_karaoke_2"]["state"] == "downloaded"
-    assert models["uvr_karaoke_2"]["size_bytes"] == 5000
+    assert models["uvr_karaoke_2"]["size_bytes"] == config.KARAOKE_2_SIZE
     assert models["beat_this"]["state"] == "downloaded"
-    assert models["beat_this"]["size_bytes"] == 7000
+    assert models["beat_this"]["size_bytes"] == config.BEAT_THIS_FINAL0_SIZE
+    assert models["whisper_small"]["state"] == "partial"
     assert models["whisper_small"]["size_bytes"] == 9000
     assert models["whisper_turbo"]["state"] == "downloaded"
-    assert models["whisper_turbo"]["size_bytes"] == 11000
+    assert models["whisper_turbo"]["size_bytes"] == config.WHISPER_FILES["turbo"][2]
+
+
+def test_a_default_file_cut_short_is_partial_never_downloaded(client, folders):
+    """Karaoke 2, beat_this and Whisper write their files under the final
+    name as they download (audio-separator, torch.hub without a check,
+    whisper._download), so a file cut short is still a file. Their pinned
+    sizes make it read as partial."""
+    _write(folders["models"] / "audio-separator" / "UVR_MDXNET_KARA_2.onnx", 5000)
+    _write(folders["hub"] / "beat_this-final0.ckpt", 7000)
+    _write(folders["whisper"] / "large-v3-turbo.pt", 11000)
+    models = _by_id(client.get("/api/models").json())
+    for model_id in ("uvr_karaoke_2", "beat_this", "whisper_turbo"):
+        assert models[model_id]["state"] == "partial", model_id
 
 
 def test_a_pinned_file_of_the_wrong_size_is_not_downloaded(client, folders):
@@ -178,6 +193,7 @@ def test_no_path_in_the_answer(client, folders):
         "size_bytes",
         "download_bytes",
         "available",
+        "downloadable",
     }
     for entry in body["models"]:
         assert set(entry) == allowed

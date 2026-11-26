@@ -3,13 +3,14 @@
 Read-only. GET /api/models (app/api/config.py) serves inventory(), and the page
 groups it by purpose and adds what each model is used for from the per-stem
 choices it already has (/api/settings). Nothing here downloads, loads or
-removes a model.
+removes a model: the Download button is app/core/model_get.py, and its state
+rides along in the answer's "download".
 
 Each entry names no path, only states and sizes: the folders are this
 machine's (a user name, a drive), and the page has no use for them.
 
     {"id", "group", "use", "name", "stems", "license", "source", "state",
-     "size_bytes", "download_bytes", "available"}
+     "size_bytes", "download_bytes", "available", "downloadable"}
 
 group is "separation", "transcription" or "analysis". use says what the
 model does inside its group: "stems" (it separates the stems listed),
@@ -29,6 +30,10 @@ state is one of:
 size_bytes is what its files hold on disk now (None when nothing is there or
 the state is unknown); download_bytes is what a full download is, when the
 code knows it.
+
+downloadable says the Download button can fetch it here: a model this
+install can run whose files the code has pinned (model_get.plan_for). The
+page offers the button only while it is not_downloaded or partial.
 
 source is who made the model and the page they publish it on,
 {"author", "url"}: the original author's own page, never a re-upload, read
@@ -63,10 +68,13 @@ from typing import Any
 from app.core import midi_engines, stem_models
 from app.core.config import (
     BEAT_MODEL_CHECKPOINT,
+    BEAT_THIS_FINAL0_SIZE,
+    KARAOKE_2_SIZE,
     MODELS_DIR,
     TRANSCRIBE_MODEL_CPU,
     TRANSCRIBE_MODEL_GPU,
     VOCAL_SPLIT_MODEL,
+    WHISPER_FILES,
 )
 
 logger = logging.getLogger("stemdeck.models")
@@ -83,10 +91,12 @@ _KARAOKE_LICENSE = "MIT"
 # server never needs. A name missing from this table and not "<name>.pt" reads
 # as not downloaded, which is wrong only in what it shows.
 _WHISPER_FILES = {"turbo": "large-v3-turbo.pt", "large": "large-v3.pt"}
-# What a full download is, from app/pipeline/warmup.py (its published sizes).
-_WHISPER_BYTES = {"turbo": 1_617_941_637, "small": 483_617_219}
-_BEAT_BYTES = 81_058_141
-_KARAOKE_BYTES = 52_834_731
+# What a full download is: the pinned size of each default file (config.py:
+# WHISPER_FILES, BEAT_THIS_FINAL0_SIZE, KARAOKE_2_SIZE). A file at another
+# size is a download cut short, so it reads as partial, never downloaded.
+_WHISPER_BYTES = {name: size for name, (_url, _sha, size) in WHISPER_FILES.items()}
+_BEAT_BYTES = BEAT_THIS_FINAL0_SIZE
+_KARAOKE_BYTES = KARAOKE_2_SIZE
 _WHISPER_LICENSE = "MIT"
 # beat_this states "The code and the published model weights are released
 # under the MIT license" (github.com/CPJKU/beat_this, README, License). A
@@ -215,6 +225,7 @@ def _entry(
         "size_bytes": size,
         "download_bytes": download_bytes,
         "available": bool(available),
+        "downloadable": False,
     }
 
 
@@ -252,7 +263,12 @@ def _karaoke() -> dict[str, Any]:
     default = VOCAL_SPLIT_MODEL == _KARAOKE_DEFAULT
     # The model file only: the indexes beside it are audio-separator's own.
     state, size = _located(
-        lambda: [(vocal_split_artifacts(MODELS_DIR, VOCAL_SPLIT_MODEL)[0], None)]
+        lambda: [
+            (
+                vocal_split_artifacts(MODELS_DIR, VOCAL_SPLIT_MODEL)[0],
+                _KARAOKE_BYTES if default else None,
+            )
+        ]
     )
     try:
         from app.pipeline.vocal_split_status import capability
@@ -364,7 +380,9 @@ def _whisper() -> list[dict[str, Any]]:
         roles = [(TRANSCRIBE_MODEL_GPU, "lyrics_gpu"), (TRANSCRIBE_MODEL_CPU, "lyrics_cpu")]
     out = []
     for name, use in roles:
-        state, size = _located(lambda n=name: [(whisper_models_dir() / whisper_file(n), None)])
+        state, size = _located(
+            lambda n=name: [(whisper_models_dir() / whisper_file(n), _WHISPER_BYTES.get(n))]
+        )
         out.append(
             _entry(
                 f"whisper_{name}",
@@ -385,8 +403,13 @@ def _whisper() -> list[dict[str, Any]]:
 def _beat_this() -> dict[str, Any]:
     from app.core.model_cache import beat_this_artifacts
 
-    state, size = _located(lambda: [(p, None) for p in beat_this_artifacts(BEAT_MODEL_CHECKPOINT)])
     default = BEAT_MODEL_CHECKPOINT == "final0"
+    state, size = _located(
+        lambda: [
+            (p, _BEAT_BYTES if default else None)
+            for p in beat_this_artifacts(BEAT_MODEL_CHECKPOINT)
+        ]
+    )
     return _entry(
         "beat_this",
         "analysis",
@@ -401,19 +424,34 @@ def _beat_this() -> dict[str, Any]:
     )
 
 
+def _downloadable(entry: dict[str, Any]) -> bool:
+    from app.core import model_get
+
+    if not entry["available"] or entry["state"] in ("built_in", "unknown"):
+        return False
+    return model_get.plan_for(entry["id"]) is not None
+
+
 def inventory() -> dict[str, Any]:
     """GET /api/models. Blocking (file lookups, and torch's folder may import
     torch): the route runs it in the thread pool."""
+    from app.core import model_get
+
+    models = [
+        *_separation(),
+        _karaoke(),
+        _basic_pitch(),
+        _piano_hr(),
+        _ymt3(),
+        *_whisper(),
+        _beat_this(),
+    ]
+    for entry in models:
+        entry["downloadable"] = _downloadable(entry)
     return {
-        "models": [
-            *_separation(),
-            _karaoke(),
-            _basic_pitch(),
-            _piano_hr(),
-            _ymt3(),
-            *_whisper(),
-            _beat_this(),
-        ],
+        "models": models,
         # Built-in models are listed, never removed here (the module docstring).
         "remove": False,
+        # The Download button's run, if any (model_get.snapshot).
+        "download": model_get.snapshot(),
     }

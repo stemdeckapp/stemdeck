@@ -7,8 +7,14 @@
 
 import { TRANSLATIONS } from "../../static/js/i18n.js";
 import {
+  DOWNLOAD_ERRORS,
   GROUPS,
+  canDownload,
+  downloadErrorText,
+  downloadRunning,
+  downloadView,
   groupByPurpose,
+  isDownloadState,
   hasPlan,
   isModelsAnswer,
   licenceLine,
@@ -168,6 +174,35 @@ const before = (k, v) => (k === "x" ? `A ${v.link} B` : "plain");
 eq("text after the link is kept", linkedSentence("x", "y", {}, "https://a.example/b", before), { before: "A ", link: { text: "a.example/b", url: "https://a.example/b" }, after: " B" });
 eq("a sentence that lost its {link} is shown without one", linkedSentence("x", "y", {}, "https://a.example/b", () => "no link here"), { before: "no link here", link: null, after: "" });
 
+// ── The Download button ──
+const fresh = { id: "kim_mel_roformer", state: "not_downloaded", available: true, downloadable: true, download_bytes: 913_106_900 };
+check("Download beside Not downloaded", canDownload(fresh));
+check("and beside Partly downloaded", canDownload({ ...fresh, state: "partial" }));
+check("not once it is downloaded", !canDownload({ ...fresh, state: "downloaded" }));
+check("not for a model built in", !canDownload({ ...fresh, state: "built_in" }));
+check("not when the state is not known", !canDownload({ ...fresh, state: "unknown" }));
+check("not where it cannot run", !canDownload({ ...fresh, available: false }));
+check("not when the server has no pin for it", !canDownload({ ...fresh, downloadable: false }));
+check("not from an older server", !canDownload({ ...fresh, downloadable: undefined }));
+const run = { state: "running", model: "kim_mel_roformer", phase: "download", bytes: 120_400_000, total: 913_106_900, error_code: null };
+eq("downloading X of Y MB", downloadView(fresh, run, t, "en"), { active: true, text: "Downloading 120 of 913 MB" });
+eq("big numbers are grouped as the language groups them", downloadView({ ...fresh, id: "w" }, { ...run, model: "w", bytes: 1_200_000_000, total: 1_617_941_637 }, t, "en").text, "Downloading 1,200 of 1,618 MB");
+eq("before the first byte", downloadView(fresh, { ...run, bytes: 0 }, t, "en").text, "Downloading 0 of 913 MB");
+eq("no total from the server: the entry's", downloadView(fresh, { ...run, total: null }, t, "en").text, "Downloading 120 of 913 MB");
+eq("no total anywhere", downloadView({ ...fresh, download_bytes: null }, { ...run, total: null }, t, "en").text, "Downloading 120 MB");
+eq("YourMT3+ making its weights", downloadView(fresh, { ...run, phase: "prepare" }, t, "en"), { active: true, text: "Preparing the model" });
+eq("another model's run says nothing here", downloadView({ ...fresh, id: "other" }, run, t, "en"), null);
+eq("a finished run says nothing: the list has the new state", downloadView(fresh, { ...run, state: "done" }, t, "en"), null);
+eq("a cancelled run says nothing", downloadView(fresh, { ...run, state: "cancelled" }, t, "en"), null);
+eq("a failed run says why, in the page's words", downloadView(fresh, { ...run, state: "failed", error_code: "disk" }, t, "en"), { active: false, error: "There is not enough free disk space for this model. Free some space and try again." });
+eq("a code the page does not know is the general one", downloadErrorText("C:/secret", t), "The download did not finish. Try again.");
+for (const code of DOWNLOAD_ERRORS) check(`error ${code} has its sentence`, t(`settings.models.downloadError.${code}`) !== `settings.models.downloadError.${code}`);
+check("idle is a download state", isDownloadState({ state: "idle" }) && !downloadRunning({ state: "idle" }));
+check("running is running", downloadRunning(run));
+check("an older server's answer is not one", !isDownloadState(undefined) && !isDownloadState({ state: "later" }));
+const de = tableT(TRANSLATIONS.de);
+eq("German groups with a dot", downloadView({ ...fresh, id: "w" }, { ...run, model: "w", bytes: 1_200_000_000, total: 1_617_941_637 }, de, "de").text, "Wird heruntergeladen: 1.200 von 1.618 MB");
+
 // ── Every key this module reads is in all ten tables ──
 const KEYS = Object.keys(TRANSLATIONS.en).filter((k) => k.startsWith("settings.models.") || k === "settings.tab.models" || k === "settings.desc.models" || k.startsWith("help.set.models"));
 check("the keys are there", KEYS.length >= 30, String(KEYS.length));
@@ -184,6 +219,8 @@ for (const lang of ["en", "pl", "ja", "zh-Hans", "de", "fr", "es", "pt", "id", "
 const ptpt = tableT(TRANSLATIONS["pt-PT"], TRANSLATIONS.pt);
 eq("European Portuguese says transferido", stateView(six, ptpt, "pt-PT").text, "Transferido, 55 MB");
 eq("and falls back to pt where the words are the same", ptpt("settings.models.state.builtIn"), "Incluído");
+eq("European Portuguese transfers", downloadView(fresh, run, ptpt, "pt-PT").text, "A transferir 120 de 913 MB");
+eq("and its button says Transferir", ptpt("settings.models.download"), "Transferir");
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

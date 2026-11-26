@@ -528,6 +528,9 @@ const SETTINGS = [
     ["settings.models.builtIn.title", "help.set.modelsBuiltIn"],
     // Each row's "Source" line, built-in and added alike, and its link.
     ["settings.models.sourceName", "help.set.modelsSource"],
+    // A built-in model's Download, and its Cancel while it runs.
+    ["settings.models.download", "help.set.modelsDownload"],
+    ["settings.models.downloadCancel", "help.set.modelsDownloadCancel"],
     ["settings.myModels.title", "help.set.myModels"],
     ["settings.myModels.link.label", "help.set.myModelsLink"],
     ["settings.myModels.file.choose", "help.set.myModelsFile"],
