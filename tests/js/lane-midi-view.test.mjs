@@ -14,6 +14,8 @@ import {
   DETAIL_FIELD,
   ERROR_CODES,
   MIDI_LANES,
+  PIANO_ENGINES,
+  PIANO_ENGINE_FIELD,
   REFUSAL_CODES,
   SETTING_FIELDS,
   anyRunning,
@@ -25,11 +27,14 @@ import {
   detailNameKey,
   engineAvailable,
   engineLine,
+  engineOf,
+  engineReady,
   errorKey,
   hasFinishedMidi,
   hasTranscriptionFields,
   hintLine,
   laneChoice,
+  laneEngine,
   laneHasMidi,
   maxMinutes,
   midiFilename,
@@ -38,6 +43,8 @@ import {
   midiUrl,
   notesText,
   parseExportMidi,
+  pianoEngineChoice,
+  pianoEngineNote,
   progressText,
   refusalCode,
   refusalKey,
@@ -128,6 +135,55 @@ eq("an engine without a label uses its id", engineLine(status({ engines: [{ id: 
 eq("the longest song in minutes", maxMinutes(STATUS_OK), 20);
 eq("an odd number of seconds rounds down", maxMinutes(status({ max_seconds: 1500 })), 25);
 eq("no status is 20 minutes", maxMinutes(null), 20);
+
+// ─── The Keys engine ───
+
+const HR = { id: "piano_hr", label: "ByteDance Piano Transcription", version: "0.0.6", licence: "MIT", model_licence: "CC BY 4.0", stems: ["piano"], available: true, reason: null, model: "not_downloaded", download_bytes: 171_966_578 };
+const BP = { id: "basic_pitch", label: "Basic Pitch", version: "0.4.0", licence: "Apache-2.0", model_licence: "Apache-2.0", stems: ["piano", "bass"], available: true, reason: null, model: "built_in", download_bytes: null };
+const TWO = status({ engines: [BP, HR] });
+const MB = (b) => `${Math.round(b / 1e6)} MB`;
+const HR_SET = { transcribe_piano_engine: "piano_hr" };
+const noteText = (note) => t(note.key, note.vars);
+eq("the engines in order", [...PIANO_ENGINES], ["basic_pitch", "piano_hr"]);
+eq("the field", PIANO_ENGINE_FIELD, "transcribe_piano_engine");
+eq("the Keys engine defaults to Basic Pitch", pianoEngineChoice({}), "basic_pitch");
+eq("piano_hr is read", pianoEngineChoice(HR_SET), "piano_hr");
+eq("an unknown engine is Basic Pitch", pianoEngineChoice({ transcribe_piano_engine: "auto" }), "basic_pitch");
+eq("the piano lane takes the Keys engine", laneEngine(HR_SET, "piano"), "piano_hr");
+eq("the bass lane is always Basic Pitch", laneEngine(HR_SET, "bass"), "basic_pitch");
+eq("an engine patch posts its field", settingsPatch(PIANO_ENGINE_FIELD, "piano_hr"), HR_SET);
+eq("a bad engine is never posted", settingsPatch(PIANO_ENGINE_FIELD, "auto"), null);
+eq("the engine field is a transcription field", transcriptionFields({ ...HR_SET, port: 1 }), HR_SET);
+eq("one engine by id", engineOf(TWO, "piano_hr").label, "ByteDance Piano Transcription");
+check("an engine that can run is ready", engineReady(TWO, "piano_hr"));
+check("one that cannot is not", !engineReady(status({ engines: [BP, { ...HR, available: false }] }), "piano_hr"));
+check("nothing is ready when transcription cannot run", !engineReady(status({ available: false, engines: [BP, HR] }), "basic_pitch"));
+check("an older server's one engine is ready", engineReady(STATUS_OK, "basic_pitch"));
+eq("both engine lines, with the model's licence where it differs", engineLine(TWO, t),
+  "Engine: Basic Pitch 0.4.0, licence Apache-2.0. Engine: ByteDance Piano Transcription 0.0.6, licence MIT, model licence CC BY 4.0.");
+eq("Basic Pitch: no note under the Keys engine", pianoEngineNote(TWO, {}, MB), null);
+eq("piano_hr not downloaded: when it downloads", noteText(pianoEngineNote(TWO, HR_SET, MB)),
+  "Its model (172 MB) downloads the first time you transcribe the Piano lane, then stays on this computer.");
+eq("a partial download reads as not downloaded", pianoEngineNote(status({ engines: [BP, { ...HR, model: "partial" }] }), HR_SET, MB).key, "settings.midi.pianoEngine.model.notDownloaded");
+eq("downloaded: its size", noteText(pianoEngineNote(status({ engines: [BP, { ...HR, model: "downloaded" }] }), HR_SET, MB)), "Its model is on this computer (172 MB).");
+eq("cannot run here: says so", pianoEngineNote(status({ engines: [BP, { ...HR, available: false }] }), HR_SET, MB).key, "settings.midi.pianoEngine.unavailable");
+eq("an older server without it: cannot run here", pianoEngineNote(STATUS_OK, HR_SET, MB).key, "settings.midi.pianoEngine.unavailable");
+eq("no status yet: nothing", pianoEngineNote(null, HR_SET, MB), null);
+const hrOff = status({ engines: [BP, { ...HR, available: false }] });
+const offHr = chipState({ lane: "piano", settings: HR_SET, status: hrOff, job: job(null) });
+eq("the piano chip is off when its engine cannot run", [offHr.show, offHr.off, offHr.reasonKey], [true, true, "settings.midi.pianoEngine.unavailable"]);
+const bassOn = chipState({ lane: "bass", settings: HR_SET, status: hrOff, job: job(null) });
+eq("the bass chip is not", [bassOn.show, bassOn.off], [true, false]);
+const oldServer = chipState({ lane: "piano", settings: HR_SET, status: STATUS_OK, job: job(null) });
+eq("an older server: the piano chip follows transcription itself", [oldServer.show, oldServer.off], [true, false]);
+const downloading = midiOf(job({ piano: M({ state: "running", pct: 40, phase: "download", has_file: false }) }), "piano");
+eq("a running download is its phase", downloading.phase, "download");
+eq("a run without a phase transcribes", midiOf(job({ piano: M({ state: "running", has_file: false }) }), "piano").phase, "transcribe");
+eq("a finished run has none", midiOf(job({ piano: M() }), "piano").phase, null);
+const dlView = rowView(downloading, { name: "Piano" }, t, plural);
+eq("the row says the model downloads, with its percent", [dlView.status.text, dlView.pct, dlView.run],
+  ["Downloading the piano model. This happens only the first time.", 40, true]);
+eq("a failed download has its sentence", t(errorKey("download")), "The piano model could not be downloaded. Check the internet connection and try again.");
 
 // ─── A lane's state ───
 

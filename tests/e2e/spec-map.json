@@ -368,7 +368,7 @@
       "specs": ["lane-midi", "lane-model", "eq-panels", "lane-alignment", "help-mode", "track-header"]
     },
     {
-      "why": "Settings > Transcription: the Keys, Bass and Detail selects, the notice and the engine line from /api/transcribe/status, and the settings-applied event the lanes' MIDI chips follow",
+      "why": "Settings > Transcription: the Keys, Keys engine, Bass and Detail selects, the Keys engine's model state, the notice and the engine lines from /api/transcribe/status, and the settings-applied event the lanes' MIDI chips follow",
       "paths": ["static/js/transcriptionSettings.js", "static/js/laneMidiView.js", "static/js/catalog.js", "static/css/settings.css"],
       "specs": ["transcription-settings", "lane-midi", "settings-nav", "settings-scroll", "help-mode"]
     },
@@ -378,8 +378,8 @@
       "specs": ["lane-midi", "export-menu", "export-all-stems", "reaper-export"]
     },
     {
-      "why": "The transcription routes and the Basic Pitch worker behind the MIDI chip, the Transcription tab and the zip's .mid files",
-      "paths": ["app/api/midi.py", "app/pipeline/midi*.py", "app/_vendor/transcribe/**", "app/api/stems.py"],
+      "why": "The transcription routes, the two engines' worker (Basic Pitch; ByteDance Piano Transcription and its checkpoint download) behind the MIDI chip, the Transcription tab and the zip's .mid files",
+      "paths": ["app/api/midi.py", "app/pipeline/midi*.py", "app/pipeline/piano_hr.py", "app/core/model_fetch.py", "app/_vendor/transcribe/**", "app/_vendor/piano_hr/**", "app/api/stems.py"],
       "specs": ["lane-midi", "transcription-settings", "export-all-stems"]
     },
     {

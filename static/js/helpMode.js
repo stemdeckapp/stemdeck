@@ -516,6 +516,7 @@ const SETTINGS = [
   // MIDI from the Piano and Bass lanes (transcriptionSettings.js).
   ["settings.tab.transcription", [
     ["settings.midi.keys.title", "help.set.midiKeys"],
+    ["settings.midi.pianoEngine.title", "help.set.midiPianoEngine"],
     ["settings.midi.bass.title", "help.set.midiBass"],
     ["settings.midi.detail.title", "help.set.midiDetail"],
     ["settings.models.openTranscription", "help.set.modelsOpenTranscription"],

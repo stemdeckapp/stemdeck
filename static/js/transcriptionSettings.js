@@ -1,22 +1,28 @@
 // Settings > Transcription: MIDI from the Piano and Bass lanes. A row for
-// Keys and one for Bass (Auto, which uses Basic Pitch, or Off), the Detail of
-// the notes with one sentence per choice, the fixed notice (it runs on this
-// computer and sends nothing; the person is responsible for the rights), and
-// the engine's name, version and licence. When the engine cannot run here the
-// reason shows in plain words and the selects are off. The rules are in the
-// pure laneMidiView.js; this file draws them and saves a choice.
+// Keys (Auto or Off), the Keys engine (Basic Pitch, or ByteDance Piano
+// Transcription with the state of its model: downloaded, or downloaded the
+// first time it is used), one for Bass (Auto, which uses Basic Pitch, or Off),
+// the Detail of the notes with one sentence per choice, the fixed notice (it
+// runs on this computer and sends nothing; the person is responsible for the
+// rights), and each engine's name, version and licence. When transcription
+// cannot run here the reason shows in plain words and the selects are off.
+// The rules are in the pure laneMidiView.js; this file draws them and saves a
+// choice.
 //
 // Server: GET /api/settings (transcribe_piano, transcribe_bass,
-// transcribe_detail), POST /api/settings with one of them, and
+// transcribe_detail, transcribe_piano_engine), POST /api/settings with one of
+// them, and
 // GET /api/transcribe/status. Every answer this tab saves is announced on the
 // overlay as "stemdeck:settings-applied" with only these fields, so the lanes'
 // MIDI chips follow at once (laneMidiRows.js) and no other tab repaints.
 
-import { t } from "./i18n.js";
+import { t, getLanguage } from "./i18n.js";
 import { SETTINGS_APPLIED_EVENT } from "./separationSettings.js";
+import { formatSize } from "./myModelsView.js";
 import {
-  DETAIL_FIELD, SETTING_FIELDS, detailChoice, engineAvailable, engineLine, hasTranscriptionFields,
-  isStatus, laneChoice, settingsPatch, transcriptionFields, unavailableKey,
+  DETAIL_FIELD, PIANO_ENGINE_FIELD, SETTING_FIELDS, detailChoice, engineAvailable, engineLine,
+  hasTranscriptionFields, isStatus, laneChoice, pianoEngineChoice, pianoEngineNote, settingsPatch,
+  transcriptionFields, unavailableKey,
 } from "./laneMidiView.js";
 
 export async function wireTranscriptionSettings(overlay) {
@@ -25,6 +31,7 @@ export async function wireTranscriptionSettings(overlay) {
   const selects = [...pane.querySelectorAll("select[data-field]")];
   const engineEl = pane.querySelector(".transcription-engine");
   const whyEl = pane.querySelector(".transcription-unavailable");
+  const engineNoteEl = pane.querySelector(".transcription-piano-engine-note");
   const msg = pane.querySelector(".transcription-msg");
   const detailLines = [...pane.querySelectorAll(".transcription-detail-desc[data-detail]")];
 
@@ -47,10 +54,22 @@ export async function wireTranscriptionSettings(overlay) {
       if (field === DETAIL_FIELD) sel.value = detailChoice(data);
       else if (field === SETTING_FIELDS.piano) sel.value = laneChoice(data, "piano");
       else if (field === SETTING_FIELDS.bass) sel.value = laneChoice(data, "bass");
+      else if (field === PIANO_ENGINE_FIELD) sel.value = pianoEngineChoice(data);
     }
     const detail = detailChoice(data);
     for (const line of detailLines) line.classList.toggle("is-current", line.dataset.detail === detail);
+    paintEngineNote();
   };
+
+  // Under the Keys engine: its model's state, or that it cannot run here.
+  // Nothing until the status is read, and nothing for Basic Pitch.
+  function paintEngineNote() {
+    if (!engineNoteEl) return;
+    const locale = getLanguage();
+    const note = statusRead ? pianoEngineNote(status, data, (b) => formatSize(b, t, locale)) : null;
+    engineNoteEl.textContent = note ? t(note.key, note.vars) : "";
+    engineNoteEl.hidden = !note;
+  }
 
   const paintStatus = () => {
     if (engineEl) {
@@ -66,6 +85,7 @@ export async function wireTranscriptionSettings(overlay) {
     }
     const off = isStatus(status) && !engineAvailable(status);
     for (const sel of selects) sel.disabled = off;
+    paintEngineNote();
   };
 
   const take = (answer) => {

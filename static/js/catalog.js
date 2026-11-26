@@ -6279,8 +6279,19 @@ function openLibraryEditor() {
                 <div class="settings-row-desc" data-i18n="settings.midi.keys.desc">The MIDI button on the Piano lane, in Advanced mode. Off hides it.</div>
               </div>
               <select class="settings-select settings-select-wide set-transcribe-piano" data-field="transcribe_piano" aria-label="Keys" data-i18n-aria-label="settings.midi.keys.title">
-                <option value="auto" data-i18n="settings.midi.auto">Auto (Basic Pitch)</option>
+                <option value="auto" data-i18n="settings.midi.autoKeys">Auto</option>
                 <option value="off" data-i18n="settings.midi.off">Off</option>
+              </select>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-text">
+                <div class="settings-row-title" data-i18n="settings.midi.pianoEngine.title">Keys engine</div>
+                <div class="settings-row-desc" data-i18n="settings.midi.pianoEngine.desc">Which model writes the Piano lane's notes. ByteDance Piano Transcription is best for solo or clearly audible piano; on piano separated from a busy mix, Basic Pitch may be better.</div>
+                <p class="settings-row-desc transcription-piano-engine-note" role="status" hidden></p>
+              </div>
+              <select class="settings-select settings-select-wide set-transcribe-piano-engine" data-field="transcribe_piano_engine" aria-label="Keys engine" data-i18n-aria-label="settings.midi.pianoEngine.title">
+                <option value="basic_pitch" data-i18n="settings.midi.pianoEngine.basicPitch">Basic Pitch</option>
+                <option value="piano_hr" data-i18n="settings.midi.pianoEngine.pianoHr">ByteDance Piano Transcription</option>
               </select>
             </div>
             <div class="settings-row">

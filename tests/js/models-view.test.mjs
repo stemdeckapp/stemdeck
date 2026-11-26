@@ -97,6 +97,13 @@ eq("the Karaoke split is always for Lead + Backing", usedForLine(karaoke, null, 
 eq("Basic Pitch names the Transcription tab's lanes", usedForLine(bp, SETTINGS, t, "en"), "Used for: Keys.");
 eq("Basic Pitch with both off", usedForLine(bp, { transcribe_piano: "off", transcribe_bass: "off" }, t, "en"), "Not used now: MIDI is off for Keys and for Bass.");
 eq("the beat model has no choice to follow", usedForLine(beats, SETTINGS, t, "en"), "");
+const hr = entry("piano_hr", "transcription", "midi_piano", { license: "CC BY 4.0", download_bytes: 171_966_578 });
+const HR_ON = { transcribe_piano: "auto", transcribe_bass: "auto", transcribe_piano_engine: "piano_hr" };
+eq("ByteDance Piano Transcription is used for Keys when it is the Keys engine", usedForLine(hr, HR_ON, t, "en"), "Used for: Keys.");
+eq("and Basic Pitch then for Bass only", usedForLine(bp, HR_ON, t, "en"), "Used for: Bass.");
+eq("not the Keys engine: not used", usedForLine(hr, { transcribe_piano: "auto", transcribe_bass: "auto" }, t, "en"), "Not used for any stem now.");
+eq("its purpose", purposeLine(hr, t, "en"), "Makes MIDI notes from the Piano lane when the Keys engine is ByteDance Piano Transcription.");
+eq("its download size before it is there", stateView(hr, t, "en").text, "Not downloaded, 172 MB to download");
 eq("a model of yours, by id", usedForLine({ id: "user_aaaaaaaaaaaa", use: "stems" }, SETTINGS, t, "en"), "Used for: Piano.");
 check("a settings answer with the plan carries it", hasPlan(SETTINGS));
 check("a Transcription save carries it too", hasPlan({ transcribe_bass: "off" }));

@@ -22,6 +22,7 @@ const MODELS = {
     entry("kim_mel_roformer", "separation", "stems", { name: "Mel-Band RoFormer (Kim)", stems: ["vocals"], download_bytes: 913_106_900, available: false }),
     entry("uvr_karaoke_2", "separation", "lead_backing", { name: "UVR-MDX-NET Karaoke 2", stems: ["lead_backing"] }),
     entry("basic_pitch", "transcription", "midi", { name: "Basic Pitch", stems: ["piano", "bass"], license: "Apache-2.0", state: "built_in", size_bytes: 230_000 }),
+    entry("piano_hr", "transcription", "midi_piano", { name: "ByteDance Piano Transcription", stems: ["piano"], license: "CC BY 4.0", download_bytes: 171_966_578 }),
     entry("whisper_turbo", "analysis", "lyrics_gpu", { name: "Whisper turbo", download_bytes: 1_617_941_637 }),
     entry("whisper_small", "analysis", "lyrics_cpu", { name: "Whisper small", state: "downloaded", size_bytes: 483_617_219 }),
     entry("beat_this", "analysis", "beats", { name: "Beat This! (final0)", license: null, state: "unknown" }),
@@ -76,6 +77,9 @@ test("the built-in models are grouped by purpose, each with its state and size",
   await expect(row(page, "kim_mel_roformer").locator(".models-state")).toHaveText("Cannot run here");
   await expect(row(page, "uvr_karaoke_2").locator(".models-state")).toHaveText("Not downloaded");
   await expect(row(page, "basic_pitch").locator(".models-state")).toHaveText("Built in");
+  await expect(row(page, "piano_hr").locator(".models-state")).toHaveText("Not downloaded, 172 MB to download");
+  await expect(row(page, "piano_hr").locator(".models-purpose")).toHaveText("Makes MIDI notes from the Piano lane when the Keys engine is ByteDance Piano Transcription.");
+  await expect(row(page, "piano_hr").locator(".models-licence")).toHaveText("Licence: CC BY 4.0.");
   await expect(row(page, "whisper_turbo").locator(".models-state")).toHaveText("Not downloaded, 1,618 MB to download");
   await expect(row(page, "beat_this").locator(".models-state")).toHaveText("Not known");
   await expect(row(page, "htdemucs_6s").locator(".models-purpose")).toHaveText("Separates Vocals, Drums, Bass, Guitar, Piano, and Other.");
@@ -93,6 +97,8 @@ test("Used for follows the per-stem choices and the MIDI lanes", async ({ page }
   await expect(row(page, "htdemucs_ft").locator(".models-used")).toHaveText("Not used for any stem now.");
   await expect(row(page, "uvr_karaoke_2").locator(".models-used")).toHaveText("Used for: Lead + Backing.");
   await expect(row(page, "basic_pitch").locator(".models-used")).toHaveText("Used for: Keys.");
+  // The Keys engine is Basic Pitch, the default: the second engine makes nothing now.
+  await expect(row(page, "piano_hr").locator(".models-used")).toHaveText("Not used for any stem now.");
   await expect(row(page, "whisper_turbo").locator(".models-used")).toBeHidden();
 });
 
