@@ -43,11 +43,13 @@ desktop/src-tauri/gen/
 htmlcov/
 .tox/
 
-# Runtime job artifacts and local build scratch
-data/
-jobs/
-cache/
-models/
+# Runtime job artifacts and local build scratch. The runtime folders are
+# anchored to the repository root: unanchored, they also hid source folders
+# with the same name (app/_vendor/.../data/ and .../models/, #1132).
+/data/
+/jobs/
+/cache/
+/models/
 settings.json
 .run/
 .build
