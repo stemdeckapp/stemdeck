@@ -15,6 +15,8 @@ published) does not do the way StemDeck needs, run by the worker
   activation alone, along with many false notes (config.MIDI_DETAIL_PRESETS).
   Here the first frame of a plateau is the peak.
 - one_voice: one note at a time, for the bass.
+- pedal_extend: each note held by the sustain pedal, for the second piano
+  engine (piano_hr.output_notes), which hears the pedal.
 
 Note events are (start s, end s, MIDI pitch, amplitude, None): the pitch
 bends Basic Pitch can add are never written (midi_file.note_ticks).
@@ -81,6 +83,41 @@ def onset_notes(frames, onsets, onset_thresh: float, frame_thresh: float, min_no
         amplitude = float(np.mean(frames[start:i, pitch_bin]))
         notes.append((int(start), int(i), int(pitch_bin) + MIDI_OFFSET, amplitude))
     return notes
+
+
+def pedal_extend(notes: list, pedals: list) -> list:
+    """Each note held by the sustain pedal, for an engine that hears the pedal
+    (piano_hr.output_notes): a note whose key is let go while the pedal is
+    down sounds until the pedal comes up, or until the same key is struck
+    again, whichever is first, and never shorter than it was played. This is
+    how the benchmark's references hold their notes (scripts/midi_bench.py,
+    as the MAESTRO evaluation does).
+
+    ``notes`` are (start s, end s, pitch, ...), ``pedals`` (down s, up s)
+    with no two overlapping, as the engine detects them. Returns the notes in
+    start order with their ends moved. O(n log n): bisection over the pedal
+    downs and over each pitch's starts."""
+    from bisect import bisect_right
+
+    ordered = sorted(notes, key=lambda n: float(n[0]))
+    spans = sorted((float(a), float(b)) for a, b in pedals)
+    downs = [a for a, _ in spans]
+    starts: dict[int, list[float]] = {}
+    for n in ordered:
+        starts.setdefault(int(n[2]), []).append(float(n[0]))
+    out = []
+    for n in ordered:
+        start, end = float(n[0]), float(n[1])
+        held = end
+        k = bisect_right(downs, end) - 1
+        if k >= 0 and spans[k][0] <= end < spans[k][1]:
+            held = spans[k][1]
+        same = starts[int(n[2])]
+        j = bisect_right(same, start)
+        if j < len(same):
+            held = min(held, same[j])
+        out.append((n[0], max(held, end), *tuple(n[2:])))
+    return out
 
 
 def _overlap(a: Sequence[Any], b: Sequence[Any]) -> float:

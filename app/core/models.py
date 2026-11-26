@@ -7,7 +7,12 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from app.core.config import AUDIO_TAG_LYRICS_MAX_CHARS, AUDIO_TAG_MAX_CHARS, MIDI_STEMS
+from app.core.config import (
+    AUDIO_TAG_LYRICS_MAX_CHARS,
+    AUDIO_TAG_MAX_CHARS,
+    MIDI_PIANO_ENGINES,
+    MIDI_STEMS,
+)
 from app.core.versions import VERSION_ID_RE, active_of, clean_versions, versions_of
 from app.core.vocal_split_outcome import INTERRUPTED, message_for
 
@@ -253,6 +258,8 @@ def public_stem_undo(undo: object) -> dict[str, dict[str, Any]]:
 # a run can be in, and what the page is told about each.
 MIDI_STEM_NAMES = MIDI_STEMS
 MIDI_RUN_STATES = ("running", "done", "error", "cancelled")
+MIDI_RUN_PHASES = ("download", "transcribe")
+MIDI_ENGINE_IDS = MIDI_PIANO_ENGINES
 _MIDI_CODE_RE = re.compile(r"^[a-z_]{1,32}\Z")
 _MIDI_DETAIL_RE = re.compile(r"^[a-z]{1,16}\Z")
 _MIDI_AT_MAX = 40
@@ -263,10 +270,13 @@ def clean_midi(value: Any) -> dict[str, dict[str, Any]] | None:
     None when there are none. For everything written and everything read back
     from disk, so a damaged record never reaches the page in another shape.
 
-    An entry is {"state", "pct", "notes", "engine", "detail", "tempo_source",
-    "at", "error_code", "has_file"}. The state, pct, detail, at and error_code
-    describe the latest run; notes, tempo_source and has_file describe the
-    file on disk, which a failed or cancelled run leaves as it was."""
+    An entry is {"state", "pct", "phase", "notes", "engine", "detail",
+    "tempo_source", "at", "error_code", "has_file"}. The state, pct, phase
+    (what a running run does: "download" its model, or "transcribe"; None
+    otherwise), engine, detail, at and error_code describe the latest run;
+    notes, tempo_source and has_file describe the file on disk, which a
+    failed or cancelled run leaves as it was. An entry saved before there
+    was a second engine reads as Basic Pitch's, the only one there was."""
     if not isinstance(value, dict):
         return None
     out: dict[str, dict[str, Any]] = {}
@@ -284,11 +294,15 @@ def clean_midi(value: Any) -> dict[str, dict[str, Any]] | None:
         code = entry.get("error_code")
         at = entry.get("at")
         tempo = entry.get("tempo_source")
+        engine = entry.get("engine")
+        phase = entry.get("phase")
+        running = entry["state"] == "running"
         out[stem] = {
             "state": entry["state"],
             "pct": int(max(0, min(100, pct))),
+            "phase": phase if running and phase in MIDI_RUN_PHASES else None,
             "notes": notes,
-            "engine": "basic_pitch",
+            "engine": engine if engine in MIDI_ENGINE_IDS else "basic_pitch",
             "detail": detail if isinstance(detail, str) and _MIDI_DETAIL_RE.match(detail) else None,
             "tempo_source": tempo if tempo in ("song", "default") else None,
             "at": at if isinstance(at, str) and len(at) <= _MIDI_AT_MAX else None,

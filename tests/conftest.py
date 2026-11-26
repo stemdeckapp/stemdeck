@@ -47,6 +47,30 @@ def _no_whisper(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_piano_hr(monkeypatch, tmp_path):
+    """No test reads, writes or downloads the real piano_hr checkpoint (172 MB
+    under MODELS_DIR, app/pipeline/piano_hr.py). Its path is a temporary one,
+    the check of a file already verified is forgotten, and the download step
+    a run starts exits at once as a failed download. Tests that want one
+    point midi._spawn_fetch_cmd at a stub of their own."""
+    from app.pipeline import midi as _midi
+    from app.pipeline import piano_hr as _piano_hr
+
+    checkpoint = tmp_path / "_models" / "piano_hr" / "piano_hr.pth"
+    monkeypatch.setattr(_piano_hr, "checkpoint_path", lambda: checkpoint)
+    monkeypatch.setattr(_piano_hr, "_verified", None)
+    monkeypatch.setattr(
+        _midi,
+        "_spawn_fetch_cmd",
+        lambda dst: [
+            sys.executable,
+            "-c",
+            'print(\'{"event":"error","code":"download"}\', flush=True); raise SystemExit(3)',
+        ],
+    )
+
+
+@pytest.fixture(autouse=True)
 def _no_acoustid_or_musicbrainz(monkeypatch, tmp_path):
     """No test reaches api.acoustid.org or musicbrainz.org. Every job with an
     artist tag is identified while it runs (app/pipeline/identify.py), and so

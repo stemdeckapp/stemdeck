@@ -1247,6 +1247,97 @@ MIDI_DETAIL_PRESETS: dict[str, dict[str, dict[str, float | bool]]] = {
         },
     },
 }
+# The second piano engine (app/pipeline/piano_hr.py): ByteDance's
+# high-resolution piano transcription (Kong et al. 2021, "High-resolution
+# Piano Transcription with Pedals by Regressing Onset and Offset Times"),
+# piano_transcription_inference 0.0.6 and torchlibrosa 0.1.0 (MIT), vendored
+# in app/_vendor/piano_hr, run on the torch StemDeck already ships. Its
+# weights (CC BY 4.0) are fetched on first use from the Zenodo record the
+# package itself names, pinned by size and SHA-256 (Zenodo publishes the
+# file's MD5, 22b961b77c1878239fec963362097045, and the copy hashed here
+# matched it on 2026-11-26). The file name holds no "%" and no "=": the
+# address does ("=" only), and stem_models.ModelFile refuses a "%".
+#
+# Which engine makes the piano's MIDI (settings.transcribe_piano_engine). The
+# bass is always Basic Pitch: this model knows only the piano's 88 keys.
+MIDI_PIANO_ENGINES = ("basic_pitch", "piano_hr")
+MIDI_DEFAULT_PIANO_ENGINE = "basic_pitch"
+PIANO_HR_CHECKPOINT_URL = (
+    "https://zenodo.org/api/records/4034264/files/CRNN_note_F1=0.9677_pedal_F1=0.9186.pth/content"
+)
+PIANO_HR_CHECKPOINT_SHA256 = "c3fa9730725bf4a762f1c14bc80cd5986eacda01b026f5a4a2525cd607876141"
+PIANO_HR_CHECKPOINT_SIZE = 171_966_578
+PIANO_HR_CHECKPOINT_RELPATH = "piano_hr/CRNN_note_F1_0.9677_pedal_F1_0.9186.pth"
+# Segments (10 s each, 5 s apart) run at once. Measured 2026-11-26 on a
+# 3.3 min stem (BabySlakh Track00011, app/pipeline/piano_hr.model_output),
+# torch 2.6.0: on an RTX 3080 (cu124) 1, 4, 8 and 16 at a time took 9.7,
+# 2.8, 1.4 and 1.2 s per audio minute, holding 0.3, 0.7, 1.2 and 2.2 GB of
+# GPU memory; on a 24-thread CPU 1, 2, 4 and 8 took 38.4, 30.7, 29.0 and
+# 28.4 s per minute. Notes identical at every size. 8 on the GPU; 4 on the
+# CPU, where 8 gains 2% and halves how often progress is reported (each
+# batch is one line, against TIMEOUT_MIDI_STALL).
+PIANO_HR_BATCH_GPU = 8
+PIANO_HR_BATCH_CPU = 4
+# Free GPU memory a run needs to start on the GPU (batch 8 held 1.2 GB, plus
+# the allocator's rounding); with less, a separation is likely holding the
+# card, and the run goes to the CPU instead of failing on the GPU.
+PIANO_HR_GPU_MIN_FREE_MB = max(0, _env_int("STEMDECK_PIANO_HR_GPU_MIN_FREE_MB", 2048))
+# The whole piano_hr run. Through the worker on that CPU a minute of audio
+# took 36.9 s (scripts/midi_bench.py score --worker, nine BabySlakh songs), so
+# the longest song allowed (TRANSCRIBE_MAX_SECONDS, 1200 s) takes about 740 s;
+# eight times that is a hang, not a slower computer.
+TIMEOUT_MIDI_PIANO_HR = max(60, _env_int("STEMDECK_TIMEOUT_MIDI_PIANO_HR", 6000))
+# The longest a first-use download may take, and the longest it may send
+# nothing (a try that times out says so on stderr, which resets it). 172 MB
+# at 100 KB/s is 29 minutes.
+TIMEOUT_MIDI_MODEL_DOWNLOAD = max(60, _env_int("STEMDECK_TIMEOUT_MIDI_MODEL_DOWNLOAD", 3600))
+# piano_hr's post-processing thresholds per detail (0..1): onset, offset and
+# frame as RegressionPostProcessor takes them, the pedal's offset, and
+# whether notes are held by the detected sustain pedal (midi_notes.
+# pedal_extend), as the benchmark's references are.
+#
+# Tuned on the BabySlakh tuning tracks 1 to 10 only (scripts/midi_bench.py
+# --engine piano_hr sweep, results/sweep-hr1.json and sweep-hr2.json; onset
+# F1 at 50 ms | with offsets): the package's own 0.3 onset, 0.1 frame gave
+# 0.909|0.731 clean and 0.367|0.153 separated. The onset threshold is what
+# counts (frame moves only the offsets): 0.5 gave 0.919|0.742 and 0.391|0.168,
+# 0.6 0.923|0.762 and 0.400|0.169 (frame 0.3), 0.7 0.922|0.761 and
+# 0.408|0.178 (frame 0.2), 0.8 0.906|0.754 and 0.375|0.171, 0.9 collapses
+# (0.434). Offset 0.2 or 0.4 and the pedal off changed nothing over 0.003.
+# "balanced" is 0.7, 0.2, the best separated score on tuning.
+#
+# Held out (BabySlakh 11 to 20, MAESTRO v3 test pieces, never tuned on;
+# results/hr-held-default.md against hr-held-cand-balanced.md, wav), the
+# package's defaults then balanced: MAESTRO clean 0.978|0.870 to
+# 0.972|0.877, MAESTRO separated 0.933|0.799 to 0.927|0.810, BabySlakh clean
+# 0.860|0.728 to 0.901|0.770, separated 0.284|0.106 to 0.350|0.145. Better
+# with offsets everywhere and on onsets by 0.04 and 0.07 on BabySlakh; 0.006
+# lower on onsets on MAESTRO, where precision went 0.986 to 0.998 and recall
+# 0.971 to 0.948. "detailed" is 0.5, 0.1 and "clean" 0.8, 0.3, from the same
+# sweep (held out: results/hr-held-cand-detailed.md, hr-held-cand-clean.md).
+MIDI_PIANO_HR_PRESETS: dict[str, dict[str, float | bool]] = {
+    "balanced": {
+        "onset_threshold": 0.7,
+        "offset_threshold": 0.3,
+        "frame_threshold": 0.2,
+        "pedal_offset_threshold": 0.2,
+        "pedal": True,
+    },
+    "detailed": {
+        "onset_threshold": 0.5,
+        "offset_threshold": 0.3,
+        "frame_threshold": 0.1,
+        "pedal_offset_threshold": 0.2,
+        "pedal": True,
+    },
+    "clean": {
+        "onset_threshold": 0.8,
+        "offset_threshold": 0.3,
+        "frame_threshold": 0.3,
+        "pedal_offset_threshold": 0.2,
+        "pedal": True,
+    },
+}
 # The written file: ticks per quarter note, and the velocity range a note's
 # amplitude (0..1) maps onto, so the quietest note is still heard and the
 # loudest leaves headroom.

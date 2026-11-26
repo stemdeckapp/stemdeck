@@ -22,11 +22,25 @@ Then:
     uv run python scripts/midi_bench.py score --tag baseline
     uv run python scripts/midi_bench.py score --tag check --worker   # spawn the worker
 
+The second piano engine (app/pipeline/piano_hr.py) takes ``--engine piano_hr``
+on cache, score and sweep, piano items only. Its checkpoint is the one the app
+downloads (piano_hr.checkpoint_path(), under the bench's own app data):
+
+    uv run python scripts/midi_bench.py fetch-piano-hr    # the app's download step
+    uv run python scripts/midi_bench.py --engine piano_hr cache --split tune
+    uv run python scripts/midi_bench.py --engine piano_hr score --tag hr --worker
+
+Its cache holds every activation the model outputs; ``score`` decodes them with
+piano_hr.output_notes, as the worker does. The model runs on the device the app
+would pick (``--device`` to choose).
+
 ``score`` decodes the cached activations in this process with the worker's own
 functions (midi_worker.output_notes), writes and reads the .mid like the worker,
 and so gives the worker's notes without running the model again; ``--worker``
 spawns the worker exactly as midi.py does instead, to prove the two agree.
-``sweep`` tries parameter sets on the tuning split only.
+``sweep`` tries parameter sets on the tuning split only. ``compare`` scores both
+piano engines per song and tests whether a signal known at run time predicts
+which one wins (fitted on the tuning split, checked on held-out).
 
 Splits: BabySlakh tracks 1 to 10 are the tuning split, 11 to 20 and every MAESTRO
 piece are held out. Nothing is ever tuned on a held-out item.
@@ -94,10 +108,20 @@ def _setup_env(bench: Path) -> None:
 
 
 def _vendor_path() -> None:
+    from app.pipeline import piano_hr
     from app.pipeline.midi_file import VENDOR_DIR
     from app.pipeline.midi_worker import _install_engine
 
-    _install_engine(VENDOR_DIR)
+    _install_engine(VENDOR_DIR, piano_hr.VENDOR_DIR)
+
+
+def _device(asked: str | None) -> str:
+    """The device piano_hr runs on here: ``asked``, or what the app picks."""
+    if asked:
+        return asked
+    from app.pipeline.midi import piano_hr_device
+
+    return piano_hr_device()
 
 
 def _ffmpeg() -> str:
@@ -508,15 +532,80 @@ def cmd_separate(args) -> None:
 # -- model activations
 
 
-def _cache_path(bench: Path, item: dict, cond: str, fmt: str) -> Path:
+def _cache_path(bench: Path, item: dict, cond: str, fmt: str, engine: str = "basic_pitch") -> Path:
     stem = item["stem"] if cond == "sep" else "clean"
-    return bench / "cache" / cond / fmt / f"{item['id']}-{stem}.npz"
+    folder = "cache" if engine == "basic_pitch" else f"cache-{engine}"
+    return bench / folder / cond / fmt / f"{item['id']}-{stem}.npz"
+
+
+def _engine_items(items: list[dict], engine: str) -> list[dict]:
+    """piano_hr hears the piano only."""
+    return items if engine == "basic_pitch" else [i for i in items if i["stem"] == "piano"]
+
+
+def cmd_fetch_piano_hr(args) -> None:
+    """The piano_hr checkpoint into the bench's models folder, through the
+    app's own download step (app/core/model_fetch.py), then checked."""
+    from app.pipeline import midi as midi_run
+    from app.pipeline import piano_hr
+
+    dst = piano_hr.checkpoint_path()
+    if piano_hr.checkpoint_ok(dst):
+        print("already there", dst)
+        return
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    cmd = midi_run._spawn_fetch_cmd(dst)
+    if args.from_url:
+        # Another copy of the same bytes (a local server): still checked
+        # against the pinned size and SHA-256.
+        cmd[cmd.index("--url") + 1] = args.from_url
+    started = time.monotonic()
+    result = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
+    took = time.monotonic() - started
+    events = [e for e in (midi_run.parse_event(x) for x in result.stdout.splitlines()) if e]
+    print("exit", result.returncode, "events", len(events), "last", events[-1:], f"{took:.1f}s")
+    if not piano_hr.checkpoint_ok(dst):
+        sys.exit("the checkpoint did not arrive whole: " + result.stderr[-800:])
+    print("checked", dst)
+
+
+def _cache_piano_hr(args, items: list[dict]) -> None:
+    import numpy as np
+
+    from app.core.config import PIANO_HR_BATCH_CPU, PIANO_HR_BATCH_GPU
+    from app.pipeline import piano_hr
+
+    bench = args.bench
+    device = _device(args.device)
+    model = piano_hr.load_model(piano_hr.checkpoint_path(), device)
+    batch = PIANO_HR_BATCH_GPU if device == "cuda" else PIANO_HR_BATCH_CPU
+    for item in items:
+        for cond in args.conditions:
+            for fmt in args.formats:
+                dst = _cache_path(bench, item, cond, fmt, "piano_hr")
+                if dst.is_file():
+                    continue
+                src = _input(bench, item, cond, fmt)
+                if not src.is_file():
+                    print("missing", src)
+                    continue
+                started = time.monotonic()
+                audio = piano_hr.read_audio(src)
+                out = piano_hr.model_output(model, audio, device, batch)
+                took = time.monotonic() - started
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                np.savez_compressed(dst, took=took, **out)
+                print(item["id"], cond, fmt, device, f"{took:.1f}s", flush=True)
 
 
 def cmd_cache(args) -> None:
     import numpy as np
 
     from app.pipeline import midi_worker
+
+    if args.engine == "piano_hr":
+        _cache_piano_hr(args, _engine_items(_items(args.bench, args.split, args.only), "piano_hr"))
+        return
     from app.pipeline.midi_file import MODEL_PATH
 
     _vendor_path()
@@ -670,8 +759,27 @@ def _roundtrip(notes, stem: str, workdir: Path) -> list:
     return notes
 
 
-def _decode(cache: Path, params: dict) -> list:
+# The activations piano_hr's post-processing reads (piano_hr.model_output).
+_HR_KEYS = (
+    "reg_onset_output",
+    "reg_offset_output",
+    "frame_output",
+    "velocity_output",
+    "reg_pedal_onset_output",
+    "reg_pedal_offset_output",
+    "pedal_frame_output",
+)
+
+
+def _decode(cache: Path, params: dict, engine: str = "basic_pitch") -> list:
     import numpy as np
+
+    if engine == "piano_hr":
+        from app.pipeline import piano_hr
+
+        with np.load(cache) as z:
+            output = {k: np.array(z[k]) for k in _HR_KEYS}
+        return piano_hr.output_notes(output, params)
 
     from app.pipeline import midi_worker
 
@@ -680,14 +788,22 @@ def _decode(cache: Path, params: dict) -> list:
     return midi_worker.output_notes(output, params)
 
 
-def _worker_notes(src: Path, stem: str, params: dict, workdir: Path) -> tuple[list, float]:
-    """Spawn the MIDI worker exactly as midi.py does and read its file."""
+def _worker_notes(
+    src: Path,
+    stem: str,
+    params: dict,
+    workdir: Path,
+    engine: str = "basic_pitch",
+    device: str = "cpu",
+) -> tuple[list, float, str | None]:
+    """Spawn the MIDI worker exactly as midi.py does and read its file:
+    (notes, seconds the worker took, the device it said it ran on)."""
     from app.pipeline import midi as midi_run
     from app.pipeline.midi_file import default_tempo, read_notes
 
     workdir.mkdir(parents=True, exist_ok=True)
     out = workdir / f"{stem}-{os.getpid()}.mid"
-    cmd = midi_run._spawn_worker_cmd(src, out, stem, params, default_tempo())
+    cmd = midi_run._spawn_worker_cmd(src, out, stem, params, default_tempo(), engine, device)
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8:replace"
     started = time.monotonic()
@@ -701,7 +817,7 @@ def _worker_notes(src: Path, stem: str, params: dict, workdir: Path) -> tuple[li
         raise RuntimeError(f"worker failed on {src}: {events[-1:]} {result.stderr[-800:]}")
     notes = read_notes(out)["notes"]
     out.unlink()
-    return notes, took
+    return notes, took, events[-1].get("device")
 
 
 def _mean(rows: list[dict], key: str) -> float:
@@ -741,10 +857,10 @@ def summarize(rows: list[dict]) -> dict:
     return out
 
 
-def _params_for(stem: str, preset: str, override: dict | None) -> dict:
+def _params_for(stem: str, preset: str, override: dict | None, engine: str = "basic_pitch") -> dict:
     from app.pipeline.midi import run_params
 
-    params = run_params(stem, preset)
+    params = run_params(stem, preset, engine)
     if override:
         params = {**params, **override.get("all", {}), **override.get(stem, {})}
     return params
@@ -753,10 +869,11 @@ def _params_for(stem: str, preset: str, override: dict | None) -> dict:
 def _score_one(task: tuple) -> dict | None:
     """One (item, preset, condition, format): its notes, scored. Top level, so
     a process pool can run it."""
-    bench, item, preset, params, cond, fmt, worker, est_dir = task
+    bench, item, preset, params, cond, fmt, worker, est_dir, engine, device = task
     work = bench / "work"
     ref = json.loads((bench / item["ref"]).read_text(encoding="utf-8"))
     took = None
+    ran_on = None
     if est_dir is not None:
         # Another engine's notes, [onset, offset, pitch, ...].
         path = est_dir / cond / fmt / f"{item['id']}.json"
@@ -767,12 +884,12 @@ def _score_one(task: tuple) -> dict | None:
         src = _input(bench, item, cond, fmt)
         if not src.is_file():
             return None
-        notes, took = _worker_notes(src, item["stem"], params, work)
+        notes, took, ran_on = _worker_notes(src, item["stem"], params, work, engine, device)
     else:
-        cache = _cache_path(bench, item, cond, fmt)
+        cache = _cache_path(bench, item, cond, fmt, engine)
         if not cache.is_file():
             return None
-        notes = _roundtrip(_decode(cache, params), item["stem"], work)
+        notes = _roundtrip(_decode(cache, params, engine), item["stem"], work)
     s = score_notes(ref, notes, item["stem"])
     row = {
         "id": item["id"],
@@ -782,11 +899,13 @@ def _score_one(task: tuple) -> dict | None:
         "cond": cond,
         "fmt": fmt,
         "preset": preset,
+        "engine": engine,
         "seconds": item["seconds"],
         **s,
     }
     if took is not None:
         row["worker_s"] = round(took, 2)
+        row["device"] = ran_on
     return row
 
 
@@ -812,6 +931,8 @@ def run_score(
     est_dir: Path | None = None,
     jobs: int = 1,
     pool=None,
+    engine: str = "basic_pitch",
+    device: str = "cpu",
 ):
     from concurrent.futures import ProcessPoolExecutor
 
@@ -820,14 +941,16 @@ def run_score(
             bench,
             item,
             preset,
-            _params_for(item["stem"], preset, override),
+            _params_for(item["stem"], preset, override, engine),
             cond,
             fmt,
             worker,
             est_dir,
+            engine,
+            device,
         )
         for preset in presets
-        for item in items
+        for item in _engine_items(items, engine)
         for cond in conditions
         for fmt in formats
     ]
@@ -877,12 +1000,32 @@ def cmd_score(args) -> None:
         override,
         est_dir=est_dir,
         jobs=args.jobs,
+        engine=args.engine,
+        device=_device(args.device) if args.engine == "piano_hr" else "cpu",
     )
     by_preset = {p: summarize([r for r in rows if r["preset"] == p]) for p in args.presets}
     results = bench / "results"
+    timed = [r for r in rows if "worker_s" in r]
+    speed = None
+    if timed:
+        # Seconds of work per minute of audio through the worker (its start,
+        # the model's load, the run and the file), per device it ran on.
+        speed = {}
+        for dev in sorted({str(r.get("device")) for r in timed}):
+            rs = [r for r in timed if str(r.get("device")) == dev]
+            minutes = sum(r["seconds"] for r in rs) / 60
+            speed[dev] = round(sum(r["worker_s"] for r in rs) / minutes, 2)
+        print("worker seconds per audio minute:", speed)
     _write_json(
         results / f"{args.tag}.json",
-        {"override": override, "worker": args.worker, "summary": by_preset, "rows": rows},
+        {
+            "engine": args.engine,
+            "override": override,
+            "worker": args.worker,
+            "speed_s_per_min": speed,
+            "summary": by_preset,
+            "rows": rows,
+        },
     )
     (results / f"{args.tag}.md").write_text(_table(by_preset), encoding="utf-8")
     print(_table(by_preset))
@@ -910,6 +1053,7 @@ def cmd_sweep(args) -> None:
             trial,
             quiet=True,
             pool=pool,
+            engine=args.engine,
         )
         summary = summarize(rows)
         line = {"trial": trial, "summary": summary}
@@ -923,12 +1067,195 @@ def cmd_sweep(args) -> None:
     _write_json(bench / "results" / f"sweep-{args.tag}.json", out)
 
 
+# -- which piano engine wins, and whether anything known at run time says so
+
+# Signals a run could measure before it picks an engine (each is computed
+# from the files the app has for a song: the separated stems, the piano stem,
+# and what each engine makes of the piano stem).
+SIGNALS = ("share_db", "ratio", "agree", "hr_conf")
+# A unit is a song in one condition and format; the engines "differ" on it
+# when their onset F1 is this far apart, and only those units count towards
+# how often a rule picks the winner.
+DIFFER = 0.02
+
+
+def _energy(path: Path) -> float:
+    import numpy as np
+    import soundfile as sf
+
+    y, _sr = sf.read(str(path), dtype="float32", always_2d=True)
+    return float(np.mean(np.square(y, dtype=np.float64)))
+
+
+def _share_db(bench: Path, item: dict, cond: str, fmt: str) -> float | None:
+    """10 log10 of the piano stem's energy over all six separated stems', the
+    way a run could read it from the song's stems folder. None for the clean
+    condition, which has no separation of its own."""
+    import math
+
+    if cond != "sep":
+        return None
+    piano = _input(bench, item, cond, fmt)
+    stems = [
+        piano.with_name(f"{s}.wav") for s in ("vocals", "drums", "bass", "guitar", "piano", "other")
+    ]
+    if not all(p.is_file() for p in stems):
+        return None
+    total = sum(_energy(p) for p in stems)
+    share = _energy(piano) / total if total > 0 else 0.0
+    return 10 * math.log10(max(share, 1e-9))
+
+
+def _hr_conf(cache: Path) -> float:
+    """piano_hr's own confidence: the mean onset regression peak over the
+    frames where it found an onset (reg_onset_output over 0.3, its threshold)."""
+    import numpy as np
+
+    with np.load(cache) as z:
+        onset = np.array(z["reg_onset_output"])
+    peaks = onset[onset >= 0.3]
+    return float(peaks.mean()) if peaks.size else 0.0
+
+
+def _compare_one(task: tuple) -> dict | None:
+    bench, item, cond, fmt = task
+    ref = json.loads((bench / item["ref"]).read_text(encoding="utf-8"))
+    notes = {}
+    row = {"id": item["id"], "set": item["set"], "split": item["split"], "cond": cond, "fmt": fmt}
+    for engine in ("basic_pitch", "piano_hr"):
+        cache = _cache_path(bench, item, cond, fmt, engine)
+        if not cache.is_file():
+            return None
+        params = _params_for("piano", "balanced", None, engine)
+        notes[engine] = _roundtrip(_decode(cache, params, engine), "piano", bench / "work")
+        s = score_notes(ref, notes[engine], "piano")
+        row[engine] = {"f1": s["f1"], "f1_off": s["f1_off"], "n": len(notes[engine])}
+    agree = score_notes(notes["basic_pitch"], notes["piano_hr"], "piano")
+    row["signals"] = {
+        "share_db": _share_db(bench, item, cond, fmt),
+        "ratio": len(notes["piano_hr"]) / max(1, len(notes["basic_pitch"])),
+        "agree": agree["f1"],
+        "hr_conf": _hr_conf(_cache_path(bench, item, cond, fmt, "piano_hr")),
+    }
+    return row
+
+
+def _rule_score(units: list[dict], signal: str, cut: float, above: bool) -> dict:
+    """piano_hr where the signal is above ``cut`` (or below it), else Basic
+    Pitch: the mean onset F1 of what the rule picks, and how often it picks the
+    winner where the engines differ."""
+    picked, right, differ = [], 0, 0
+    for u in units:
+        value = u["signals"][signal]
+        hr = (value > cut) if above else (value < cut)
+        f1 = u["piano_hr"]["f1"] if hr else u["basic_pitch"]["f1"]
+        picked.append(f1)
+        delta = u["piano_hr"]["f1"] - u["basic_pitch"]["f1"]
+        if abs(delta) > DIFFER:
+            differ += 1
+            right += (delta > 0) == hr
+    return {
+        "f1": sum(picked) / len(picked),
+        "right": right,
+        "differ": differ,
+        "accuracy": right / differ if differ else None,
+    }
+
+
+def _fit(units: list[dict], signal: str) -> dict | None:
+    """The cut and direction with the best mean F1 on ``units``."""
+    values = sorted({u["signals"][signal] for u in units})
+    if len(values) < 2:
+        return None
+    cuts = [(a + b) / 2 for a, b in zip(values, values[1:], strict=False)]
+    cuts = [values[0] - 1, *cuts, values[-1] + 1]
+    best = None
+    for cut in cuts:
+        for above in (True, False):
+            s = _rule_score(units, signal, cut, above)
+            if best is None or s["f1"] > best["f1"] + 1e-12:
+                best = {"cut": cut, "above": above, **s}
+    return best
+
+
+def cmd_compare(args) -> None:
+    """Per song: which piano engine wins (onset F1, balanced), and whether one
+    of SIGNALS predicts it. Each signal's rule is fitted on the tuning split
+    only and then applied, unchanged, to the held-out items. An ``auto`` engine
+    is worth offering only if a rule does both: on the tuning split it picks
+    the winner more often than always taking the better engine does, with a
+    higher mean F1; and on held-out it is at or above the better fixed engine
+    overall and within 0.01 of it in every set and condition.
+    results/<tag>.json and .md hold the rules and the scores; the counts are
+    of the units where the engines differ by more than DIFFER."""
+    from concurrent.futures import ProcessPoolExecutor
+
+    bench = args.bench
+    items = [i for i in _items(bench) if i["stem"] == "piano"]
+    tasks = [(bench, i, c, f) for i in items for c in CONDITIONS for f in FORMATS]
+    with ProcessPoolExecutor(args.jobs, initializer=_pool_init, initargs=(bench,)) as pool:
+        units = [u for u in pool.map(_compare_one, tasks, chunksize=1) if u is not None]
+    tune = [u for u in units if u["split"] == "tune"]
+    held = [u for u in units if u["split"] != "tune"]
+    lines = [
+        "| signal | units | fitted on tune | tune: F1 auto / BP / HR, winner picked "
+        "| held: F1 auto / BP / HR, winner picked |",
+        "|---|---|---|---|---|",
+    ]
+    report = {"differ": DIFFER, "signals": {}, "units": units}
+
+    def fixed(us: list[dict], engine: str) -> float:
+        return sum(u[engine]["f1"] for u in us) / len(us)
+
+    for signal in SIGNALS:
+        t = [u for u in tune if u["signals"][signal] is not None]
+        h = [u for u in held if u["signals"][signal] is not None]
+        rule = _fit(t, signal) if t else None
+        if rule is None or not h:
+            continue
+        on_held = _rule_score(h, signal, rule["cut"], rule["above"])
+        groups = {}
+        for key in sorted({(u["set"], u["cond"]) for u in h}):
+            g = [u for u in h if (u["set"], u["cond"]) == key]
+            groups["/".join(key)] = {
+                "units": len(g),
+                "auto": _rule_score(g, signal, rule["cut"], rule["above"]),
+                "basic_pitch": fixed(g, "basic_pitch"),
+                "piano_hr": fixed(g, "piano_hr"),
+            }
+        report["signals"][signal] = {"rule": rule, "held": on_held, "held_groups": groups}
+        side = ">" if rule["above"] else "<"
+
+        def pct(s):
+            return f"{s['right']}/{s['differ']}" if s["differ"] else "-"
+
+        lines.append(
+            f"| {signal} | {len(t)} + {len(h)} | piano_hr if {side} {rule['cut']:.3f} | "
+            f"{rule['f1']:.3f} / {fixed(t, 'basic_pitch'):.3f} / {fixed(t, 'piano_hr'):.3f}, "
+            f"{pct(rule)} | {on_held['f1']:.3f} / {fixed(h, 'basic_pitch'):.3f} / "
+            f"{fixed(h, 'piano_hr'):.3f}, {pct(on_held)} |"
+        )
+        for name, g in groups.items():
+            lines.append(
+                f"| {signal}: {name} | {g['units']} | | | {g['auto']['f1']:.3f} / "
+                f"{g['basic_pitch']:.3f} / {g['piano_hr']:.3f}, {pct(g['auto'])} |"
+            )
+    _write_json(bench / "results" / f"{args.tag}.json", report)
+    text = "\n".join(lines) + "\n"
+    (bench / "results" / f"{args.tag}.md").write_text(text, encoding="utf-8")
+    print(text)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--bench", type=Path, default=DEFAULT_BENCH)
     parser.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
+    parser.add_argument("--engine", choices=("basic_pitch", "piano_hr"), default="basic_pitch")
+    parser.add_argument("--device", choices=("cpu", "cuda"), help="piano_hr only")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("prepare")
+    p = sub.add_parser("fetch-piano-hr")
+    p.add_argument("--from-url", help="fetch the same file from this address instead")
     p = sub.add_parser("separate")
     p.add_argument("--formats", nargs="+", default=list(FORMATS))
     p = sub.add_parser("cache")
@@ -948,6 +1275,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--est-dir", type=Path, help="score another engine's notes: <dir>/<cond>/<fmt>/<id>.json"
     )
+    p = sub.add_parser("compare")
+    p.add_argument("--tag", default="compare-engines")
     p = sub.add_parser("sweep")
     p.add_argument("--tag", required=True)
     p.add_argument("--trials", required=True, help="a JSON file: a list of override objects")
@@ -960,10 +1289,12 @@ def main(argv: list[str] | None = None) -> int:
     _vendor_path()
     {
         "prepare": cmd_prepare,
+        "fetch-piano-hr": cmd_fetch_piano_hr,
         "separate": cmd_separate,
         "cache": cmd_cache,
         "score": cmd_score,
         "sweep": cmd_sweep,
+        "compare": cmd_compare,
     }[args.cmd](args)
     return 0
 

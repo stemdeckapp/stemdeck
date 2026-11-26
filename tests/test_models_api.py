@@ -200,3 +200,25 @@ def test_whisper_file_names():
 def test_the_route_is_read_only(client, folders):
     assert client.post("/api/models").status_code == 405
     assert client.delete("/api/models").status_code == 405
+
+
+def test_the_second_piano_engine_is_listed_with_its_download(client, folders):
+    """ByteDance Piano Transcription: its weights' licence, what a full
+    download is, and its state from the checkpoint the run downloads
+    (piano_hr.checkpoint_path, a tmp_path here: conftest's _isolate_piano_hr)."""
+    from app.pipeline import piano_hr
+
+    entry = _by_id(client.get("/api/models").json())["piano_hr"]
+    assert (entry["group"], entry["use"], entry["stems"]) == (
+        "transcription",
+        "midi_piano",
+        ["piano"],
+    )
+    assert (entry["license"], entry["download_bytes"]) == ("CC BY 4.0", 171_966_578)
+    assert (entry["state"], entry["size_bytes"]) == ("not_downloaded", None)
+    _write(piano_hr.checkpoint_path(), 1000)
+    entry = _by_id(client.get("/api/models").json())["piano_hr"]
+    assert (entry["state"], entry["size_bytes"]) == ("partial", 1000)
+    _write(piano_hr.checkpoint_path(), 171_966_578)
+    entry = _by_id(client.get("/api/models").json())["piano_hr"]
+    assert (entry["state"], entry["size_bytes"]) == ("downloaded", 171_966_578)

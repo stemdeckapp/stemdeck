@@ -85,3 +85,61 @@ def test_the_strongest_onset_on_a_two_frame_plateau_is_a_note():
         infer_onsets=False, max_freq=None, min_freq=None, melodia_trick=False,
     )  # fmt: skip
     assert theirs == []
+
+
+def _pedal_reference(notes, pedals):
+    """The benchmark's own rule (scripts/midi_bench.py references and the
+    piano_hr spike), as plainly as it can be written: the first pedal that
+    holds the release, then the next start of the same key."""
+    out = []
+    notes = sorted(notes, key=lambda n: n[0])
+    for i, n in enumerate(notes):
+        end = n[1]
+        for a, b in pedals:
+            if a <= end < b:
+                end = b
+                break
+        for m in notes[i + 1 :]:
+            if m[2] == n[2] and m[0] > n[0]:
+                end = min(end, m[0])
+                break
+        out.append((n[0], max(end, n[1]), n[2], n[3]))
+    return out
+
+
+def test_the_pedal_holds_a_released_note_until_it_lifts_or_the_key_returns():
+    pedals = [(0.8, 1.5), (3.0, 4.0)]
+    notes = [
+        (0.5, 0.9, 60, 100),  # released under the first pedal: held to 1.5
+        (1.0, 1.2, 64, 64),  # the same
+        (1.3, 1.4, 60, 90),  # 60 again: the first 60 ends here, at 1.3
+        (2.0, 2.5, 67, 70),  # no pedal: as played
+        (3.5, 5.0, 69, 80),  # released after the pedal lifts: as played
+    ]
+    held = mn.pedal_extend(notes, pedals)
+    assert held == [
+        (0.5, 1.3, 60, 100),
+        (1.0, 1.5, 64, 64),
+        (1.3, 1.5, 60, 90),
+        (2.0, 2.5, 67, 70),
+        (3.5, 5.0, 69, 80),
+    ]
+    assert held == _pedal_reference(notes, pedals)
+    assert mn.pedal_extend(notes, []) == _pedal_reference(notes, [])
+
+
+def test_pedal_extend_is_the_benchmark_rule_on_many_notes():
+    import random
+
+    rng = random.Random(7)
+    notes = []
+    for _ in range(600):
+        start = round(rng.uniform(0, 60), 3)
+        notes.append((start, start + round(rng.uniform(0.05, 2), 3), rng.randint(40, 80), 90))
+    pedals, at = [], 0.0
+    while at < 60:
+        down = at + rng.uniform(0.2, 2)
+        up = down + rng.uniform(0.2, 3)
+        pedals.append((round(down, 3), round(up, 3)))
+        at = up
+    assert mn.pedal_extend(notes, pedals) == _pedal_reference(notes, pedals)

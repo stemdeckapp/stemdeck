@@ -9,3 +9,7 @@
 # against the wheel's own RECORD hashes. core.autocrlf would rewrite its line
 # endings on a Windows checkout and fail that check, so git leaves it alone.
 app/_vendor/transcribe/** -text
+
+# The same for the second piano engine (app/_vendor/piano_hr): its files are
+# checked against the sdists' own hashes (manifest.json) by the same test.
+app/_vendor/piano_hr/** -text

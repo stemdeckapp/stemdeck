@@ -14,7 +14,8 @@ machine's (a user name, a drive), and the page has no use for them.
 group is "separation", "transcription" or "analysis". use says what the
 model does inside its group: "stems" (it separates the stems listed),
 "lead_backing" (the Karaoke split of the vocals), "midi" (Basic Pitch),
-"lyrics", "lyrics_gpu", "lyrics_cpu" (Whisper) or "beats" (beat_this).
+"midi_piano" (the second piano engine, piano_hr), "lyrics", "lyrics_gpu",
+"lyrics_cpu" (Whisper) or "beats" (beat_this).
 
 state is one of:
     "downloaded"      every file is there (a pinned file at its pinned size)
@@ -31,7 +32,8 @@ code knows it.
 Where each model lives is asked of the code that downloads it, never worked
 out again here: stem_models.model_path() for the separation models (torch.hub's
 checkpoints folder, and MODELS_DIR for Kim), model_cache.vocal_split_artifacts()
-for the Karaoke split, model_cache.beat_this_artifacts() for the beat model,
+for the Karaoke split, piano_hr.checkpoint_path() for the second piano engine
+(MODELS_DIR), model_cache.beat_this_artifacts() for the beat model,
 transcribe.whisper_models_dir() for Whisper. Two models the code does not place
 are left out: the song-sections model, which the Hugging Face hub caches under
 a layout only allin1_infer names, and the models a person added, which
@@ -237,6 +239,30 @@ def _basic_pitch() -> dict[str, Any]:
     )
 
 
+def _piano_hr() -> dict[str, Any]:
+    from app.core.config import PIANO_HR_CHECKPOINT_SIZE
+    from app.pipeline import midi, piano_hr
+
+    try:
+        available = midi.engine_availability(piano_hr.ENGINE_ID)[0]
+    except Exception:  # noqa: BLE001
+        available = False
+    state, size = _located(lambda: [(piano_hr.checkpoint_path(), PIANO_HR_CHECKPOINT_SIZE)])
+    return _entry(
+        piano_hr.ENGINE_ID,
+        "transcription",
+        "midi_piano",
+        piano_hr.ENGINE_LABEL,
+        stems=["piano"],
+        # The weights' licence: the code is MIT (GET /api/transcribe/status).
+        license=piano_hr.MODEL_LICENCE,
+        state=state,
+        size=size,
+        download_bytes=PIANO_HR_CHECKPOINT_SIZE,
+        available=available,
+    )
+
+
 def whisper_file(name: str) -> str:
     """The file Whisper keeps model ``name`` in."""
     return _WHISPER_FILES.get(name, f"{name}.pt")
@@ -295,6 +321,7 @@ def inventory() -> dict[str, Any]:
             *_separation(),
             _karaoke(),
             _basic_pitch(),
+            _piano_hr(),
             *_whisper(),
             _beat_this(),
         ],

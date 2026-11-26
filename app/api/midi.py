@@ -11,7 +11,8 @@ Its own router rather than more of jobs.py (2900 lines): the five routes, the
 refusal table and the run task are one feature. Every refusal is
 {"detail": <fixed sentence>, "code": <code>}, checked in this order: the job
 (404 job_not_found), the body (400 stem_not_supported, bad_detail), whether
-the engine can run here at all (503 engine_unavailable), the setting (403
+the stem's engine can run here at all (503 engine_unavailable: the piano's
+is the one Settings picks, the bass's always Basic Pitch), the setting (403
 disabled), whether anything holds the song or the server's one MIDI slot (409
 busy), the stem (409 no_stem), its length (413 too_long). docs/api.md has
 the contract.
@@ -34,7 +35,7 @@ from app.core.models import FINISHED_STATUSES, Job, clean_midi
 from app.core.registry import get as registry_get
 from app.core.registry import operation as registry_operation
 from app.core.registry import persist as registry_persist
-from app.core.settings import get_transcribe_detail, midi_stem_enabled
+from app.core.settings import get_transcribe_detail, get_transcribe_piano_engine, midi_stem_enabled
 from app.core.stem_files import stem_path
 from app.core.stems_location import is_relocating
 from app.pipeline import jobqueue, midi_file
@@ -169,7 +170,9 @@ async def start_midi(job_id: str, body: MidiBody) -> JSONResponse:
     detail = body.detail if body.detail is not None else get_transcribe_detail()
     if detail not in MIDI_DETAILS:
         return _refusal("bad_detail")
-    if not midi_run.availability()[0]:
+    # Read per request: a change in Settings applies to the next run.
+    engine = midi_run.engine_for(stem, get_transcribe_piano_engine())
+    if not midi_run.engine_availability(engine)[0]:
         return _refusal("engine_unavailable")
     if not midi_stem_enabled(stem):
         return _refusal("disabled")
@@ -185,7 +188,7 @@ async def start_midi(job_id: str, body: MidiBody) -> JSONResponse:
     if _song_busy(job):
         return _refusal("busy")
     has_file = midi_run.midi_path(job_dir, stem).is_file()
-    run = midi_run.claim(job, stem, detail, has_file)
+    run = midi_run.claim(job, stem, detail, has_file, engine)
     if run is None:
         return _refusal("busy")
     task = asyncio.create_task(_midi_task(job, job_dir, run, audio))

@@ -1,14 +1,16 @@
-"""Isolated Basic Pitch worker: one stem in, one .mid out.
+"""Isolated note worker: one stem in, one .mid out.
 
 Run as ``python -m app.pipeline.midi_worker --audio <stem> --out <file.mid>
---stem piano|bass --params <json> --tempo <json> --max-seconds <n>``. A fresh
-process per request, like the lyrics transcription worker: a run is a few
-seconds of CPU, asked for by hand, so nothing stays resident between them.
+--stem piano|bass --params <json> --tempo <json> --max-seconds <n>
+--engine basic_pitch|piano_hr ...``. A fresh process per request, like the
+lyrics transcription worker: a run is asked for by hand, seconds to a few
+minutes of work, so nothing stays resident between them.
 
 Protocol: the real stdout carries JSON lines only, one object each:
 
-    {"event": "progress", "pct": 0..100}
-    {"event": "done", "notes": n, "seconds_audio": s}
+    {"event": "progress", "pct": 0..100}   (piano_hr's first one after the
+                                            start also has "device")
+    {"event": "done", "notes": n, "seconds_audio": s, "device": "cpu"|"cuda"}
     {"event": "error", "code": "<code>"}   (and "phase": "import" when the
                                             engine itself failed to import)
 
@@ -18,11 +20,22 @@ imported the process moves its stdout file descriptor aside for the protocol
 and points descriptor 1 at stderr: whatever else writes "to stdout", Python
 or native, lands in stderr, which the parent keeps only as a diagnostic tail.
 
-The engine is the vendored copy in app/_vendor/transcribe, put first on
-sys.path, and always its ONNX model by explicit path: TensorFlow, CoreML and
-TFLite are blocked from importing, so an install that happens to have one
-cannot change which model runs. The worker never needs the network, and
-refuses it: every socket connect and name lookup raises.
+Two engines, each a vendored copy put first on sys.path:
+
+- basic_pitch (app/_vendor/transcribe): always its ONNX model by explicit
+  path, on the CPU. TensorFlow, CoreML and TFLite are blocked from
+  importing, so an install that happens to have one cannot change which
+  model runs.
+- piano_hr (app/_vendor/piano_hr, app/pipeline/piano_hr.py): the piano only,
+  on torch, from a checkpoint the parent has already downloaded and checked
+  against its pinned SHA-256 (--checkpoint), loaded with weights_only.
+  --device cuda runs it on the GPU when torch has one and it has
+  --gpu-min-free-mb free, else on the CPU; "done" says which it was.
+  matplotlib, which the package imported for nothing, is blocked.
+
+The worker never needs the network, and refuses it: every socket connect and
+name lookup raises, and so does os.system (the package's own downloader is a
+wget through it, in a class left out of the vendored copy).
 
 Error codes: too_long (the file's header says it is longer than
 --max-seconds, refused before anything is decoded), no_audio (missing or
@@ -77,22 +90,34 @@ def _block_network() -> None:
     socket.create_connection = _no_network  # type: ignore[assignment]
     socket.getaddrinfo = _no_network  # type: ignore[assignment]
     socket.gethostbyname = _no_network  # type: ignore[assignment]
+    # A shell command could reach the network around the socket module.
+    os.system = _no_network  # type: ignore[assignment]
 
 
-# Model runtimes Basic Pitch tries before ONNX when they import. None in
+# Model runtimes Basic Pitch tries before ONNX when they import, and
+# matplotlib, which nothing in a transcription draws with. None in
 # sys.modules makes an import of them raise ImportError at once.
-_BLOCKED_RUNTIMES = ("tensorflow", "coremltools", "tflite_runtime")
+_BLOCKED_RUNTIMES = ("tensorflow", "coremltools", "tflite_runtime", "matplotlib")
 
 
-def _install_engine(vendor_dir: Path) -> None:
+def _put_first(path: Path) -> None:
+    value = str(path)
+    if value in sys.path:
+        sys.path.remove(value)
+    sys.path.insert(0, value)
+
+
+def _install_engine(vendor_dir: Path, piano_vendor: Path | None = None) -> None:
+    """Put the vendored engines first on sys.path: ``vendor_dir`` (Basic
+    Pitch, and mido, which the file writer needs for both engines), then
+    ``piano_vendor`` in front of it for piano_hr."""
     import logging
 
     for name in _BLOCKED_RUNTIMES:
         sys.modules[name] = None  # type: ignore[assignment]
-    path = str(vendor_dir)
-    if path in sys.path:
-        sys.path.remove(path)
-    sys.path.insert(0, path)
+    _put_first(vendor_dir)
+    if piano_vendor is not None:
+        _put_first(piano_vendor)
     # The root logger answers its first warning by configuring itself
     # (logging.lastResort, then basicConfig on the module-level helpers).
     # Basic Pitch logs one per runtime it does not find; a handler of our own
@@ -114,6 +139,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-seconds", type=float, required=True)
     parser.add_argument("--vendor", type=Path, required=True)
     parser.add_argument("--model", type=Path, required=True)
+    parser.add_argument("--engine", choices=("basic_pitch", "piano_hr"), default="basic_pitch")
+    parser.add_argument("--piano-vendor", type=Path)
+    parser.add_argument("--checkpoint", type=Path)
+    parser.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
+    parser.add_argument("--batch", type=int, default=1)
+    parser.add_argument("--gpu-min-free-mb", type=int, default=0)
     return parser
 
 
@@ -215,6 +246,64 @@ def output_notes(output: dict, params: dict) -> list:
     return notes
 
 
+def pick_device(asked: str, min_free_mb: int) -> str:
+    """The device piano_hr runs on: "cuda" when asked for and torch has a GPU
+    with ``min_free_mb`` free right now (a separation may hold most of it),
+    else "cpu". Said on stderr, so the parent's log shows why."""
+    if asked != "cuda":
+        return "cpu"
+    import torch
+
+    if not torch.cuda.is_available():
+        print("no CUDA device: running on the CPU", file=sys.stderr)
+        return "cpu"
+    try:
+        free, _total = torch.cuda.mem_get_info()
+    except Exception as exc:  # noqa: BLE001 -- an unreadable card is not one to use
+        print(f"GPU memory unreadable ({type(exc).__name__}): running on the CPU", file=sys.stderr)
+        return "cpu"
+    if free < min_free_mb * 2**20:
+        print(
+            f"{free // 2**20} MB free on the GPU, {min_free_mb} MB needed: running on the CPU",
+            file=sys.stderr,
+        )
+        return "cpu"
+    return "cuda"
+
+
+def _import_engine(engine: str) -> None:
+    import numpy  # noqa: F401
+
+    if engine == "piano_hr":
+        import torch  # noqa: F401
+        from piano_transcription_inference import models, utilities  # noqa: F401
+    else:
+        from basic_pitch import inference, note_creation  # noqa: F401
+        from basic_pitch.constants import AUDIO_N_SAMPLES, AUDIO_SAMPLE_RATE, FFT_HOP  # noqa: F401
+
+
+def _notes(args: argparse.Namespace, params: dict) -> tuple[list, str]:
+    """The notes of the whole stem, and the device they were made on."""
+
+    def on_pct(pct: int) -> None:
+        emit("progress", pct=pct)
+
+    if args.engine == "piano_hr":
+        from app.pipeline import piano_hr
+
+        device = pick_device(args.device, args.gpu_min_free_mb)
+        # Said before anything can fail on it: the parent runs a failure on
+        # the GPU again on the CPU, and one already on the CPU it does not.
+        emit("progress", pct=2, device=device)
+        model = piano_hr.load_model(args.checkpoint, device)
+        audio = piano_hr.read_audio(args.audio)
+        output = piano_hr.model_output(model, audio, device, args.batch, on_pct)
+        return piano_hr.output_notes(output, params), device
+    model = load_model(args.model)
+    output = model_output(model, args.audio, on_pct)
+    return output_notes(output, params), "cpu"
+
+
 def transcribe(args: argparse.Namespace) -> int:
     seconds = audio_seconds(args.audio)
     if seconds is None:
@@ -225,11 +314,14 @@ def transcribe(args: argparse.Namespace) -> int:
         return 3
     params = json.loads(args.params)
     plan = json.loads(args.tempo)
+    if args.engine == "piano_hr" and (args.checkpoint is None or not args.checkpoint.is_file()):
+        # The parent downloads and checks it before it starts this process.
+        print("piano_hr needs --checkpoint, an existing file", file=sys.stderr)
+        emit("error", code="engine")
+        return 4
 
     try:
-        import numpy  # noqa: F401
-        from basic_pitch import inference, note_creation  # noqa: F401
-        from basic_pitch.constants import AUDIO_N_SAMPLES, AUDIO_SAMPLE_RATE, FFT_HOP  # noqa: F401
+        _import_engine(args.engine)
     except Exception as exc:
         print(f"engine import failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         # "import": every run would fail the same way (midi.availability).
@@ -240,9 +332,7 @@ def transcribe(args: argparse.Namespace) -> int:
 
     emit("progress", pct=1)
     try:
-        model = load_model(args.model)
-        output = model_output(model, args.audio, lambda pct: emit("progress", pct=pct))
-        notes = output_notes(output, params)
+        notes, device = _notes(args, params)
     except Exception as exc:
         print(f"engine failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         emit("error", code="engine")
@@ -255,7 +345,7 @@ def transcribe(args: argparse.Namespace) -> int:
         print(f"could not write the file: {exc}", file=sys.stderr)
         emit("error", code=_write_code(exc))
         return 5
-    emit("done", notes=count, seconds_audio=round(seconds, 3))
+    emit("done", notes=count, seconds_audio=round(seconds, 3), device=device)
     return 0
 
 
@@ -268,7 +358,11 @@ def main(argv: list[str] | None = None) -> int:
     if not args.audio.is_file():
         emit("error", code="no_audio")
         return 3
-    _install_engine(args.vendor)
+    if args.engine == "piano_hr" and args.stem != "piano":
+        # The model knows the 88 keys and nothing else.
+        emit("error", code="engine")
+        return 4
+    _install_engine(args.vendor, args.piano_vendor if args.engine == "piano_hr" else None)
     return transcribe(args)
 
 

@@ -97,6 +97,7 @@ from app.core.settings import (
     get_transcribe_detail,
     get_transcribe_lyrics,
     get_transcribe_piano,
+    get_transcribe_piano_engine,
     get_video_encoder,
     get_video_max_height,
     recommended_stem_models,
@@ -124,6 +125,7 @@ from app.core.settings import (
     set_transcribe_detail,
     set_transcribe_lyrics,
     set_transcribe_piano,
+    set_transcribe_piano_engine,
     set_video_encoder,
     set_video_max_height,
     stem_models_reason,
@@ -590,6 +592,9 @@ def _settings_payload() -> dict[str, object]:
         "transcribe_piano": get_transcribe_piano(),
         "transcribe_bass": get_transcribe_bass(),
         "transcribe_detail": get_transcribe_detail(),
+        # What makes the piano's MIDI: "basic_pitch" | "piano_hr". The bass is
+        # always Basic Pitch.
+        "transcribe_piano_engine": get_transcribe_piano_engine(),
         # The take render's H.264 encoder: "auto" | "cpu" | an encoder name.
         # GET/POST /api/video-encoders list and test what this machine has.
         "video_encoder": get_video_encoder(),
@@ -732,7 +737,12 @@ async def update_settings(request: Request) -> dict[str, object]:
             status_code=422,
             detail="idle_unload_minutes must be a whole number of minutes, 0 or more",
         )
-    for key in ("transcribe_piano", "transcribe_bass", "transcribe_detail"):
+    for key in (
+        "transcribe_piano",
+        "transcribe_bass",
+        "transcribe_detail",
+        "transcribe_piano_engine",
+    ):
         if key in body:
             try:
                 check_midi_setting(key, body[key])
@@ -841,6 +851,7 @@ async def update_settings(request: Request) -> dict[str, object]:
         ("transcribe_piano", set_transcribe_piano),
         ("transcribe_bass", set_transcribe_bass),
         ("transcribe_detail", set_transcribe_detail),
+        ("transcribe_piano_engine", set_transcribe_piano_engine),
     ):
         if key in body:
             # Checked with the other value-only checks above, before anything

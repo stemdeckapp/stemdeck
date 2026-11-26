@@ -1,4 +1,4 @@
-"""The Basic Pitch worker (app/pipeline/midi_worker.py) as a subprocess.
+"""The note worker (app/pipeline/midi_worker.py) as a subprocess.
 
 Real inference on short synthetic tones (the ONNX model is vendored, so
 nothing is downloaded), then the protocol with a stand-in engine that does
@@ -265,7 +265,7 @@ def test_stdout_carries_json_lines_only_and_the_network_is_refused(tmp_path):
     result = _run(_cmd(audio, out, "piano", vendor=fake), tmp_path, timeout=120)
     assert result.returncode == 0, result.stderr[-3000:]
     events = _events(result.stdout)  # fails on any line that is not one
-    assert events[-1] == {"event": "done", "notes": 2, "seconds_audio": 1.0}
+    assert events[-1] == {"event": "done", "notes": 2, "seconds_audio": 1.0, "device": "cpu"}
     assert [e["pct"] for e in events if e["event"] == "progress"] == [1, 5, 33, 61, 90, 95]
     # Everything the engine printed went to stderr; its import warning did not.
     for stray in ("stray print", "stray write", "stray bytes", "loading", "making notes"):
@@ -293,3 +293,251 @@ def test_a_write_failure_is_io(tmp_path):
     out.mkdir()
     result = _run(_cmd(audio, out, "piano", vendor=fake), tmp_path, timeout=120)
     assert _events(result.stdout)[-1] == {"event": "error", "code": "io"}
+
+
+# -- the second piano engine, piano_hr (app/pipeline/piano_hr.py)
+
+
+def _fake_piano_hr(tmp_path: Path) -> tuple[Path, Path]:
+    """A stand-in piano_transcription_inference and a checkpoint for it, made
+    with the real torch: the worker's own load (weights_only, strict), its
+    batches and its post-processing call run as they do for the real model.
+    It misbehaves as the BP stand-in does, and tries matplotlib and os.system."""
+    import torch
+
+    root = tmp_path / "fake_piano_vendor"
+    pkg = root / "piano_transcription_inference"
+    pkg.mkdir(parents=True)
+    probe = tmp_path / "piano-probe.txt"
+    (pkg / "__init__.py").write_text(
+        textwrap.dedent(
+            f"""
+            import os, socket, sys
+            print("stray print at import")
+            os.write(1, b"stray bytes on descriptor 1\\n")
+            results = []
+            for attempt in (
+                lambda: socket.create_connection(("127.0.0.1", 9), timeout=1),
+                lambda: os.system("echo reached"),
+                lambda: __import__("matplotlib"),
+            ):
+                try:
+                    attempt()
+                    results.append("reached")
+                except ImportError:
+                    results.append("blocked")
+                except OSError as exc:
+                    results.append("blocked" if "no network access" in str(exc) else repr(exc))
+            open({str(probe)!r}, "w").write(",".join(results))
+            """
+        ),
+        encoding="utf-8",
+    )
+    (pkg / "models.py").write_text(
+        textwrap.dedent(
+            """
+            import torch
+
+            class Note_pedal(torch.nn.Module):
+                def __init__(self, frames_per_second, classes_num):
+                    super().__init__()
+                    self.note_model = torch.nn.Linear(1, 1)
+                    self.pedal_model = torch.nn.Linear(1, 1)
+
+                def forward(self, x):
+                    print("batch of", x.shape[0])
+                    n = x.shape[0]
+                    # 9 frames a segment: 8 after the last is dropped, in quarters.
+                    zeros = torch.zeros(n, 9, 88)
+                    return {"frame_output": zeros, "reg_onset_output": zeros + 0.5,
+                            "pedal_frame_output": torch.zeros(n, 9, 1)}
+            """
+        ),
+        encoding="utf-8",
+    )
+    (pkg / "utilities.py").write_text(
+        textwrap.dedent(
+            """
+            class RegressionPostProcessor:
+                def __init__(self, frames_per_second, classes_num, onset_threshold,
+                             offset_threshold, frame_threshold, pedal_offset_threshold):
+                    print("thresholds", onset_threshold, offset_threshold, frame_threshold)
+
+                def output_dict_to_midi_events(self, output):
+                    assert output["reg_onset_output"].shape[1] == 88
+                    output["added"] = True
+                    notes = [
+                        {"onset_time": 0.5, "offset_time": 0.9, "midi_note": 60, "velocity": 100},
+                        {"onset_time": 1.0, "offset_time": 1.2, "midi_note": 64, "velocity": 64},
+                    ]
+                    return notes, [{"onset_time": 0.8, "offset_time": 1.5}]
+            """
+        ),
+        encoding="utf-8",
+    )
+    model = torch.nn.Module()
+    model.note_model = torch.nn.Linear(1, 1)
+    model.pedal_model = torch.nn.Linear(1, 1)
+    checkpoint = tmp_path / "fake.pth"
+    torch.save(
+        {
+            "model": {
+                "note_model": model.note_model.state_dict(),
+                "pedal_model": model.pedal_model.state_dict(),
+            }
+        },
+        checkpoint,
+    )
+    return root, checkpoint
+
+
+def _hr_cmd(audio: Path, out: Path, vendor: Path, checkpoint: Path, **over) -> list[str]:
+    stem = over.pop("stem", "piano")
+    cmd = midi_run._spawn_worker_cmd(
+        audio,
+        out,
+        stem,
+        midi_run.run_params("piano", "balanced", "piano_hr"),
+        mf.default_tempo(),
+        "piano_hr",
+        over.pop("device", "cpu"),
+    )
+    cmd[cmd.index("--piano-vendor") + 1] = str(vendor)
+    cmd[cmd.index("--checkpoint") + 1] = str(checkpoint)
+    for flag, value in over.items():
+        cmd[cmd.index("--" + flag.replace("_", "-")) + 1] = str(value)
+    return cmd
+
+
+def test_piano_hr_runs_in_batches_with_stdout_claimed_and_the_network_refused(tmp_path):
+    vendor, checkpoint = _fake_piano_hr(tmp_path)
+    # 31 s at 16 kHz: four 10 s segments 5 s apart after padding to 40 s,
+    # wait seven, run two at a time: four batches.
+    audio = _wav(tmp_path / "a.wav", _tone(220, 31))
+    out = tmp_path / "a.mid"
+    result = _run(_hr_cmd(audio, out, vendor, checkpoint, batch=2), tmp_path, timeout=180)
+    assert result.returncode == 0, result.stderr[-3000:]
+    events = _events(result.stdout)
+    assert events[-1] == {"event": "done", "notes": 2, "seconds_audio": 31.0, "device": "cpu"}
+    pcts = [e["pct"] for e in events if e["event"] == "progress"]
+    assert pcts == sorted(pcts) and pcts[0] == 1 and pcts[-1] == 95
+    assert result.stderr.count("batch of 2") == 3 and result.stderr.count("batch of 1") == 1
+    assert "stray print" in result.stderr and "stray bytes" in result.stderr
+    p = midi_run.run_params("piano", "balanced", "piano_hr")
+    thresholds = f"{p['onset_threshold']} {p['offset_threshold']} {p['frame_threshold']}"
+    assert f"thresholds {thresholds}" in result.stderr
+    # The socket, a shell command and matplotlib are all refused.
+    assert (tmp_path / "piano-probe.txt").read_text() == "blocked,blocked,blocked"
+    # Both notes held by the pedal to 1.5 s; velocity from the engine's 0..127.
+    notes = mf.read_notes(out)["notes"]
+    assert [(n[0], n[1], n[2]) for n in notes] == [(0.5, 1.5, 60), (1.0, 1.5, 64)]
+    assert [n[3] for n in notes] == [mf.velocity(100 / 127), mf.velocity(64 / 127)]
+
+
+def test_piano_hr_refuses_the_bass_and_a_missing_checkpoint(tmp_path):
+    vendor, checkpoint = _fake_piano_hr(tmp_path)
+    audio = _wav(tmp_path / "a.wav", _tone(220, 1))
+    for cmd in (
+        _hr_cmd(audio, tmp_path / "a.mid", vendor, checkpoint, stem="bass"),
+        _hr_cmd(audio, tmp_path / "a.mid", vendor, tmp_path / "missing.pth"),
+    ):
+        result = _run(cmd, tmp_path, timeout=120)
+        assert result.returncode != 0
+        assert _events(result.stdout)[-1] == {"event": "error", "code": "engine"}
+    assert not (tmp_path / "a.mid").exists()
+    # A file that is not a checkpoint of this model fails the load, not the import.
+    (tmp_path / "junk.pth").write_bytes(b"not a checkpoint")
+    result = _run(_hr_cmd(audio, tmp_path / "a.mid", vendor, tmp_path / "junk.pth"), tmp_path)
+    assert _events(result.stdout)[-1] == {"event": "error", "code": "engine"}
+
+
+def test_piano_hr_without_its_package_is_an_import_failure(tmp_path):
+    _vendor, checkpoint = _fake_piano_hr(tmp_path)
+    empty = tmp_path / "empty_vendor"
+    empty.mkdir()
+    audio = _wav(tmp_path / "a.wav", _tone(220, 1))
+    result = _run(_hr_cmd(audio, tmp_path / "a.mid", empty, checkpoint), tmp_path, timeout=120)
+    assert _events(result.stdout)[-1] == {"event": "error", "code": "engine", "phase": "import"}
+
+
+def test_segments_overlap_by_half_and_join_on_their_middle_halves():
+    """piano_hr.enframe and deframe, PianoTranscription's own steps: 10 s
+    segments 5 s apart, then the first three quarters of the first segment,
+    the middle half of each other one and the last three quarters of the
+    last, each segment's final frame dropped first."""
+    from app.pipeline import piano_hr
+
+    x = np.arange(40, dtype=float)[None, :]
+    segments = piano_hr.enframe(x, 10)
+    assert segments.shape == (7, 10)
+    assert [int(s[0]) for s in segments] == [0, 5, 10, 15, 20, 25, 30]
+    with pytest.raises(AssertionError):
+        piano_hr.enframe(np.zeros((1, 15)), 10)
+    # Frame f of segment i holds the time it stands for: i * 4 + f, at 9
+    # frames a segment (8 after the drop) and half of 8 apart.
+    out = np.array([[[i * 4 + f] for f in range(9)] for i in range(7)], dtype=float)
+    joined = piano_hr.deframe(out)
+    assert joined[:, 0].tolist() == list(range(32))
+    one = np.ones((1, 9, 88))
+    assert piano_hr.deframe(one).shape == (9, 88)
+
+
+def test_the_device_is_the_gpu_only_with_room_on_it(monkeypatch):
+    import torch
+
+    from app.pipeline import midi_worker
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "mem_get_info", lambda: (3000 * 2**20, 10_000 * 2**20))
+    assert midi_worker.pick_device("cuda", 2048) == "cuda"
+    assert midi_worker.pick_device("cpu", 2048) == "cpu"
+    assert midi_worker.pick_device("cuda", 4096) == "cpu"
+
+    def unreadable():
+        raise RuntimeError("CUDA error: unknown error")
+
+    monkeypatch.setattr(torch.cuda, "mem_get_info", unreadable)
+    assert midi_worker.pick_device("cuda", 2048) == "cpu"
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    assert midi_worker.pick_device("cuda", 0) == "cpu"
+
+
+def _real_piano_hr_checkpoint() -> Path | None:
+    """The real checkpoint, when this machine has it and it is the pinned
+    file: named by STEMDECK_TEST_PIANO_HR_CHECKPOINT, or the benchmark's copy."""
+    from app.pipeline import piano_hr
+
+    named = os.environ.get("STEMDECK_TEST_PIANO_HR_CHECKPOINT")
+    candidates = [Path(named)] if named else []
+    candidates += [
+        ROOT / "data" / "midi-bench" / "app-data" / "data" / "models" / "piano_hr"
+        / "CRNN_note_F1_0.9677_pedal_F1_0.9186.pth",
+        ROOT / "data" / "midi-bench" / "engines" / "pti-ckpt" / "note_F1_0.9677.pth",
+    ]  # fmt: skip
+    for path in candidates:
+        if path.is_file() and piano_hr.checkpoint_ok(path):
+            return path
+    return None
+
+
+def test_real_piano_hr_inference_finds_the_pitch(tmp_path):
+    """The real model, on the CPU, on a piano-like A440 (six partials,
+    decaying): A4, MIDI 69. Skipped where the 172 MB checkpoint is not here."""
+    from app.pipeline import piano_hr
+
+    checkpoint = _real_piano_hr_checkpoint()
+    if checkpoint is None:
+        pytest.skip("the piano_hr checkpoint is not on this machine")
+    silence = np.zeros(SR // 2)
+    audio = _wav(
+        tmp_path / "a440.wav",
+        np.concatenate([silence, _tone(440, 2, partials=6, decay=1.5), silence]),
+    )
+    out = tmp_path / "a440.mid"
+    result = _run(_hr_cmd(audio, out, piano_hr.VENDOR_DIR, checkpoint), tmp_path, timeout=300)
+    assert result.returncode == 0, result.stderr[-3000:]
+    events = _events(result.stdout)
+    assert events[-1]["event"] == "done" and events[-1]["device"] == "cpu"
+    notes = _pitches(out)
+    loudest = max(notes, key=lambda n: (n[2], n[1]))
+    assert loudest[0] == 69, notes

@@ -293,6 +293,75 @@ Basic Pitch is one model for every instrument. It hears overtones as quiet
 extra notes and a held note can come out as several; the file is a starting
 point to edit, not a score.
 
+### Second piano engine: ByteDance Piano Transcription (piano_hr)
+
+- **Engine**: ByteDance's high-resolution piano transcription (Kong et al.
+  2021, "High-resolution Piano Transcription with Pedals by Regressing Onset
+  and Offset Times"), PyPI `piano-transcription-inference` 0.0.6 with
+  `torchlibrosa` 0.1.0, run on the torch StemDeck already ships: on the GPU
+  when the separation device setting resolves to CUDA and 2 GB of it is free,
+  else on the CPU. MPS is not used: it was never measured on a Mac.
+- **Shipped in**: `app/_vendor/piano_hr/`, each sdist checked against the
+  sha256 PyPI publishes. The class that downloads its own checkpoint with
+  `wget` is left out, and the unused matplotlib import and audioread loader
+  are patched away; the folder's `README.md` and its patch say exactly what
+  changed. No change to `pyproject.toml` or `uv.lock`.
+- **Weights**: `CRNN_note_F1=0.9677_pedal_F1=0.9186.pth`, 171,966,578 bytes,
+  by Qiuqiang Kong, on Zenodo (record 4034264, doi:10.5281/zenodo.4034264).
+  Not bundled: the first piano run with this engine downloads it into
+  `<models dir>/piano_hr/`, in a process of its own (the transcription worker
+  has no network), with the run's progress and its Cancel. The address, size
+  and SHA-256 are pinned in `app/core/config.py`; a file that does not match
+  is never used and is downloaded again. Loaded with `weights_only`.
+- **License**: MIT for both packages' code (their texts ship beside them);
+  CC BY 4.0 for the weights, credited in Settings > Models and in the
+  third-party notices.
+- **Upstream**: https://github.com/qiuqiangkong/piano_transcription_inference
+
+**Training data**: MAESTRO, which its publisher distributes under CC BY-NC-SA
+4.0; the weights are published under CC BY 4.0. The same unsettled question
+as Basic Pitch's above, with the same answer for a free StemDeck.
+
+Chosen in Settings > Transcription, Keys engine (`transcribe_piano_engine`:
+`basic_pitch`, the default, or `piano_hr`). The bass is always Basic Pitch:
+this model knows only the piano's 88 keys. Measured with
+`scripts/midi_bench.py` (onset F1 at 50 ms, then with offsets too) on the
+held-out items (BabySlakh tracks 11 to 20, MAESTRO v3 test pieces, never tuned
+on), wav, Detail Balanced:
+
+| Held out | Basic Pitch | ByteDance Piano Transcription |
+|---|---|---|
+| MAESTRO, the recording | 0.813, 0.236 | 0.972, 0.877 |
+| MAESTRO, separated by htdemucs_6s | 0.748, 0.215 | 0.927, 0.810 |
+| BabySlakh, the piano stem | 0.868, 0.415 | 0.901, 0.770 |
+| BabySlakh, piano separated from the mix | 0.394, 0.121 | 0.350, 0.145 |
+
+Its thresholds were tuned on the BabySlakh tuning tracks only
+(`MIDI_PIANO_HR_PRESETS` in `app/core/config.py` has the sweep and the held
+out check). On real piano, solo or clearly audible, it is far better at both
+when notes start and when they end. On piano separated from a busy pop mix it
+writes the other instruments' bleed as notes (precision 0.38 against 0.43),
+so Basic Pitch stays the default, which also needs no download.
+
+No automatic choice: `scripts/midi_bench.py compare` tested four signals a run
+could measure (the piano stem's share of the separated stems, the ratio and
+the agreement of the two engines' notes, and the model's own onset
+confidence), each rule fitted on the tuning split and then applied unchanged
+to held out. With the shipped thresholds none beat simply taking ByteDance
+Piano Transcription on the tuning split: the best, its own confidence, picked
+the winner on 21 of the 28 tuning units where the engines differ, against 22
+for always ByteDance Piano Transcription, though it held up on held out (64 of
+70, mean onset F1 0.788 against 0.771 and 0.697). A rule that does no better
+than a constant where it was fitted is not one to ship
+(`results/compare-engines-tuned.md`).
+
+Speed, through the real worker (its start, the model's load, the run and the
+file), measured 2026-11-26 with `score --worker`: on an RTX 3080 with torch
+2.6.0+cu124, 3.8 s per minute of audio on the 3 to 4 minute BabySlakh songs:
+about 9 s a song to start the process and load the model, then 1.4 s a minute
+for the model itself; on a 24-thread CPU with torch 2.6.0, 36.9 s per minute (nine songs,
+38 minutes of audio). Basic Pitch takes 1 to 2 s a minute on the CPU.
+
 ## UVR-MDX-NET Karaoke 2 (on-demand lead/backing vocal split, #275)
 
 - **File**: `UVR_MDXNET_KARA_2.onnx`

@@ -8,6 +8,7 @@ so each test says exactly how the run ends: a file, an error, a hang.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import json
 import sys
@@ -34,8 +35,9 @@ OTHER = "fedcba654321"
 @pytest.fixture(autouse=True)
 def _fresh_runs():
     midi_run._current = None
-    midi_run._engine_broken = False
+    midi_run._engine_broken.clear()
     midi_run._installed.cache_clear()
+    midi_run._piano_hr_installed.cache_clear()
     yield
     run = midi_run._current
     if run is not None:
@@ -44,8 +46,9 @@ def _fresh_runs():
         while midi_run._current is not None and time.monotonic() < deadline:
             time.sleep(0.05)
     midi_run._current = None
-    midi_run._engine_broken = False
+    midi_run._engine_broken.clear()
     midi_run._installed.cache_clear()
+    midi_run._piano_hr_installed.cache_clear()
 
 
 @pytest.fixture
@@ -112,7 +115,7 @@ def worker(tmp_path, monkeypatch):
         pid_file = tmp_path / "child.pid"
         calls: list = []
 
-    def cmd(audio, out, stem, params, plan):
+    def cmd(audio, out, stem, params, plan, engine="basic_pitch", device="cpu"):
         Stub.calls.append((stem, params, plan))
         return [sys.executable, str(script), Stub.mode, str(out), str(Stub.pid_file)]
 
@@ -184,8 +187,29 @@ async def test_status_describes_the_engine(client):
                 "label": "Basic Pitch",
                 "version": "0.4.0",
                 "licence": "Apache-2.0",
-            }
+                "model_licence": "Apache-2.0",
+                "stems": ["piano", "bass"],
+                "available": True,
+                "reason": None,
+                "model": "built_in",
+                "download_bytes": None,
+            },
+            {
+                "id": "piano_hr",
+                "label": "ByteDance Piano Transcription",
+                "version": "0.0.6",
+                "licence": "MIT",
+                "model_licence": "CC BY 4.0",
+                "stems": ["piano"],
+                "available": True,
+                "reason": None,
+                # The test library's models folder never has it.
+                "model": "not_downloaded",
+                "download_bytes": 171_966_578,
+            },
         ],
+        "piano_engine": "basic_pitch",
+        "piano_engines": ["basic_pitch", "piano_hr"],
         "stems": ["piano", "bass"],
         "max_seconds": 1200,
         "details": ["balanced", "detailed", "clean"],
@@ -222,7 +246,13 @@ def test_status_never_imports_the_engine_or_onnxruntime():
     before = set(sys.modules)
     midi_run._installed.cache_clear()
     midi_run.status()
-    assert not {"onnxruntime", "basic_pitch", "mido"} & (set(sys.modules) - before)
+    assert not {
+        "onnxruntime",
+        "basic_pitch",
+        "mido",
+        "piano_transcription_inference",
+        "torchlibrosa",
+    } & (set(sys.modules) - before)
 
 
 # -- settings
@@ -527,7 +557,8 @@ def test_a_run_saved_while_running_comes_back_interrupted():
     assert not job.post_hoc_running()
     assert clean_midi({"piano": {"state": "running", "pct": float("nan"), "notes": True}}) == {
         "piano": {
-            "state": "running", "pct": 0, "notes": None, "engine": "basic_pitch", "detail": None,
+            "state": "running", "pct": 0, "phase": None, "notes": None, "engine": "basic_pitch",
+            "detail": None,
             "tempo_source": None, "at": None, "error_code": None, "has_file": False,
         }
     }  # fmt: skip
@@ -825,3 +856,341 @@ async def test_the_tempo_of_a_song_loaded_from_its_folder(
     # The run's state is kept in that metadata.json, beside what was there.
     meta = await _saved_meta(job_dir, "bass", entry)
     assert meta["midi"]["bass"]["tempo_source"] == source and meta["bpm"] == 152
+
+
+# -- the second piano engine (piano_hr): its setting, its checkpoint, its run
+
+CKPT = b"a stand-in for the piano_hr checkpoint " * 32
+CKPT_SHA = hashlib.sha256(CKPT).hexdigest()
+
+FETCH_STUB = textwrap.dedent(
+    """
+    import json, sys, time
+    mode, dst, body = sys.argv[1], sys.argv[2], sys.argv[3]
+    def emit(**e):
+        print(json.dumps(e), flush=True)
+    emit(event="progress", pct=0)
+    if mode == "ok":
+        emit(event="progress", pct=60)
+        open(dst, "wb").write(open(body, "rb").read())
+        emit(event="progress", pct=100)
+        emit(event="done")
+    elif mode == "wrong":
+        open(dst, "wb").write(b"not the pinned bytes at all")
+        emit(event="done")
+    elif mode == "fail":
+        print("model download failed: no route to host", file=sys.stderr, flush=True)
+        emit(event="error", code="download")
+        sys.exit(3)
+    elif mode == "sleep":
+        time.sleep(60)
+    """
+)
+
+
+@pytest.fixture
+def pinned(monkeypatch):
+    """The pinned checkpoint is CKPT: its size and SHA-256 are what a run
+    checks, and what midi.json records."""
+    from app.pipeline import piano_hr
+
+    monkeypatch.setattr(piano_hr, "PIANO_HR_CHECKPOINT_SIZE", len(CKPT))
+    monkeypatch.setattr(piano_hr, "PIANO_HR_CHECKPOINT_SHA256", CKPT_SHA)
+    monkeypatch.setattr(midi_run, "PIANO_HR_CHECKPOINT_SHA256", CKPT_SHA)
+    return piano_hr.checkpoint_path()
+
+
+@pytest.fixture
+def fetch(tmp_path, monkeypatch, pinned):
+    """The checkpoint's download step as a stand-in. Set .mode before a run;
+    .calls counts the downloads started."""
+    script = tmp_path / "stub_fetch.py"
+    script.write_text(FETCH_STUB, encoding="utf-8")
+    body = tmp_path / "ckpt.bin"
+    body.write_bytes(CKPT)
+
+    class Stub:
+        mode = "ok"
+        calls: list = []
+
+    def cmd(dst):
+        Stub.calls.append(dst)
+        return [sys.executable, str(script), Stub.mode, str(dst), str(body)]
+
+    monkeypatch.setattr(midi_run, "_spawn_fetch_cmd", cmd)
+    return Stub
+
+
+@pytest.fixture
+def hr_worker(tmp_path, monkeypatch):
+    """A stand-in worker that records (stem, engine, device) per spawn and
+    ends as .modes says for that device: "ok", "engine" (fails), "cpu_engine"
+    (says it chose the CPU, then fails)."""
+    script = tmp_path / "stub_hr_worker.py"
+    script.write_text(
+        textwrap.dedent(
+            """
+            import json, sys
+            mode, out, device = sys.argv[1], sys.argv[2], sys.argv[3]
+            def emit(**e):
+                print(json.dumps(e), flush=True)
+            if mode == "cpu_engine":
+                emit(event="progress", pct=2, device="cpu")
+                emit(event="error", code="engine")
+                sys.exit(4)
+            emit(event="progress", pct=10)
+            if mode == "engine":
+                print("CUDA error: an illegal memory access", file=sys.stderr, flush=True)
+                emit(event="error", code="engine")
+                sys.exit(4)
+            open(out, "wb").write(b"MThd piano_hr")
+            emit(event="done", notes=11, seconds_audio=3.0, device=device)
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    class Stub:
+        modes = {"cpu": "ok", "cuda": "ok"}
+        calls: list = []
+
+    def cmd(audio, out, stem, params, plan, engine="basic_pitch", device="cpu"):
+        Stub.calls.append((stem, engine, device, params))
+        return [sys.executable, str(script), Stub.modes[device], str(out), device]
+
+    monkeypatch.setattr(midi_run, "_spawn_worker_cmd", cmd)
+    monkeypatch.setattr(midi_run, "piano_hr_device", lambda: "cpu")
+    return Stub
+
+
+async def test_the_piano_engine_setting(client):
+    async with client as c:
+        assert (await c.get("/api/settings")).json()["transcribe_piano_engine"] == "basic_pitch"
+        r = await c.post("/api/settings", json={"transcribe_piano_engine": "piano_hr"})
+        assert r.status_code == 200 and r.json()["transcribe_piano_engine"] == "piano_hr"
+        for bad in (
+            {"transcribe_piano_engine": "auto"},
+            {"transcribe_piano_engine": "bytedance"},
+            {"transcribe_piano_engine": None},
+            {"transcribe_piano_engine": 1},
+            # One bad value and nothing in the request is written.
+            {"transcribe_piano_engine": "basic_pitch", "transcribe_detail": "nope"},
+        ):
+            r = await c.post("/api/settings", json=bad)
+            assert r.status_code == 422, bad
+            assert "must be one of" in r.json()["detail"]
+        body = (await c.get("/api/settings")).json()
+        status = (await c.get("/api/transcribe/status")).json()
+    assert body["transcribe_piano_engine"] == "piano_hr"
+    assert status["piano_engine"] == "piano_hr"
+
+
+async def test_the_status_says_whether_the_checkpoint_is_there(client, pinned):
+    async with client as c:
+        engines = (await c.get("/api/transcribe/status")).json()["engines"]
+        assert engines[1]["model"] == "not_downloaded"
+        pinned.parent.mkdir(parents=True)
+        pinned.write_bytes(CKPT[:10])
+        engines = (await c.get("/api/transcribe/status")).json()["engines"]
+        assert engines[1]["model"] == "partial"
+        pinned.write_bytes(CKPT)
+        engines = (await c.get("/api/transcribe/status")).json()["engines"]
+    assert engines[1]["model"] == "downloaded"
+
+
+async def test_piano_hr_downloads_its_checkpoint_then_makes_the_file(
+    jobs_dir, client, hr_worker, fetch, pinned, monkeypatch
+):
+    _song(jobs_dir)
+    phases: list = []
+    real = midi_run._update
+
+    def watch(job, stem, **fields):
+        if "phase" in fields:
+            phases.append(fields["phase"])
+        real(job, stem, **fields)
+
+    monkeypatch.setattr(midi_run, "_update", watch)
+    async with client as c:
+        await c.post("/api/settings", json={"transcribe_piano_engine": "piano_hr"})
+        r = await c.post(f"/api/jobs/{JOB}/midi", json={"stem": "piano", "detail": "clean"})
+        assert r.status_code == 202, r.text
+        entry = (await _settled(c))["midi"]["piano"]
+    assert (entry["state"], entry["engine"], entry["notes"], entry["phase"]) == (
+        "done",
+        "piano_hr",
+        11,
+        None,
+    )
+    assert phases == ["download", "transcribe", None]
+    assert len(fetch.calls) == 1 and pinned.read_bytes() == CKPT
+    stem, engine, device, params = hr_worker.calls[-1]
+    assert (stem, engine, device) == ("piano", "piano_hr", "cpu")
+    assert params == midi_run.MIDI_PIANO_HR_PRESETS["clean"]
+    record = json.loads((jobs_dir / JOB / "midi.json").read_text(encoding="utf-8"))["stems"]
+    piano = record["piano"]
+    assert (piano["engine"], piano["engine_version"], piano["device"]) == (
+        "piano_hr",
+        "0.0.6",
+        "cpu",
+    )
+    assert piano["vendor_id"] == midi_run.piano_hr.vendor_id() != midi_run.vendor_id()
+    assert piano["model_sha256"] == CKPT_SHA and piano["gpu_fallback"] is False
+
+
+async def test_a_checked_checkpoint_is_not_fetched_again(jobs_dir, client, hr_worker, fetch):
+    _song(jobs_dir)
+    async with client as c:
+        await c.post("/api/settings", json={"transcribe_piano_engine": "piano_hr"})
+        for _ in range(2):
+            await c.post(f"/api/jobs/{JOB}/midi", json={"stem": "piano"})
+            assert (await _settled(c))["midi"]["piano"]["state"] == "done"
+    assert len(fetch.calls) == 1 and len(hr_worker.calls) == 2
+
+
+async def test_a_checkpoint_that_is_not_the_pinned_file_is_never_used(
+    jobs_dir, client, hr_worker, fetch, pinned
+):
+    _song(jobs_dir)
+    # The right size, the wrong bytes: removed and fetched again.
+    pinned.parent.mkdir(parents=True)
+    pinned.write_bytes(b"x" * len(CKPT))
+    fetch.mode = "wrong"
+    async with client as c:
+        await c.post("/api/settings", json={"transcribe_piano_engine": "piano_hr"})
+        await c.post(f"/api/jobs/{JOB}/midi", json={"stem": "piano"})
+        entry = (await _settled(c))["midi"]["piano"]
+    assert (entry["state"], entry["error_code"], entry["has_file"]) == ("error", "download", False)
+    assert len(fetch.calls) == 1
+    # What the download wrote did not match either: it is not left there.
+    assert not pinned.exists()
+    assert hr_worker.calls == []
+
+
+async def test_a_failed_download_keeps_the_old_file_and_says_so(
+    jobs_dir, client, hr_worker, fetch, caplog
+):
+    _song(jobs_dir)
+    old = jobs_dir / JOB / "midi" / "piano.mid"
+    old.parent.mkdir()
+    old.write_bytes(b"MThd old")
+    fetch.mode = "fail"
+    async with client as c:
+        await c.post("/api/settings", json={"transcribe_piano_engine": "piano_hr"})
+        await c.post(f"/api/jobs/{JOB}/midi", json={"stem": "piano"})
+        entry = (await _settled(c))["midi"]["piano"]
+    assert (entry["state"], entry["error_code"], entry["has_file"]) == ("error", "download", True)
+    assert old.read_bytes() == b"MThd old" and hr_worker.calls == []
+    assert "no route to host" in caplog.text
+
+
+async def test_a_cancel_stops_the_download(jobs_dir, client, hr_worker, fetch, pinned):
+    _song(jobs_dir)
+    fetch.mode = "sleep"
+    async with client as c:
+        await c.post("/api/settings", json={"transcribe_piano_engine": "piano_hr"})
+        await c.post(f"/api/jobs/{JOB}/midi", json={"stem": "piano"})
+        procs: list = []
+        for _ in range(200):
+            entry = (await c.get(f"/api/jobs/{JOB}")).json()["midi"]["piano"]
+            procs = [p for key, p in list(_procs.items()) if key[0] == JOB]
+            if entry["phase"] == "download" and procs:
+                break
+            await asyncio.sleep(0.05)
+        assert entry["phase"] == "download" and len(procs) == 1
+        proc = procs[0]
+        r = await c.post(f"/api/jobs/{JOB}/midi/piano/cancel")
+        assert r.json() == {"state": "cancelled"}
+    assert proc.poll() is not None
+    assert not pinned.exists() and hr_worker.calls == []
+
+
+async def test_a_gpu_failure_is_run_again_whole_on_the_cpu(
+    jobs_dir, client, hr_worker, fetch, pinned, monkeypatch
+):
+    _song(jobs_dir)
+    pinned.parent.mkdir(parents=True)
+    pinned.write_bytes(CKPT)
+    monkeypatch.setattr(midi_run, "piano_hr_device", lambda: "cuda")
+    hr_worker.modes = {"cuda": "engine", "cpu": "ok"}
+    async with client as c:
+        await c.post("/api/settings", json={"transcribe_piano_engine": "piano_hr"})
+        await c.post(f"/api/jobs/{JOB}/midi", json={"stem": "piano"})
+        entry = (await _settled(c))["midi"]["piano"]
+    assert entry["state"] == "done"
+    assert [call[2] for call in hr_worker.calls] == ["cuda", "cpu"]
+    piano = json.loads((jobs_dir / JOB / "midi.json").read_text(encoding="utf-8"))["stems"]["piano"]
+    assert (piano["device"], piano["gpu_fallback"]) == ("cpu", True)
+    assert fetch.calls == []
+
+
+async def test_a_failure_on_the_cpu_the_worker_chose_is_not_run_again(
+    jobs_dir, client, hr_worker, pinned, monkeypatch
+):
+    _song(jobs_dir)
+    pinned.parent.mkdir(parents=True)
+    pinned.write_bytes(CKPT)
+    monkeypatch.setattr(midi_run, "piano_hr_device", lambda: "cuda")
+    hr_worker.modes = {"cuda": "cpu_engine", "cpu": "ok"}
+    async with client as c:
+        await c.post("/api/settings", json={"transcribe_piano_engine": "piano_hr"})
+        await c.post(f"/api/jobs/{JOB}/midi", json={"stem": "piano"})
+        entry = (await _settled(c))["midi"]["piano"]
+    assert (entry["state"], entry["error_code"]) == ("error", "engine")
+    assert [call[2] for call in hr_worker.calls] == ["cuda"]
+
+
+async def test_the_bass_is_always_basic_pitch(jobs_dir, client, hr_worker, fetch):
+    _song(jobs_dir)
+    async with client as c:
+        await c.post("/api/settings", json={"transcribe_piano_engine": "piano_hr"})
+        await c.post(f"/api/jobs/{JOB}/midi", json={"stem": "bass"})
+        entry = (await _settled(c, "bass"))["midi"]["bass"]
+    assert entry["engine"] == "basic_pitch"
+    assert hr_worker.calls[-1][:3] == ("bass", "basic_pitch", "cpu")
+    assert fetch.calls == []
+
+
+async def test_piano_hr_unavailable_refuses_the_piano_only(
+    jobs_dir, client, hr_worker, monkeypatch
+):
+    _song(jobs_dir)
+    monkeypatch.setattr(midi_run, "_PIANO_HR_MODULES", ("torch", "no_such_module_for_this_test"))
+    midi_run._piano_hr_installed.cache_clear()
+    async with client as c:
+        await c.post("/api/settings", json={"transcribe_piano_engine": "piano_hr"})
+        status = (await c.get("/api/transcribe/status")).json()
+        assert status["available"] is True
+        assert (status["engines"][1]["available"], status["engines"][1]["reason"]) == (
+            False,
+            "no_runtime",
+        )
+        r = await c.post(f"/api/jobs/{JOB}/midi", json={"stem": "piano"})
+        _refused(r, 503, "engine_unavailable")
+        assert (await c.post(f"/api/jobs/{JOB}/midi", json={"stem": "bass"})).status_code == 202
+        await _settled(c, "bass")
+
+
+def test_the_device_piano_hr_asks_for(monkeypatch):
+    for resolved, asked in (("cuda", "cuda"), ("mps", "cpu"), ("cpu", "cpu")):
+        monkeypatch.setattr(midi_run, "get_demucs_device", lambda r=resolved: r)
+        assert midi_run.piano_hr_device() == asked
+
+    def broken():
+        raise RuntimeError("probe failed")
+
+    monkeypatch.setattr(midi_run, "get_demucs_device", broken)
+    assert midi_run.piano_hr_device() == "cpu"
+
+
+def test_an_entry_names_its_engine_and_its_phase_only_while_running():
+    entry = {"state": "running", "pct": 5, "phase": "download", "engine": "piano_hr"}
+    assert clean_midi({"piano": entry})["piano"]["phase"] == "download"
+    assert clean_midi({"piano": {**entry, "phase": "bogus"}})["piano"]["phase"] is None
+    done = clean_midi({"piano": {**entry, "state": "done"}})["piano"]
+    assert (done["phase"], done["engine"]) == (None, "piano_hr")
+    # Saved before there was a second engine, or damaged: Basic Pitch's.
+    for engine in (None, "whisper", 3):
+        assert clean_midi({"piano": {"state": "done", "engine": engine}})["piano"]["engine"] == (
+            "basic_pitch"
+        )

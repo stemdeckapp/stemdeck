@@ -23,6 +23,7 @@ at startup), so the Settings UI can change them without a restart:
 - `transcribe_lyrics` - Whisper lyrics when none are found: auto | on | off.
 - `transcribe_piano`, `transcribe_bass` - MIDI from that stem may be made: auto | off.
 - `transcribe_detail` - how much detail MIDI keeps: balanced | detailed | clean.
+- `transcribe_piano_engine` - what makes the piano's MIDI: basic_pitch | piano_hr.
 - `video_encoder`     - H.264 encoder of the take render: auto | cpu | an encoder.
 - `stem_format`       - how new songs' stems are stored: wav | mp3 (#783).
 - `stem_mp3_kbps`     - the MP3 bitrate when stem_format is mp3: 128 | 192 | 256.
@@ -50,7 +51,9 @@ from app.core.config import (
     IDLE_UNLOAD_MINUTES_MAX,
     MAX_DURATION_SEC,
     MIDI_DEFAULT_DETAIL,
+    MIDI_DEFAULT_PIANO_ENGINE,
     MIDI_DETAILS,
+    MIDI_PIANO_ENGINES,
     PLAYLIST_MAX_ITEMS,
     STEM_FORMAT_CHOICES,
     STEM_MP3_KBPS_CHOICES,
@@ -1000,12 +1003,13 @@ def transcribe_lyrics_enabled(device: str | None) -> bool:
     return choice == "on"
 
 
-# -- transcribe_piano, transcribe_bass, transcribe_detail
+# -- transcribe_piano, transcribe_bass, transcribe_detail, transcribe_piano_engine
 # MIDI from the piano and bass stems (app/pipeline/midi.py). Per stem, "auto"
 # (default) lets the studio offer and make it, "off" refuses it for that stem
 # (POST .../midi answers 403 "disabled"). transcribe_detail is the preset a
-# run uses when the request names none (config.MIDI_DETAIL_PRESETS). Read per
-# request, so a change applies to the next one.
+# run uses when the request names none (config.MIDI_DETAIL_PRESETS).
+# transcribe_piano_engine picks the piano's engine. Read per request, so a
+# change applies to the next one.
 MIDI_STEM_CHOICES = ("auto", "off")
 
 
@@ -1015,10 +1019,18 @@ def _midi_choice(key: str, choices: tuple[str, ...], default: str) -> str:
         return v if isinstance(v, str) and v in choices else default
 
 
+def _midi_choices(key: str) -> tuple[str, ...]:
+    if key == "transcribe_detail":
+        return MIDI_DETAILS
+    if key == "transcribe_piano_engine":
+        return MIDI_PIANO_ENGINES
+    return MIDI_STEM_CHOICES
+
+
 def check_midi_setting(key: str, value: object) -> str:
     """The stored form of a transcribe_* value, or ValueError with a fixed
     message that lists the whitelist and never echoes the value."""
-    choices = MIDI_DETAILS if key == "transcribe_detail" else MIDI_STEM_CHOICES
+    choices = _midi_choices(key)
     choice = value.strip().lower() if isinstance(value, str) else None
     if choice not in choices:
         raise ValueError(f"{key} must be one of: " + ", ".join(choices))
@@ -1055,6 +1067,16 @@ def get_transcribe_detail() -> str:
 
 def set_transcribe_detail(value: object) -> str:
     return _set_midi_choice("transcribe_detail", value)
+
+
+def get_transcribe_piano_engine() -> str:
+    """Which engine makes the piano's MIDI (config.MIDI_PIANO_ENGINES):
+    "basic_pitch" (default) or "piano_hr". The bass is always Basic Pitch."""
+    return _midi_choice("transcribe_piano_engine", MIDI_PIANO_ENGINES, MIDI_DEFAULT_PIANO_ENGINE)
+
+
+def set_transcribe_piano_engine(value: object) -> str:
+    return _set_midi_choice("transcribe_piano_engine", value)
 
 
 def midi_stem_enabled(stem: str) -> bool:

@@ -43,6 +43,9 @@
 | `STEMDECK_TRANSCRIBE_MAX_SECONDS` | `1200` | MIDI from a stem: refuse a song or stem longer than this (seconds, 30 or more), read from the file's header before anything is decoded. Basic Pitch decodes the whole file, about 0.9 MB of memory per second of audio. |
 | `STEMDECK_TIMEOUT_MIDI` | `600` | Stop a MIDI run after this many seconds in all (60 or more). |
 | `STEMDECK_TIMEOUT_MIDI_STALL` | `120` | Stop a MIDI run after this many seconds with no output from its worker (30 or more). |
+| `STEMDECK_TIMEOUT_MIDI_PIANO_HR` | `6000` | Stop a piano run with ByteDance Piano Transcription after this many seconds in all (60 or more). On a CPU it takes about half a minute per minute of audio. |
+| `STEMDECK_TIMEOUT_MIDI_MODEL_DOWNLOAD` | `3600` | Stop the first-use download of the ByteDance Piano Transcription checkpoint (172 MB) after this many seconds in all (60 or more). |
+| `STEMDECK_PIANO_HR_GPU_MIN_FREE_MB` | `2048` | Free GPU memory (MB) a ByteDance Piano Transcription run needs to start on the GPU; with less it runs on the CPU. |
 | `STEMDECK_SSL_CERT` | (none) | PEM certificate; set with the key below to serve https directly. |
 | `STEMDECK_SSL_KEY` | (none) | PEM private key for the certificate above. |
 | `STEMDECK_HTTPS_PORT` | (none) | Serve https on this port *in addition* to the main listener. Set by the desktop app; see below. |

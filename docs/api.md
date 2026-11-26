@@ -170,18 +170,35 @@ the loudness, since the stems still add up to the same song.
 ## MIDI from a stem
 
 The notes of a finished song's piano or bass stem as a standard MIDI file,
-made on request by Spotify's Basic Pitch (see [models.md](models.md#midi-from-a-stem)).
-It runs on the CPU, one run at a time across the server, a few seconds a song.
+made on request (see [models.md](models.md#midi-from-a-stem)), one run at a time
+across the server. The bass is always Spotify's Basic Pitch, on the CPU, a few
+seconds a song. The piano is the engine the `transcribe_piano_engine` setting
+picks: `basic_pitch` (the default) or `piano_hr`, ByteDance's high-resolution
+piano transcription, on the GPU when the separation device setting resolves to
+CUDA, else on the CPU. Its checkpoint (172 MB) is downloaded by the first
+`piano_hr` run, as part of that run.
 
 `GET /api/transcribe/status` is cheap and never loads the engine:
 
 ```
 {"available": true | false,
  "reason": null | "no_runtime" | "unsupported_platform" | "engine_error",
- "engines": [{"id": "basic_pitch", "label": "Basic Pitch", "version": "0.4.0", "licence": "Apache-2.0"}],
+ "engines": [
+   {"id": "basic_pitch", "label": "Basic Pitch", "version": "0.4.0", "licence": "Apache-2.0",
+    "model_licence": "Apache-2.0", "stems": ["piano", "bass"], "available": true,
+    "reason": null, "model": "built_in", "download_bytes": null},
+   {"id": "piano_hr", "label": "ByteDance Piano Transcription", "version": "0.0.6",
+    "licence": "MIT", "model_licence": "CC BY 4.0", "stems": ["piano"], "available": true,
+    "reason": null, "model": "not_downloaded" | "partial" | "downloaded",
+    "download_bytes": 171966578}],
+ "piano_engine": "basic_pitch" | "piano_hr", "piano_engines": ["basic_pitch", "piano_hr"],
  "stems": ["piano", "bass"], "max_seconds": 1200,
  "details": ["balanced", "detailed", "clean"]}
 ```
+
+`available` and `reason` at the top are Basic Pitch's, which every bass file
+needs; each engine has its own. `model` is the checkpoint by its size on disk
+only: a run checks its SHA-256 before it uses it.
 
 `unsupported_platform` is Intel macOS, which has no onnxruntime; `no_runtime`
 is a module the engine needs that is not installed; `engine_error` is a
@@ -200,7 +217,7 @@ order:
 | 404 | `job_not_found` | Not a job id, or no such job |
 | 400 | `stem_not_supported` | `stem` is not `piano` or `bass` |
 | 400 | `bad_detail` | `detail` is not `balanced`, `detailed` or `clean` |
-| 503 | `engine_unavailable` | The status above says `available: false` |
+| 503 | `engine_unavailable` | The stem's engine cannot run here: the status above says `available: false`, or, for the piano with `piano_hr` picked, that engine's own `available` is false |
 | 403 | `disabled` | `transcribe_piano` or `transcribe_bass` is `off` for that stem |
 | 409 | `busy` | The song is queued or separating, or a fill, a Lead + Backing split, a re-extract or a MIDI run is working on it; or a MIDI run is going on any song; or the server is stopping or the stems folder is moving |
 | 409 | `no_stem` | The song is not `done`, or has no such stem file |
@@ -262,12 +279,21 @@ name rule as a stem download), and `Cache-Control: no-cache`, since a run
 replaces it under the same URL. `404 no_midi` when there is none or `stem` is
 not `piano` or `bass`.
 
+While a run works, the song's `midi.<stem>` has `"state": "running"`, `pct`,
+and `phase`: `"download"` while the `piano_hr` checkpoint downloads (its
+percent), then `"transcribe"`. A download that fails ends the run as
+`error_code: "download"`; the file the song had stays. A `piano_hr` run that
+fails on the GPU is run again, whole, on the CPU (`gpu_fallback` in
+`midi.json`).
+
 On disk, per song: `midi/<stem>.mid`, and `midi.json`:
 
 ```
 {"v": 1, "stems": {"piano": {
-  "engine": "basic_pitch", "engine_version": "0.4.0", "vendor_id": "<16 hex>",
-  "stem", "detail", "params": {Basic Pitch's thresholds, note length, frequency range},
+  "engine": "basic_pitch" | "piano_hr", "engine_version": "0.4.0" | "0.0.6",
+  "vendor_id": "<16 hex>", "model_sha256": null | "<piano_hr checkpoint sha256>",
+  "device": "cpu" | "cuda", "gpu_fallback": false,
+  "stem", "detail", "params": {the engine's thresholds; Basic Pitch's note length and frequency range},
   "notes", "tempo_source", "bpm", "beats_per_bar", "bar_start",
   "created_at", "seconds_audio", "seconds_run"}}}
 ```
@@ -295,16 +321,18 @@ remove its `midi/` folder and `midi.json` with the rest of it.
 ```
 
 `group` is `separation` (the three separation models and the Karaoke 2 split),
-`transcription` (Basic Pitch) or `analysis` (Whisper for lyrics, the beat
-model). `use` is `stems`, `lead_backing`, `midi`, `lyrics`, `lyrics_gpu`,
-`lyrics_cpu` or `beats`. `state` is `downloaded`, `partial` (some files, or a
+`transcription` (Basic Pitch, ByteDance Piano Transcription) or `analysis`
+(Whisper for lyrics, the beat model). `use` is `stems`, `lead_backing`, `midi`
+(Basic Pitch), `midi_piano` (ByteDance Piano Transcription), `lyrics`,
+`lyrics_gpu`, `lyrics_cpu` or `beats`. `state` is `downloaded`, `partial` (some files, or a
 pinned file at the wrong size), `not_downloaded`, `built_in` (Basic Pitch ships
 inside StemDeck) or `unknown` (the folder could not be worked out, for example
 when torch does not load). `size_bytes` is what is on disk now, or null;
 `download_bytes` is a full download, or null when unknown. `license` is null
 when the code does not know it. No path is ever in the answer. What a model is
 used for comes from `stem_models_resolved` and `transcribe_piano` /
-`transcribe_bass` in `GET /api/settings`, not from here. The song-sections
+`transcribe_bass` / `transcribe_piano_engine` in `GET /api/settings`, not from
+here. The song-sections
 model is not listed: the Hugging Face hub caches it under a layout only its
 package names. Built-in models are never removed through the API (`remove` is
 false): a running separation may be reading the file.

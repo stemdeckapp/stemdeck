@@ -75,6 +75,7 @@ SAVED = {
         "bass": {
             "state": "done",
             "pct": 100,
+            "phase": None,
             "notes": 412,
             "engine": "basic_pitch",
             "detail": "balanced",
