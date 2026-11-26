@@ -1240,6 +1240,22 @@ export function setSpeed(rate) {
   return changeSpeed(Number(rate) || 1);
 }
 
+/** The speed the controls show: the one playing, or the one about to be
+ * applied while a deferred change waits. Performance Mode paints from it. */
+export function getSpeed() {
+  return _speed;
+}
+
+/**
+ * One notch (SPEED_NOTCH) faster (`dir` > 0) or slower, landing on a notch
+ * from a speed between them (0.83x goes to 0.85x or 0.80x), held to
+ * SPEED_MIN..SPEED_MAX: Performance Mode's step buttons. Applied once the
+ * clicks stop coming, like the wheel. Returns the speed now shown.
+ */
+export function stepSpeed(dir) {
+  return changeSpeed(nextNotch(_speed, dir), { defer: true });
+}
+
 
 // ── Transpose (#245) ────────────────────────────────────────────────────────
 //
@@ -1387,31 +1403,43 @@ function wireSpeedControl() {
       changeSpeed(nextNotch(_speed, dir), { defer: true, max: FADER_MAX });
     }, { passive: false });
   }
-  if (!speedInput) return;
+  if (speedInput) wireSpeedBox(speedInput);
+}
+
+/**
+ * Make `input` a box for the one speed: typing a speed and Enter (or leaving
+ * the box) plays at it, Escape puts the shown speed back, the arrow keys and
+ * the wheel move a hundredth (Shift and an arrow, a notch). The footer's box
+ * and Performance Mode's both go through here, so they read and set the same
+ * value the same way. The box is repainted by its owner (paintSpeed for the
+ * footer's), except where an edit here has just moved the speed.
+ */
+export function wireSpeedBox(input) {
   const commit = () => {
-    const rate = clampSpeed(parseSpeed(speedInput.value));
+    const rate = clampSpeed(parseSpeed(input.value));
     // Nonsense is ignored, and the box goes back to the speed shown.
     if (Number.isFinite(rate) && rate !== _speed) changeSpeed(rate);
-    speedInput.value = _speed.toFixed(2);
+    input.value = _speed.toFixed(2);
   };
-  speedInput.addEventListener("focus", () => speedInput.select());
-  speedInput.addEventListener("change", commit);
-  speedInput.addEventListener("blur", commit);
-  speedInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); commit(); speedInput.blur(); return; }
-    if (e.key === "Escape") { e.preventDefault(); speedInput.value = _speed.toFixed(2); speedInput.blur(); return; }
+  input.addEventListener("focus", () => input.select());
+  input.addEventListener("change", commit);
+  input.addEventListener("blur", commit);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); commit(); input.blur(); return; }
+    if (e.key === "Escape") { e.preventDefault(); input.value = _speed.toFixed(2); input.blur(); return; }
     if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
     e.preventDefault();
-    const typed = clampSpeed(parseSpeed(speedInput.value));
+    const typed = clampSpeed(parseSpeed(input.value));
     const step = (e.shiftKey ? SPEED_NOTCH : 0.01) * (e.key === "ArrowUp" ? 1 : -1);
     changeSpeed((Number.isFinite(typed) ? typed : _speed) + step, { defer: true });
-    speedInput.value = _speed.toFixed(2);
+    input.value = _speed.toFixed(2);
   });
-  speedInput.addEventListener("wheel", (e) => {
+  input.addEventListener("wheel", (e) => {
     e.preventDefault();
-    if (!e.deltaY) return;
+    // A disabled box (Performance's, during a take) changes nothing.
+    if (!e.deltaY || input.disabled) return;
     changeSpeed(_speed + (e.deltaY < 0 ? 0.01 : -0.01), { defer: true });
-    speedInput.value = _speed.toFixed(2);
+    input.value = _speed.toFixed(2);
   }, { passive: false });
 }
 

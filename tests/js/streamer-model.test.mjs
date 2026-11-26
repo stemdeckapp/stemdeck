@@ -8,7 +8,7 @@ const {
   peakBars, clockTenths, clockHours, rulerTicks,
   emptyHistory, pushHistory, undoHistory, redoHistory, HISTORY_CAP,
   TRIM_MIN, trimRange, snapTime, withTrimPoint, pixelsPerSecond, tickStep, ticksEvery, ZOOM_MAX_PPS,
-  playheadLabelLeft,
+  playheadLabelLeft, speedView,
 } = model;
 
 let failed = 0;
@@ -151,6 +151,22 @@ check("at the song's end it ends at the end", playheadLabelLeft(1000, 68, 1000) 
 check("scrolled: it stays right of the view's left edge", playheadLabelLeft(410, 68, 3000, 400, 900) === -10);
 check("scrolled: it stays left of the view's right edge", playheadLabelLeft(890, 68, 3000, 400, 900) === -58);
 check("a playhead out of view keeps its label on the line", playheadLabelLeft(100, 68, 3000, 400, 900) === 0 && playheadLabelLeft(1200, 68, 3000, 400, 900) === -68);
+
+// The strip's speed control (speedView): the transport's one speed, in the
+// footer's form, its ends, and its lock while a take is open.
+{
+  const v = speedView({ speed: 1 });
+  check("speed: 1x reads 1.00, unlit, both steps open, no reason", v.text === "1.00" && !v.active && v.down && v.up && v.titleKey === null && !v.locked);
+  const slow = speedView({ speed: 0.83 });
+  check("speed: off 1x is lit and shows hundredths", slow.text === "0.83" && slow.active);
+  check("speed: at 0.50x only faster is open", (() => { const e = speedView({ speed: 0.5 }); return !e.down && e.up; })());
+  check("speed: at 1.50x only slower is open", (() => { const e = speedView({ speed: 1.5 }); return e.down && !e.up; })());
+  const rec = speedView({ speed: 1, takeOpen: true });
+  check("speed: a take open locks both steps and the box, and says why", rec.locked && !rec.down && !rec.up && rec.titleKey === "streamer.speedLocked");
+  check("speed: the take's reason wins over the pitch note", speedView({ speed: 0.8, takeOpen: true, pitchAvailable: false }).titleKey === "streamer.speedLocked");
+  check("speed: without the pitch stage it says the key follows", speedView({ speed: 0.8, pitchAvailable: false }).titleKey === "speed.pitchFollows");
+  check("speed: a speed that is not a number reads as 1x", speedView({ speed: NaN }).text === "1.00" && speedView({ speed: undefined }).text === "1.00");
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

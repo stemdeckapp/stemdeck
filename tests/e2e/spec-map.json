@@ -233,7 +233,12 @@
         "static/js/pitchBus.js", "static/js/tempoStage.js", "static/js/tickLoop.js", "static/js/keyLabel.js", "static/js/speedParse.js",
         "static/vendor/signalsmith-stretch.js", "static/vendor/soundtouch-processor.js"
       ],
-      "specs": ["tempo-stage", "speed-control", "transpose", "transpose-switch-song", "mobile-transpose", "network-transpose-warning", "click-track", "count-in-replay", "key-card", "help-mode"]
+      "specs": ["tempo-stage", "speed-control", "performance-speed", "transpose", "transpose-switch-song", "mobile-transpose", "network-transpose-warning", "click-track", "count-in-replay", "key-card", "help-mode"]
+    },
+    {
+      "why": "The one speed and its box (setSpeed, stepSpeed, getSpeed, wireSpeedBox): the footer's fader and box, and Performance Mode's steps and box",
+      "paths": ["static/js/transport.js"],
+      "specs": ["speed-control", "performance-speed"]
     },
     {
       "why": "Footer and transport layout",
@@ -295,7 +300,7 @@
     {
       "why": "Performance (streamer) mode",
       "paths": ["static/js/streamer/**", "static/css/streamer.css"],
-      "specs": ["streamer", "streamer-media", "modes", "help-mode", "karaoke", "performance-record-support", "performance-input-fx", "performance-tabs", "performance-layout", "performance-volume"]
+      "specs": ["streamer", "streamer-media", "modes", "help-mode", "karaoke", "performance-record-support", "performance-input-fx", "performance-tabs", "performance-layout", "performance-volume", "performance-speed"]
     },
     {
       "why": "Sound and picture sync of a take with a camera: the export step's state in words and its nudge (syncControl.js, video/avSync.js), the sync route and the one picture placement on the server, and the loaded take it updates (takeLanes.js updateTakeEntry)",

@@ -19,7 +19,7 @@
 
 import { t, onLanguageChange } from "../i18n.js";
 import { currentJobId, mixerState, trackIndex, totalDuration, audioEngine, playbackSpeed } from "../state.js";
-import { transport, setPlayheadTime, togglePlayPause, stopTransport } from "../transport.js";
+import { transport, setPlayheadTime, togglePlayPause, stopTransport, getSpeed, stepSpeed, wireSpeedBox, getGlobalPitch } from "../transport.js";
 import { reloadKeepingPlace } from "../reloadPlace.js";
 import { laneLabel, STEM_COLORS } from "../constants.js";
 import { getSections, sectionDisplayName } from "../sections.js";
@@ -33,7 +33,7 @@ import { isKaraokeOpen, closeKaraoke } from "../karaoke/karaoke.js";
 import {
   ASPECTS, defaultScene, withAspect, fitAspect, peakBars, clockTenths, clockHours,
   emptyHistory, pushHistory, undoHistory, redoHistory,
-  trimRange, snapTime, withTrimPoint, pixelsPerSecond, tickStep, ticksEvery, playheadLabelLeft,
+  trimRange, snapTime, withTrimPoint, pixelsPerSecond, tickStep, ticksEvery, playheadLabelLeft, speedView,
 } from "./streamerModel.js";
 import { getBeats, getBeatGridSnap } from "../beatgrid.js";
 import { getTracks, selectTake, twoPress, requestTakesReload, updateTakeEntry } from "../capture/takeLanes.js";
@@ -379,10 +379,17 @@ function buildBuilder() {
   redo.addEventListener("click", () => doRedo());
   hist.append(undo, redo);
   const clock = el("div", "sm-card sm-clock");
+  const clockTime = el("div", "sm-clock-time");
   const clockNow = el("span", "sm-clock-now", clockTenths(0));
   const clockDur = el("span", "sm-clock-dur", `/ ${clockTenths(0)}`);
-  clock.append(clockNow, clockDur);
-  strip.append(stripTitle, hist, clock);
+  clockTime.append(clockNow, clockDur);
+  const speed = buildSpeed();
+  clock.append(clockTime, speed.group);
+  // The cards' row: one line, or two in a narrow strip (streamer.css), the
+  // clock and the speed then on a line of their own.
+  const stripRow = el("div", "sm-strip-row");
+  stripRow.append(stripTitle, hist, clock);
+  strip.append(stripRow);
   const rv = buildReview();
   // The two windows: side by side, or stacked when too narrow for two
   // across (reviewModel.reviewTier). Only below the hard minimum is there
@@ -394,7 +401,41 @@ function buildBuilder() {
 
   const timeline = buildTimeline();
   panel.append(row, timeline.card);
-  return { panel, row, col, screens, review: rv, preview, canvas, rec, recLabel: pill.querySelector(".sm-rec-label"), recTime, recLevel, camState, camText, camAct, clockNow, clockDur, undo, redo, timeline };
+  return { panel, row, col, screens, review: rv, preview, canvas, rec, recLabel: pill.querySelector(".sm-rec-label"), recTime, recLevel, camState, camText, camAct, strip, clockNow, clockDur, speed, undo, redo, timeline };
+}
+
+/**
+ * The speed, in the clock's card: a notch slower, the box, a notch faster.
+ * It is the transport's one speed (the footer's, which is hidden while
+ * Performance is open): the box is wired by transport.wireSpeedBox, the steps
+ * go through transport.stepSpeed, and paintSpeed shows transport.getSpeed.
+ */
+function buildSpeed() {
+  const group = el("div", "sm-speed");
+  group.setAttribute("role", "group");
+  tx(group, "speed.ariaLabel", "aria-label");
+  const down = button("sm-speed-step sm-speed-down");
+  down.append(icon(ICONS.minus, { size: 12, width: 2.6 }));
+  tx(down, "streamer.speedDown", "label");
+  down.addEventListener("click", () => stepSpeed(-1));
+  const value = el("label", "sm-speed-value");
+  const input = el("input", "sm-speed-input");
+  input.type = "text";
+  input.inputMode = "decimal";
+  input.spellcheck = false;
+  input.autocomplete = "off";
+  input.value = "1.00";
+  tx(input, "speed.inputAria", "aria-label");
+  wireSpeedBox(input);
+  const unit = el("span", "sm-speed-unit", "x");
+  unit.setAttribute("aria-hidden", "true");
+  value.append(input, unit);
+  const up = button("sm-speed-step sm-speed-up");
+  up.append(icon(ICONS.plus, { size: 12, width: 2.6 }));
+  tx(up, "streamer.speedUp", "label");
+  up.addEventListener("click", () => stepSpeed(1));
+  group.append(down, value, up);
+  return { group, down, input, up };
 }
 
 /** The take review window (the recorded take, played with the transport)
@@ -1076,6 +1117,8 @@ function observeLayout() {
   // In the narrow band the builder is as tall as its content: a taller or
   // shorter window changes the column's height, not the builder's.
   if (ui?.center) windowsObserver?.observe(ui.center);
+  // The strip wrapping to two rows (or back) changes the height the windows have.
+  if (ui?.builder.strip) windowsObserver?.observe(ui.builder.strip);
   if (!layerObserver) return;
   const lanes = document.getElementById("lanes");
   if (lanes) layerObserver.observe(lanes);
@@ -1162,6 +1205,7 @@ function frame() {
   // One window (a narrow workspace) showing the take: the live picture is not drawn.
   if (ui.builder.screens.dataset.shows !== "take") paintPreview();
   paintClock(tNow);
+  paintSpeed();
   paintTimeline(tNow);
   paintTakeFx();
   paintPart();
@@ -1364,7 +1408,8 @@ function placeWindows() {
     height,
     pairGap: parseFloat(getComputedStyle(screens).columnGap) || 12,
     colGap: px("--sm-col-gap", 12),
-    stripH: px("--sm-strip-h", 40),
+    // The strip as it stands: one row of --sm-strip-h, or two where it wraps.
+    stripH: ui.builder.strip.offsetHeight || px("--sm-strip-h", 40),
     gap: px("--sm-gap", 8),
     tlMin,
     stacked,
@@ -1514,6 +1559,27 @@ function paintClock(tNow) {
     painted.clockDur = d;
     ui.builder.clockDur.textContent = d;
   }
+}
+
+/** The strip's speed control, from the transport's one speed: what it
+ * shows, its ends, and its lock while a take is open. */
+function paintSpeed() {
+  const v = speedView({ speed: getSpeed(), takeOpen: takeOpen(), pitchAvailable: getGlobalPitch().available });
+  const title = v.titleKey ? t(v.titleKey) : "";
+  const { group, down, input, up } = ui.builder.speed;
+  // The box is left alone while it is being typed in.
+  const typing = document.activeElement === input;
+  const sig = `${v.text}|${v.locked}|${v.down}|${v.up}|${title}|${typing}`;
+  if (painted.speed === sig) return;
+  painted.speed = sig;
+  if (!typing) input.value = v.text;
+  group.classList.toggle("active", v.active);
+  input.disabled = v.locked;
+  down.disabled = !v.down;
+  up.disabled = !v.up;
+  // On the group: a disabled button does not reliably show its own tooltip.
+  if (title) group.title = title;
+  else group.removeAttribute("title");
 }
 
 // ── Recording and output settings, devices, the meter ──

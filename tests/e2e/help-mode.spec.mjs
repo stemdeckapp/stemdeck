@@ -274,6 +274,10 @@ test.describe("help mode leaves no control unexplained", () => {
     await page.locator("#streamer .sm-marker").last().hover();
     await expect(tip(page).locator("b")).toHaveText("Chorus");
     await expect(tip(page)).toContainText("move the playhead there");
+    // The speed in the clock's card: its steps and box share one entry.
+    await page.locator("#streamer .sm-speed-up").hover();
+    await expect(tip(page).locator("b")).toHaveText("Speed");
+    await expect(tip(page)).toContainText("minus and plus buttons");
     // The Effects tab: its controls are explained too (the Guide takes
     // clicks, so it goes off to switch tabs).
     await page.keyboard.press("Escape");

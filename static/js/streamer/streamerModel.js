@@ -2,7 +2,7 @@
 // in Node: the scene a song keeps (its aspect and its trim), where it is kept,
 // reading and writing it, its undo history, and the small sums the stage and
 // the take timeline draw from (waveform bars, ruler ticks, clock text, the
-// timeline's zoom). Nothing here holds state or touches the DOM: every edit
+// timeline's zoom, the strip's speed control). Nothing here holds state or touches the DOM: every edit
 // returns a new scene.
 //
 // A scene is plain JSON:
@@ -11,6 +11,8 @@
 // are no layers to place over it. A scene saved by an older build also holds
 // `layers` (and anything else it wrote): those are not read, and are written
 // back untouched with the next edit, so the old data is left as it was.
+
+import { SPEED_MIN, SPEED_MAX } from "../speedParse.js";
 
 export const SCENE_VERSION = 2;
 export const ASPECTS = Object.freeze(["16:9", "9:16", "1:1"]);
@@ -222,6 +224,32 @@ export function clockTenths(seconds) {
   const tenths = Math.max(0, Math.floor((Number(seconds) || 0) * 10 + 1e-6));
   const s = Math.floor(tenths / 10);
   return `${pad(Math.floor(s / 60))}:${pad(s % 60)}.${tenths % 10}`;
+}
+
+// ── Speed ──
+
+/**
+ * What the strip's speed control shows, from the one speed the transport
+ * holds (transport.getSpeed): the box's text ("0.85", the footer's form),
+ * whether it is lit (not the song's own speed), which steps can still move,
+ * and the reason on the group, as an i18n key or null.
+ *
+ * Locked while a take is open: a take records at 1x only
+ * (takeMath.recordBlockReason) and a change of rate ends it (takeRecorder),
+ * so the control is off until the take stops. Without the pitch stage the
+ * speed drags the key with it (the footer says the same, #552).
+ */
+export function speedView({ speed, takeOpen = false, pitchAvailable = true, min = SPEED_MIN, max = SPEED_MAX }) {
+  const s = Number.isFinite(Number(speed)) ? Number(speed) : 1;
+  const locked = Boolean(takeOpen);
+  return {
+    text: s.toFixed(2),
+    active: Math.abs(s - 1) > 1e-6,
+    locked,
+    down: !locked && s > min + 1e-6,
+    up: !locked && s < max - 1e-6,
+    titleKey: locked ? "streamer.speedLocked" : pitchAvailable ? null : "speed.pitchFollows",
+  };
 }
 
 /** "00:00:42": the REC badge's elapsed time. */
