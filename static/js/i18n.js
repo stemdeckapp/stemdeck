@@ -2823,7 +2823,6 @@ const en = {
   "settings.crashReports.exampleTitle": "Example report",
   "settings.crashReports.exampleDesc": "Made-up sample data, not taken from your computer. It shows the exact shape a real report has. The fake folder path, song file name, email address and web address in the sample error are already replaced, as they would be in a real report.",
   "settings.crashReports.exampleAria": "Example report (read only)",
-  "settings.crashReports.exampleServer": "In the desktop app, an example report shows here. A server sends no reports, so there is nothing to show.",
   "settings.crashReports.exampleFailed": "The example could not be made. Close Settings and open it again.",
   "help.set.crashReportsExample": "Shows a made-up report in the exact shape a real one has, with the sample's fake path, file name, email address and web address already replaced. Nothing is sent to show it, and it works with crash reports off.",
   // Settings, Privacy: a build with no crash report address (built from source).
@@ -5425,7 +5424,6 @@ const pl = {
   "settings.crashReports.exampleTitle": "Przykładowy raport",
   "settings.crashReports.exampleDesc": "Zmyślone dane przykładowe, niepochodzące z Twojego komputera. Pokazują dokładnie taką postać, jaką ma prawdziwy raport. Fałszywa ścieżka folderu, nazwa pliku utworu, adres e-mail i adres internetowy w przykładowym błędzie są już zastąpione, tak jak byłyby w prawdziwym raporcie.",
   "settings.crashReports.exampleAria": "Przykładowy raport (tylko do odczytu)",
-  "settings.crashReports.exampleServer": "W aplikacji desktopowej pojawia się tu przykładowy raport. Serwer nie wysyła raportów, więc nie ma tu nic do pokazania.",
   "settings.crashReports.exampleFailed": "Nie udało się utworzyć przykładu. Zamknij Ustawienia i otwórz je ponownie.",
   "help.set.crashReportsExample": "Pokazuje zmyślony raport w dokładnie takiej postaci, jaką ma prawdziwy, z fałszywą ścieżką, nazwą pliku, adresem e-mail i adresem internetowym już zastąpionymi. Nic nie jest wysyłane, a działa także przy wyłączonych raportach o awariach.",
   // Settings, Privacy: a build with no crash report address (built from source).
@@ -7994,7 +7992,6 @@ const ja = {
   "settings.crashReports.exampleTitle": "レポートの例",
   "settings.crashReports.exampleDesc": "作り物のサンプルデータで、あなたのコンピューターから取ったものではありません。実際のレポートとまったく同じ形を示しています。サンプルのエラーにある偽のフォルダーパス、曲のファイル名、メールアドレス、Web アドレスは、実際のレポートと同じように、すでに置き換えられています。",
   "settings.crashReports.exampleAria": "レポートの例 (読み取り専用)",
-  "settings.crashReports.exampleServer": "デスクトップアプリでは、ここにレポートの例が表示されます。サーバーはレポートを送らないため、表示するものはありません。",
   "settings.crashReports.exampleFailed": "例を作成できませんでした。設定を閉じて、もう一度開いてください。",
   "help.set.crashReportsExample": "実際のレポートとまったく同じ形の作り物のレポートを表示します。サンプルの偽のパス、ファイル名、メールアドレス、Web アドレスはすでに置き換えられています。表示のために何かが送られることはなく、クラッシュレポートがオフでも使えます。",
   // Settings, Privacy: a build with no crash report address (built from source).
@@ -10563,7 +10560,6 @@ const zhHans = {
   "settings.crashReports.exampleTitle": "报告示例",
   "settings.crashReports.exampleDesc": "虚构的示例数据,并非取自你的计算机。它展示的正是真实报告的样子。示例错误中的虚假文件夹路径、歌曲文件名、电子邮件地址和网址都已被替换,就像在真实报告中一样。",
   "settings.crashReports.exampleAria": "报告示例(只读)",
-  "settings.crashReports.exampleServer": "在桌面应用中,这里会显示一份报告示例。服务器不发送报告,所以这里没有内容可显示。",
   "settings.crashReports.exampleFailed": "无法生成示例。请关闭设置后重新打开。",
   "help.set.crashReportsExample": "显示一份与真实报告格式完全相同的虚构报告,示例中的虚假路径、文件名、电子邮件地址和网址都已被替换。显示它不会发送任何内容,即使崩溃报告关闭也能使用。",
   // Settings, Privacy: a build with no crash report address (built from source).
@@ -13147,7 +13143,6 @@ const de = {
   "settings.crashReports.exampleTitle": "Beispielbericht",
   "settings.crashReports.exampleDesc": "Ausgedachte Beispieldaten, nicht von deinem Computer. Sie zeigen genau die Form, die ein echter Bericht hat. Der falsche Ordnerpfad, der Dateiname des Songs, die E-Mail-Adresse und die Webadresse im Beispielfehler sind bereits ersetzt, so wie sie es in einem echten Bericht wären.",
   "settings.crashReports.exampleAria": "Beispielbericht (nur lesbar)",
-  "settings.crashReports.exampleServer": "In der Desktop-App steht hier ein Beispielbericht. Ein Server sendet keine Berichte, deshalb gibt es hier nichts zu zeigen.",
   "settings.crashReports.exampleFailed": "Das Beispiel konnte nicht erstellt werden. Schließe die Einstellungen und öffne sie erneut.",
   "help.set.crashReportsExample": "Zeigt einen ausgedachten Bericht in genau der Form eines echten, mit dem falschen Pfad, Dateinamen, der E-Mail-Adresse und der Webadresse des Beispiels bereits ersetzt. Dafür wird nichts gesendet, und es funktioniert auch, wenn Absturzberichte aus sind.",
   // Settings, Privacy: a build with no crash report address (built from source).
@@ -15733,7 +15728,6 @@ const pt = {
   "settings.crashReports.exampleTitle": "Exemplo de relatório",
   "settings.crashReports.exampleDesc": "Dados de exemplo inventados, que não vêm do seu computador. Eles mostram exatamente o formato que um relatório real tem. O caminho de pasta falso, o nome do arquivo da música, o endereço de e-mail e o endereço web do erro de exemplo já estão substituídos, como estariam em um relatório real.",
   "settings.crashReports.exampleAria": "Exemplo de relatório (somente leitura)",
-  "settings.crashReports.exampleServer": "No app para desktop, um exemplo de relatório aparece aqui. Um servidor não envia relatórios, então não há nada para mostrar.",
   "settings.crashReports.exampleFailed": "Não foi possível criar o exemplo. Feche as Configurações e abra de novo.",
   "help.set.crashReportsExample": "Mostra um relatório inventado exatamente no formato de um real, com o caminho, o nome de arquivo, o endereço de e-mail e o endereço web falsos do exemplo já substituídos. Nada é enviado para mostrá-lo, e funciona com os relatórios de falhas desativados.",
   // Settings, Privacy: a build with no crash report address (built from source).
@@ -18302,7 +18296,6 @@ const id = {
   "settings.crashReports.exampleTitle": "Contoh laporan",
   "settings.crashReports.exampleDesc": "Data contoh buatan, bukan diambil dari komputer Anda. Data ini menunjukkan bentuk persis sebuah laporan sungguhan. Path folder palsu, nama file lagu, alamat email, dan alamat web dalam error contoh sudah diganti, seperti yang terjadi pada laporan sungguhan.",
   "settings.crashReports.exampleAria": "Contoh laporan (hanya baca)",
-  "settings.crashReports.exampleServer": "Di aplikasi desktop, contoh laporan tampil di sini. Server tidak mengirim laporan, jadi tidak ada yang ditampilkan.",
   "settings.crashReports.exampleFailed": "Contoh tidak dapat dibuat. Tutup Pengaturan lalu buka lagi.",
   "help.set.crashReportsExample": "Menampilkan laporan buatan dalam bentuk persis laporan sungguhan, dengan path, nama file, alamat email, dan alamat web palsu dari contoh sudah diganti. Tidak ada yang dikirim untuk menampilkannya, dan tetap berfungsi saat laporan crash nonaktif.",
   // Settings, Privacy: a build with no crash report address (built from source).
@@ -20888,7 +20881,6 @@ const fr = {
   "settings.crashReports.exampleTitle": "Exemple de rapport",
   "settings.crashReports.exampleDesc": "Des données d'exemple inventées, qui ne viennent pas de votre ordinateur. Elles montrent exactement la forme d'un vrai rapport. Le faux chemin de dossier, le nom du fichier du morceau, l'adresse e-mail et l'adresse web de l'erreur d'exemple sont déjà remplacés, comme ils le seraient dans un vrai rapport.",
   "settings.crashReports.exampleAria": "Exemple de rapport (lecture seule)",
-  "settings.crashReports.exampleServer": "Dans l'application de bureau, un exemple de rapport s'affiche ici. Un serveur n'envoie aucun rapport, il n'y a donc rien à montrer.",
   "settings.crashReports.exampleFailed": "L'exemple n'a pas pu être créé. Fermez les Paramètres et rouvrez-les.",
   "help.set.crashReportsExample": "Affiche un rapport inventé exactement sous la forme d'un vrai, avec le faux chemin, le nom de fichier, l'adresse e-mail et l'adresse web de l'exemple déjà remplacés. Rien n'est envoyé pour l'afficher, et cela marche même quand les rapports de plantage sont désactivés.",
   // Settings, Privacy: a build with no crash report address (built from source).
@@ -21671,7 +21663,6 @@ const ptPT = {
   // Settings, Privacy: the example report (made-up data, nothing sent).
   "settings.crashReports.exampleDesc": "Dados de exemplo inventados, que não vêm do seu computador. Mostram exatamente o formato que um relatório real tem. O caminho de pasta falso, o nome do ficheiro da música, o endereço de e-mail e o endereço web do erro de exemplo já estão substituídos, como estariam num relatório real.",
   "settings.crashReports.exampleAria": "Exemplo de relatório (só leitura)",
-  "settings.crashReports.exampleServer": "Na aplicação para computador, aparece aqui um exemplo de relatório. Um servidor não envia relatórios, por isso não há nada para mostrar.",
   "settings.crashReports.exampleFailed": "Não foi possível criar o exemplo. Feche as Definições e abra-as novamente.",
   "help.set.crashReportsExample": "Mostra um relatório inventado exatamente no formato de um real, com o caminho, o nome de ficheiro, o endereço de e-mail e o endereço web falsos do exemplo já substituídos. Nada é enviado para o mostrar, e funciona com os relatórios de falhas desativados.",
   // Settings, Privacy: a build with no crash report address (built from source).
@@ -24272,7 +24263,6 @@ const es = {
   "settings.crashReports.exampleTitle": "Ejemplo de informe",
   "settings.crashReports.exampleDesc": "Datos de ejemplo inventados, que no salen de tu equipo. Muestran exactamente la forma que tiene un informe real. La ruta de carpeta falsa, el nombre del archivo de la canción, la dirección de correo y la dirección web del error de ejemplo ya están sustituidos, como lo estarían en un informe real.",
   "settings.crashReports.exampleAria": "Ejemplo de informe (solo lectura)",
-  "settings.crashReports.exampleServer": "En la aplicación de escritorio, aquí se muestra un ejemplo de informe. Un servidor no envía informes, así que no hay nada que mostrar.",
   "settings.crashReports.exampleFailed": "No se pudo crear el ejemplo. Cierra los Ajustes y ábrelos de nuevo.",
   "help.set.crashReportsExample": "Muestra un informe inventado exactamente con la forma de uno real, con la ruta, el nombre de archivo, la dirección de correo y la dirección web falsos del ejemplo ya sustituidos. No se envía nada para mostrarlo, y funciona con los informes de fallos desactivados.",
   // Settings, Privacy: a build with no crash report address (built from source).
@@ -26850,7 +26840,6 @@ const ko = {
   "settings.crashReports.exampleTitle": "보고서 예시",
   "settings.crashReports.exampleDesc": "지어낸 예시 데이터로, 내 컴퓨터에서 가져온 것이 아니에요. 실제 보고서와 똑같은 형태를 보여 줘요. 예시 오류에 있는 가짜 폴더 경로, 곡 파일 이름, 이메일 주소, 웹 주소는 실제 보고서에서처럼 이미 바뀌어 있어요.",
   "settings.crashReports.exampleAria": "보고서 예시(읽기 전용)",
-  "settings.crashReports.exampleServer": "데스크톱 앱에서는 여기에 보고서 예시가 표시돼요. 서버는 보고서를 보내지 않으니 보여 줄 것이 없어요.",
   "settings.crashReports.exampleFailed": "예시를 만들지 못했어요. 설정을 닫았다가 다시 열어 주세요.",
   "help.set.crashReportsExample": "실제 보고서와 똑같은 형태의 지어낸 보고서를 보여 줘요. 예시의 가짜 경로, 파일 이름, 이메일 주소, 웹 주소는 이미 바뀌어 있어요. 보여 주려고 무언가를 보내지 않으며, 충돌 보고서가 꺼져 있어도 작동해요.",
   // Settings, Privacy: a build with no crash report address (built from source).
