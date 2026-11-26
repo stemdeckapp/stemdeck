@@ -1455,14 +1455,22 @@ async def _after_reextract(job: Job) -> None:
 async def _reextract_task(
     job: Job, job_dir: Path, stem: str, model: str, source: Path | None
 ) -> None:
-    """The run, behind the pipeline lock the route took for it."""
+    """The run, behind the pipeline lock the route took for it.
+
+    The run's outcome is shown only after the lock is released, with no
+    await in between: otherwise the page could read the run as ended while
+    a new one would still be refused as busy. A task cancelled at shutdown
+    shows nothing, so the saved record reads as interrupted on restart."""
+    final = None
     try:
         with registry_operation("reextract"):
-            await asyncio.to_thread(
-                stem_reextract.reextract_stem, job, job_dir, stem, model, source
+            final = await asyncio.to_thread(
+                stem_reextract.reextract_stem, job, job_dir, stem, model, source, publish=False
             )
     finally:
         _pipeline_lock.release()
+        if final is not None:
+            stem_reextract.publish_final(job, final)
         _set(job, stage="Done")
         await _after_reextract(job)
 

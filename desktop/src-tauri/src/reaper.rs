@@ -115,15 +115,11 @@ fn reg_exe() -> PathBuf {
 
 #[cfg(windows)]
 fn registry_dirs() -> Vec<PathBuf> {
-    use std::os::windows::process::CommandExt;
-    use std::process::Command;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     ["HKLM\\SOFTWARE\\REAPER", "HKCU\\SOFTWARE\\REAPER"]
         .iter()
         .filter_map(|key| {
-            let out = Command::new(reg_exe())
+            let out = crate::childproc::command(reg_exe())
                 .args(["query", key, "/ve"])
-                .creation_flags(CREATE_NO_WINDOW)
                 .output()
                 .ok()?;
             if !out.status.success() {

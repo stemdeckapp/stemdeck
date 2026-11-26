@@ -102,15 +102,15 @@ test("desktop: a build with no report address shows a disabled switch and says s
   await expect(page.locator(".crash-reports-example")).toBeVisible();
 });
 
-test("server: there is no switch, and the pane says a server sends nothing", async ({ page }) => {
+test("server: the pane is only the sentence that says a server sends nothing", async ({ page }) => {
   await openPrivacy(page);
-  await expect(page.locator(".crash-reports-server-note")).toBeVisible();
-  await expect(page.locator(".crash-reports-example")).toBeHidden();
-  await expect(page.locator(".crash-reports-example-server")).toHaveText(
-    "In the desktop app, an example report shows here. A server sends no reports, so there is nothing to show.",
+  await expect(page.locator(".crash-reports-server-note")).toHaveText(
+    "This StemDeck runs as a server, and a server never sends crash reports. They exist only in the desktop app, and only once they are turned on there.",
   );
-  await expect(page.locator(".crash-reports-input")).toBeHidden();
-  await expect(page.locator(".crash-reports-last")).toBeHidden();
-  // The lists of what is and is not collected still show.
-  await expect(page.locator('.settings-pane[data-pane="privacy"] .crash-reports-list').first()).toBeVisible();
+  const pane = page.locator('.settings-pane[data-pane="privacy"]');
+  await expect(pane.locator(".settings-group-title")).toBeHidden();
+  await expect(pane.locator(".crash-reports-input")).toBeHidden();
+  await expect(pane.locator(".crash-reports-example")).toBeHidden();
+  await expect(pane.locator(".crash-reports-list").first()).toBeHidden();
+  await expect(pane.locator(".crash-reports-last")).toBeHidden();
 });

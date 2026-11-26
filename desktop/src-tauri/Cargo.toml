@@ -65,9 +65,12 @@ webview2-com = "0.38"
 windows-core = "0.61"
 # The backend's kill-on-close job object (src/backendjob.rs, #790). Already in
 # the tree at this version; named here because backendjob.rs calls it directly.
+# childproc.rs takes CREATE_NO_WINDOW from it too.
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Security",
+    # Printing `--emit-lan-cert` to the calling terminal (attach_parent_console).
+    "Win32_System_Console",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_JobObjects",
     "Win32_System_Threading",
