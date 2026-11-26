@@ -5153,11 +5153,8 @@ function wirePrivacySettings(overlay) {
   if (!sw) return;
   if (!crashReportsAvailable()) {
     // A server, Docker or a browser: nothing to switch, and nothing is sent.
-    overlay.querySelectorAll("[data-pane='privacy'] .crash-desktop-only").forEach((el) => { el.hidden = true; });
-    const note = overlay.querySelector(".crash-reports-server-note");
-    if (note) note.hidden = false;
-    const exampleNote = overlay.querySelector(".crash-reports-example-server");
-    if (exampleNote) exampleNote.hidden = false;
+    // The pane shows only the sentence that says so (settings.css).
+    overlay.querySelector("[data-pane='privacy']")?.classList.add("privacy-server");
     return;
   }
   loadCrashReportExample(overlay);
@@ -6590,9 +6587,11 @@ function openLibraryEditor() {
            works the same with it off. wirePrivacySettings asks the shell for
            the state: the page never decides it. -->
       <div class="settings-pane hidden" data-pane="privacy" id="settings-pane-privacy" role="tabpanel" aria-labelledby="settings-tab-privacy">
+        <!-- A server shows this sentence and nothing else: the pane gets
+             .privacy-server (wirePrivacySettings), which hides every sibling. -->
+        <p class="settings-server-note crash-reports-server-note" data-i18n="settings.crashReports.serverNote">This StemDeck runs as a server, and a server never sends crash reports. They exist only in the desktop app, and only once they are turned on there.</p>
         <div class="settings-group">
           <h4 class="settings-group-title" data-i18n="settings.group.crashReports">Crash reports</h4>
-          <p class="settings-server-note crash-reports-server-note" hidden data-i18n="settings.crashReports.serverNote">This StemDeck runs as a server, and a server never sends crash reports. They exist only in the desktop app, and only once they are turned on there.</p>
           <div class="settings-section">
             <div class="settings-row crash-reports-row crash-desktop-only">
               <div class="settings-row-text">
@@ -6625,7 +6624,6 @@ function openLibraryEditor() {
               <div class="settings-row-text">
                 <div class="settings-row-title" data-i18n="settings.crashReports.exampleTitle">Example report</div>
                 <div class="settings-row-desc crash-desktop-only" id="crashReportsExampleDesc" data-i18n="settings.crashReports.exampleDesc">Made-up sample data, not taken from your computer. It shows the exact shape a real report has. The fake folder path, song file name, email address and web address in the sample error are already replaced, as they would be in a real report.</div>
-                <div class="settings-row-desc crash-reports-example-server" hidden data-i18n="settings.crashReports.exampleServer">In the desktop app, an example report shows here. A server sends no reports, so there is nothing to show.</div>
               </div>
               <textarea class="settings-registry-view crash-reports-example crash-desktop-only" readonly spellcheck="false" aria-label="Example report (read only)" data-i18n-aria-label="settings.crashReports.exampleAria" aria-describedby="crashReportsExampleDesc" data-i18n="settings.logs.loading">Loading…</textarea>
             </div>
