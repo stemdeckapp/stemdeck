@@ -7,6 +7,7 @@ from app.api.config import router as config_router
 from app.api.discogs import router as discogs_router
 from app.api.events import router as events_router
 from app.api.jobs import router as jobs_router
+from app.api.midi import router as midi_router
 from app.api.my_models import router as my_models_router
 from app.api.playlist import router as playlist_router
 from app.api.qr import router as qr_router
@@ -25,6 +26,7 @@ router.include_router(takes_router, prefix="/jobs", tags=["takes"])
 router.include_router(backing_router, prefix="/jobs", tags=["jobs"])
 router.include_router(events_router, tags=["events"])
 router.include_router(stems_router, tags=["stems"])
+router.include_router(midi_router, tags=["midi"])
 router.include_router(suggest_router, tags=["suggest"])
 router.include_router(qr_router, tags=["qr"])
 router.include_router(queue_router, prefix="/queue", tags=["queue"])

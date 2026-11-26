@@ -546,6 +546,101 @@
   overflow: visible;
 }
 
+/* A lane's MIDI view (laneMidiPlay.js): its notes as a piano roll with the
+   waveform, in the same stretched coordinates (x is seconds over the lane),
+   so the zoom, the scroll and the playhead are the waveform's. The roll takes
+   no pointer, as the layer, so a press still seeks; with the Guide on it can
+   be pointed at.
+   What the lane plays (its Sound switch, the row's data-midi-source) is drawn
+   in front and clear: Stem, the waveform in front and the notes faint behind
+   it; MIDI, the notes in front and the waveform dimmed; Both, the two at the
+   same strength. Each source only sets the custom properties below, and the
+   two elements draw with them (tests/js/midi-roll-layers.test.mjs holds the
+   values to that order). Without the attribute the row is drawn as Stem.
+   The opacities are on the two elements, not on their shapes: the waveform's
+   shapes take their own opacity from rules that win on order (.app
+   :not(.is-import) below), which is why a dim on the shapes never showed. */
+.stem-waveform-row.midi-view {
+  isolation: isolate;
+  --midi-wave-opacity: 1;
+  --midi-notes-opacity: 0.45;
+  --midi-notes-z: -1;
+}
+.stem-waveform-row.midi-view[data-midi-source="stem"] {
+  --midi-wave-opacity: 1;
+  --midi-notes-opacity: 0.45;
+  --midi-notes-z: -1;
+}
+.stem-waveform-row.midi-view[data-midi-source="midi"] {
+  --midi-wave-opacity: 0.25;
+  --midi-notes-opacity: 1;
+  --midi-notes-z: auto;
+}
+.stem-waveform-row.midi-view[data-midi-source="both"] {
+  --midi-wave-opacity: 0.7;
+  --midi-notes-opacity: 0.7;
+  --midi-notes-z: auto;
+  /* At the same strength and in the same colour, a note on a waveform bar
+     would vanish into it: lighter, it stays readable without outweighing it. */
+  --midi-notes-fill: color-mix(in srgb, var(--stem-color) 55%, var(--fg));
+}
+.stem-waveform-row.midi-view > .stem-waveform-svg,
+.stem-waveform-row.midi-view > .midi-roll {
+  transition: opacity var(--t-base) var(--easing);
+}
+.stem-waveform-row.midi-view > .stem-waveform-svg { opacity: var(--midi-wave-opacity); }
+.midi-roll {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.stem-waveform-row.midi-view > .midi-roll {
+  opacity: var(--midi-notes-opacity);
+  z-index: var(--midi-notes-z);
+}
+.midi-roll rect { fill: var(--midi-notes-fill, var(--stem-color)); }
+/* Each note's fill-opacity attribute is its velocity (0.35 to 1), a cue
+   behind the waveform and beside it. When the lane plays its MIDI the notes
+   are what is heard, so they are drawn as the waveform is in Stem, in the
+   lane's colour at full strength: a velocity of 60, the median of a
+   transcribed bass line, was 0.66 and read dim and brownish. A CSS property
+   wins over the attribute. */
+.stem-waveform-row.midi-view[data-midi-source="midi"] > .midi-roll rect { fill-opacity: 1; }
+body.help-mode .midi-roll { pointer-events: auto; }
+/* The Drums lane's row names (Kick, Snare, ...), at the left of the lane,
+   each beside its row of hits. */
+.midi-roll-labels {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  pointer-events: none;
+}
+.midi-roll-label {
+  position: absolute;
+  left: 4px;
+  display: flex;
+  align-items: center;
+  font-size: 9px;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--fg);
+}
+/* A dark backing behind each name, so it reads over the hits. */
+.midi-roll-label::before {
+  content: "";
+  position: absolute;
+  inset: 50% -3px auto -3px;
+  height: min(100%, 11px);
+  transform: translateY(-50%);
+  border-radius: 2px;
+  background: var(--bg);
+  opacity: 0.75;
+  z-index: -1;
+}
+.midi-roll-labels { z-index: 1; }
+
 .stem-waveform-svg path,
 .stem-waveform-svg rect {
   fill: var(--stem-color);

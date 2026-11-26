@@ -231,13 +231,15 @@ def _download_verified(
     progress: bool,
     redirects: type[HTTPRedirectHandler],
     timeout: float | None = None,
+    on_bytes: Callable[[int], None] | None = None,
 ) -> None:
     """Download `url` to `dst` only if it is exactly `size` bytes with SHA-256
     `sha256`. A short body is a cut connection (tried again); a wrong length or
     hash is MirrorFileMismatch. Nothing is left behind but `dst` itself, and
     that only when it matched, flushed to the disk before it is moved into
     place: a crash right after the move must not leave a truncated file under
-    the final name, which every later load would take as complete."""
+    the final name, which every later load would take as complete.
+    ``on_bytes`` is told the bytes received so far after every chunk."""
     from torch.hub import tqdm  # torch.hub's own bar, or its stand-in without tqdm
 
     from app.core.settings import fsync_dir
@@ -276,6 +278,8 @@ def _download_verified(
                     out.write(chunk)
                     digest.update(chunk)
                     bar.update(len(chunk))
+                    if on_bytes is not None:
+                        on_bytes(received)
                 out.flush()
                 os.fsync(out.fileno())
             if received < size:
@@ -387,11 +391,13 @@ def fetch_verified_file(
     read_timeout: int,
     attempts: int,
     progress: bool = True,
+    on_bytes: Callable[[int], None] | None = None,
 ) -> None:
     """Download `url` to `dst`, kept only when it is exactly `size` bytes with
     SHA-256 `sha256`. Redirects are followed to https addresses only. A cut
     connection is tried again, up to `attempts` times, each read given up
-    after `read_timeout` seconds without a byte.
+    after `read_timeout` seconds without a byte. ``on_bytes`` is told the
+    bytes the current try has received, after every chunk.
 
     Raises ModelDownloadError, naming the address and the folder to put the
     file in by hand, when every try failed, or at once when the file that
@@ -405,7 +411,14 @@ def fetch_verified_file(
     try:
         fetch_with_retry(
             lambda: _download_verified(
-                url, dst, sha256, size, progress, _HttpsRedirectOnly, timeout=read_timeout
+                url,
+                dst,
+                sha256,
+                size,
+                progress,
+                _HttpsRedirectOnly,
+                timeout=read_timeout,
+                on_bytes=on_bytes,
             ),
             url=url,
             folder=folder,

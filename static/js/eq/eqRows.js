@@ -31,6 +31,8 @@ import {
 import { setFxContext, syncFxRows, syncFxRowOrder, fxPanelsHeight } from "../fx/fxRows.js";
 // And the model rows (Advanced mode, laneModelRows.js), after the effects rows.
 import { setModelContext, syncModelRows, syncModelRowOrder, modelPanelsHeight } from "../laneModelRows.js";
+// And the MIDI rows (Piano and Bass, Advanced mode, laneMidiRows.js), after the model rows.
+import { setMidiContext, syncMidiRows, syncMidiRowOrder, midiPanelsHeight } from "../laneMidiRows.js";
 
 // The panel modules, by kind, loaded on first open.
 const LOADERS = {
@@ -107,7 +109,7 @@ export function laneKind(lane) {
 
 /** Height the open panels add to the lane stack (px). player.js uses it. */
 export function eqPanelsHeight() {
-  const fxPx = fxPanelsHeight() + modelPanelsHeight();
+  const fxPx = fxPanelsHeight() + modelPanelsHeight() + midiPanelsHeight();
   if (!_enabled) return fxPx;
   return openPanelsHeight(_lanes, isPanelOpen, laneKind) + fxPx;
 }
@@ -131,6 +133,8 @@ export function setEqContext({ jobId, lanes, enabled }) {
   // The model rows open on their own (their tab is in the lane's header),
   // under the EQ and effects rows when those are open.
   setModelContext({ jobId, lanes, enabled });
+  // The MIDI rows too, under the model row when it is open.
+  setMidiContext({ jobId, lanes, enabled });
 }
 
 // Practice and DAW: the tabs and the open panels go or come back, and the
@@ -356,6 +360,7 @@ export function syncEqRows() {
     dropTabs(null);
     syncFxRows();
     syncModelRows();
+    syncMidiRows();
     return;
   }
   dropTabs(_lanes);
@@ -382,9 +387,10 @@ export function syncEqRows() {
   }
   syncEqRowOrder();
   // After the EQ rows, so an effects row goes right after its lane's EQ row,
-  // and a model row after both.
+  // a model row after both, and a MIDI row after the model row.
   syncFxRows();
   syncModelRows();
+  syncMidiRows();
 }
 
 /** A mounted panel's own measurements (tests read the spectrum's cost). */
@@ -404,6 +410,7 @@ export function syncEqRowOrder() {
   }
   syncFxRowOrder();
   syncModelRowOrder();
+  syncMidiRowOrder();
 }
 
 /** The visible width of the waveform area, for panels that span it at any zoom. */

@@ -241,6 +241,25 @@ const HELP = [
   [".lane-key-value", "help.laneKey", laneName, "help.laneKeyTitle"],
   [".mx-btn.mute", "help.mute", laneName],
   [".mx-btn.solo", "help.solo", laneName],
+  // The MIDI chip under the Model chip on every lane, and the
+  // MIDI row it opens (laneMidiRows.js, Advanced mode). Its Download link is
+  // an a.lane-dl and the chip an .eq-tab, so these come before both entries.
+  [".midi-tab", "help.midiTab"],
+  [".midi-transcribe", "help.midiTranscribe"],
+  [".midi-rerun", "help.midiRerun"],
+  [".midi-retry", "help.midiRetry"],
+  [".midi-cancel", "help.midiCancel"],
+  [".midi-download", "help.midiDownload"],
+  [".midi-remove", "help.midiRemove"],
+  [".midi-source-btn", "help.midiSource", null, "laneMidi.source.label"],
+  // The piano roll over a lane's waveform: pointable only while the Guide
+  // is on (waves.css), so it is matched before the waves column.
+  [".midi-roll", "help.midiRoll", null, "help.midiRollTitle"],
+  // A lane's download button while the lane has a MIDI file, and its menu.
+  [".lane-dl-opt[data-choice=\"audio\"]", "help.dlAudio"],
+  [".lane-dl-opt[data-choice=\"midi\"]", "help.dlMidi"],
+  [".lane-dl-opt[data-choice=\"both\"]", "help.dlBoth"],
+  [".lane-dl[aria-haspopup]", "help.downloadMidi", laneName],
   [".lane-dl", "help.download", laneName],
   ['.daw-meta-card[data-meta="key"]', "help.meta.key"],
   ['.daw-meta-card[data-meta="bpm"]', "help.meta.bpm"],
@@ -389,6 +408,7 @@ const HELP = [
   [".export-format-toggle", "help.exportFormat", null, "export.formatAria"],
   ["#t-export-click-wrap", "help.exportClick"],
   ["#t-export-count-in-wrap", "help.exportCountIn"],
+  ["#t-export-midi-wrap", "help.exportMidi"],
   ["#t-export-master", "help.masterExportRow", null, "master.title"],
   ["#t-export-mix", "help.exportMix"],
   ["#t-export-stems", "help.exportStems"],
@@ -491,8 +511,21 @@ const SETTINGS = [
     ["settings.speedTest.cancel", "help.set.speedTestCancel"],
     ["settings.speedTest.showAll", "help.set.speedTestDevices"],
     ["settings.speedTest.apply", "help.set.speedTestApply"],
-    // My models (myModels.js): the section, its form, and each model's
-    // buttons. "Add a model..." in a stem's list is in the stem sentences.
+    ["settings.models.open", "help.set.modelsOpen"],
+  ]],
+  // MIDI from every lane (transcriptionSettings.js): each lane's Auto or
+  // Off, then its engine.
+  ["settings.tab.transcription", [
+    ["settings.midi.laneTitle", "help.set.midiLane"],
+    ["settings.midi.engineTitle", "help.set.midiEngine"],
+    ["settings.midi.detail.title", "help.set.midiDetail"],
+    ["settings.models.openTranscription", "help.set.modelsOpenTranscription"],
+  ]],
+  // Every model in one place: the built-in ones by purpose (modelsSettings.js),
+  // then My models (myModels.js): the section, its form, and each model's
+  // buttons. "Add a model..." in a stem's list is in the stem sentences.
+  ["settings.tab.models", [
+    ["settings.models.builtIn.title", "help.set.modelsBuiltIn"],
     ["settings.myModels.title", "help.set.myModels"],
     ["settings.myModels.link.label", "help.set.myModelsLink"],
     ["settings.myModels.file.choose", "help.set.myModelsFile"],

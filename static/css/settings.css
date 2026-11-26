@@ -332,6 +332,30 @@
 .online-sources-msg:empty { display: none; }
 .online-sources-msg.error { color: var(--danger); }
 
+/* Settings, Transcription (transcriptionSettings.js): the notice is always
+   shown, then the engine line, or why it cannot run here. Under Detail one
+   sentence per choice, the chosen one brighter. */
+.transcription-notice-text { margin: 6px 0 0; color: var(--fg-2); }
+.transcription-engine { margin: 8px 0 0; }
+.transcription-unavailable { margin: 8px 0 0; color: var(--danger); }
+.transcription-detail-desc { margin: 4px 0 0; }
+.transcription-detail-desc.is-current { color: var(--fg-2); }
+.transcription-detail-not-for { margin: 8px 0 0; }
+/* A lane's row: its Auto or Off beside its engine; under the text, what the
+   engine needs said before it runs (its download, its speed here). */
+.transcription-lane-controls { display: flex; flex: 0 0 auto; gap: 10px; align-items: center; }
+/* Two selects beside the text leave it too narrow in a small window: below
+   280px of text they go under it instead. */
+.settings-row.transcription-lane { flex-wrap: wrap; row-gap: 12px; }
+.transcription-lane > .settings-row-text { flex: 1 1 280px; }
+@media (max-width: 560px) {
+  .transcription-lane-controls { flex-wrap: wrap; }
+  .transcription-lane-controls > .settings-select { flex: 1 1 140px; }
+}
+.transcription-engine-note { margin: 6px 0 0; color: var(--fg-2); }
+.transcription-msg { padding: 0 0 18px; font-size: 13px; line-height: 1.45; color: var(--muted); }
+.transcription-msg:empty { display: none; }
+.transcription-msg.error { color: var(--danger); }
 /* Settings, Privacy: crash reports. The lists say in plain words what a
    report holds and what it never holds; Last report is read-only. */
 .crash-reports-list { margin: 6px 0 0; padding-left: 18px; color: var(--fg-2); font-size: 13px; line-height: 1.5; }
@@ -508,6 +532,36 @@
 }
 @keyframes my-model-checking { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
 .my-model-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.my-model-used { margin: 0; color: var(--fg-2); }
+.my-model-used:empty { display: none; }
+
+/* ── Models: the built-in models by purpose (static/js/modelsSettings.js),
+   then My models above. ── */
+.models-inventory { display: flex; flex-direction: column; gap: 14px; }
+.models-group-title {
+  margin: 6px 0 -4px 2px; font-size: 13px; font-weight: 600; color: var(--fg-2);
+}
+.models-row .settings-row-desc { margin-top: 2px; }
+.models-row .models-used { color: var(--fg-2); }
+.models-row .models-used:empty, .models-row .models-licence:empty { display: none; }
+/* The same solid badge as a model of your own, with a word, never colour alone. */
+.models-state {
+  flex-shrink: 0; display: inline-block; padding: 2px 8px; border-radius: 5px;
+  font-size: 11.5px; font-weight: 700; letter-spacing: 0.02em; white-space: nowrap;
+  color: var(--fg-2); background: var(--panel-3); border: 1px solid var(--border-strong);
+}
+.models-state[data-state="downloaded"], .models-state[data-state="built_in"] { color: var(--bg); background: var(--guitar); border-color: transparent; }
+.models-state[data-state="partial"] { color: var(--bg); background: var(--accent); border-color: transparent; }
+.models-state[data-state="unavailable"] { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 50%, transparent); }
+.models-remove-note { margin: 0 0 0 2px; }
+/* "Add or remove models in Models": a button that reads as a link. */
+.models-open-line { margin: 0 0 2px 2px; }
+.models-open {
+  padding: 0; border: 0; background: none; cursor: pointer;
+  font: inherit; font-size: 13px; font-weight: 500; color: var(--accent); text-align: left;
+}
+.models-open:hover { text-decoration: underline; }
+.models-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
 
 .library-editor-status.out-of-sync { color: var(--danger); font-weight: 600; }
 .library-editor-sync:disabled { opacity: 0.55; cursor: default; }
@@ -726,7 +780,8 @@
   .settings-row > .settings-select, .settings-row > .rec-settings-select { width: 100%; }
   .settings-row > .settings-switch, .settings-row > .settings-unit-field,
   .settings-row > .settings-num-input, .settings-row > .settings-btn,
-  .settings-row > .settings-reset-btn, .settings-row > .rec-small-btn { align-self: flex-start; }
+  .settings-row > .settings-reset-btn, .settings-row > .rec-small-btn,
+  .settings-row > .models-state { align-self: flex-start; }
   .settings-foot-note { display: none; }
   .settings-foot { justify-content: flex-end; }
 }

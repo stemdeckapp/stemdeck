@@ -280,6 +280,30 @@ def test_restore_recovers_automatic_sections_from_metadata(tmp_path: Path):
     assert restored.sections_source == "automatic"
 
 
+def test_restore_recovers_the_stems_levels_from_metadata(tmp_path: Path):
+    """Each stem's RMS (app/pipeline/stem_level.py) comes back with the song;
+    a value of the wrong type is left out, and the stem measured again."""
+    job_dir = tmp_path / "abcdefabc116"
+    stems_dir = job_dir / "stems"
+    stems_dir.mkdir(parents=True)
+    (stems_dir / "vocals.wav").write_bytes(b"RIFF")
+    levels = {"vocals": {"rms": 0.1, "file": "vocals.wav", "size": 4, "mtime_ns": 1}}
+    (job_dir / "metadata.json").write_text(
+        json.dumps({"title": "Song", "stem_rms": levels}), encoding="utf-8"
+    )
+    other = tmp_path / "abcdefabc117"
+    (other / "stems").mkdir(parents=True)
+    (other / "stems" / "vocals.wav").write_bytes(b"RIFF")
+    (other / "metadata.json").write_text(
+        json.dumps({"title": "Song", "stem_rms": ["bad"]}), encoding="utf-8"
+    )
+
+    restore_registry(tmp_path)
+
+    assert _jobs["abcdefabc116"].stem_rms == levels
+    assert _jobs["abcdefabc117"].stem_rms is None
+
+
 def test_restore_recovers_orphan_without_metadata(tmp_path: Path):
     """#284: a crash between the stems being marked complete and the metadata
     write used to leave a complete stems dir permanently unrecoverable. Now it

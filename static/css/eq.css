@@ -902,3 +902,40 @@
 .model-status[data-kind="done"],
 .model-status[data-kind="undone"] { color: var(--accent); }
 .model-hint { color: var(--muted); }
+
+/* ── The MIDI row (static/js/laneMidiRows.js, Advanced mode) ──
+   Opened by the MIDI chip under the Model chip (daw.css .mx-model-slot), on
+   the Piano and Bass lanes, under the lane's model row when that is open. The
+   model row's frame, line, progress and status, one line shorter. */
+/* In a narrow window the waveform column can be under 260 px: the buttons
+   wrap to a second line rather than run past the visible edge, and the row
+   scrolls inside itself, so Remove is never out of reach. */
+.midi-panel-body { overflow-y: auto; justify-content: center; justify-content: safe center; }
+.midi-panel-line { flex-wrap: wrap; row-gap: 4px; }
+.midi-panel-body > * { flex-shrink: 0; }
+.midi-panel-line > [hidden],
+.midi-panel-line .midi-run [hidden] { display: none; }
+.midi-transcribe:not(:disabled),
+.midi-rerun:not(:disabled),
+.midi-retry:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--gold-line);
+}
+.midi-download { text-decoration: none; color: var(--fg-2); }
+.midi-download:hover { color: var(--fg); border-color: var(--muted-2); }
+/* Remove, armed by its first press (laneMidiRows.js remove): red, as the
+   track's Delete tool, saying to press again. */
+.midi-remove.armed:not(:disabled) {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.midi-status { -webkit-line-clamp: 1; line-clamp: 1; }
+.midi-status:empty { display: none; }
+.midi-status[data-kind="other"] { color: var(--muted); }
+.midi-hint:empty { display: none; }
+/* What the lane plays: Stem, MIDI or Both (laneMidiPlay.js), the pressed one
+   gold like a pressed EQ button. */
+.midi-source { display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; }
+.midi-source[hidden] { display: none; }
+.midi-source-label { font-size: 11px; color: var(--muted); margin-right: 2px; }
+.midi-panel-line .midi-source-btn { height: 24px; font-size: 11px; }

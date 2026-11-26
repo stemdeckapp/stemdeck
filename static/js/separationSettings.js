@@ -5,10 +5,12 @@
 // song takes, and "Use recommended". The words and the numbers come from the
 // pure stemModelsView.js; this file draws them and saves a choice.
 //
-// "My models" (myModels.js) is below the Benchmark. While the server offers it,
-// every stem select ends with "Add a model...", which is never posted: it
-// opens that section at its form. When a model the user added becomes usable
-// or goes, the settings are read again, so the selects list it or drop it.
+// "My models" (myModels.js) is in the Models tab, wired from here because the
+// selects depend on it. While the server offers it, every stem select ends
+// with "Add a model...", which is never posted: it opens the Models tab at
+// that section's form. When a model the user added becomes usable or goes,
+// the settings are read again, so the selects list it or drop it. Every
+// answer the rows paint is handed to it too, for each model's "Used for".
 //
 // Server: GET /api/settings (stem_models, stem_models_resolved,
 // stem_models_recommended, stem_models_reason, stem_model_catalog) and
@@ -147,8 +149,9 @@ const shapeOf = (rows) => rows.map((r) => `${r.stem}:${r.kind}:${r.fixed || ""}:
 /** The model rows. Returns { paint(settings answer), repaint() }, or null
  *  without the group. `answers` numbers every settings request this tab
  *  makes, so only the latest one's answer is painted. `addOption()` says
- *  whether the selects end with "Add a model...". */
-function wireStemModels(overlay, answers, { addOption = () => false } = {}) {
+ *  whether the selects end with "Add a model...". `onPaint(d)` gets every
+ *  answer the rows paint. */
+function wireStemModels(overlay, answers, { addOption = () => false, onPaint = () => {} } = {}) {
   const group = overlay.querySelector(".stem-models-group");
   const list = group?.querySelector(".stem-models-rows");
   const why = group?.querySelector(".set-stem-models-why");
@@ -206,6 +209,7 @@ function wireStemModels(overlay, answers, { addOption = () => false } = {}) {
     }
     data = d;
     group.hidden = false;
+    onPaint(d);
     const rows = stemRows(d);
     const nextShape = shapeOf(rows);
     if (nextShape !== shape) {
@@ -600,7 +604,10 @@ export async function wireSeparationSettings(overlay) {
   let seq = 0;
   const answers = { take: () => ++seq, latest: (n) => n === seq };
   let myModels = null;
-  const stemModels = wireStemModels(overlay, answers, { addOption: () => myModels?.offered() === true });
+  const stemModels = wireStemModels(overlay, answers, {
+    addOption: () => myModels?.offered() === true,
+    onPaint: (d) => myModels?.fromPlan(d),
+  });
   let gpuBackend = "";
   const speedTest = wireSpeedTest(overlay, { rocm: () => gpuBackend === "rocm", answers });
   const modelsGroup = overlay.querySelector(".stem-models-group");

@@ -157,6 +157,7 @@ In Performance mode:
 - **Sections** such as verse, chorus and solo, detected for you (experimental) or marked by hand.
 - **Synced lyrics** from LRCLIB, with timing you can fix by tapping along, or imported from a `.lrc` file you pick. With an NVIDIA GPU, or an AMD one on Linux, StemDeck can also write them down from the vocals when none are found.
 - **Song and artist details** from MusicBrainz, Wikipedia and, optionally, Discogs.
+- **MIDI from any stem,** the drums included, written down on your computer with an engine per stem: YourMT3+, which hears each instrument and keeps only the stem's own (downloaded the first time, 562 MB, and much faster with an NVIDIA graphics card), Spotify's open Basic Pitch, or for the piano ByteDance's piano transcription model, to open in your music software (not on Intel Macs).
 
 ### <img src="imgs/readme/export.svg" width="22" align="top" alt=""> Keep and share
 

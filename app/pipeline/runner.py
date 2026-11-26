@@ -42,6 +42,7 @@ from app.pipeline.lyrics_lookup import LyricsLookup
 from app.pipeline.lyrics_retime import retime_after_separation
 from app.pipeline.sections import detect_sections
 from app.pipeline.separate import separate
+from app.pipeline.stem_level import level_records
 from app.pipeline.stem_storage import store_stems
 from app.pipeline.transcribe import transcribe_lyrics
 
@@ -230,6 +231,9 @@ def _run_common(job: Job, source: Path, job_dir: Path) -> None:
     job.stem_presence = _presence_from_rms(
         {name: rms for name, rms in rms_values.items() if name in found}
     )
+    # And each stem's RMS itself, with the file it is of: the level a lane's
+    # MIDI is played at, on either audio engine (stem_level.py).
+    job.stem_rms = level_records(stems_dir, rms_values) or None
     mark = _lap(job, "post", mark)
 
     # Beat grid for the click track. Runs last and swallows its own failures:
@@ -394,6 +398,7 @@ def _write_metadata(job: Job, job_dir: Path) -> None:
         "loudness_remeasured": job.loudness_remeasured,
         "tempo_stability": job.tempo_stability,
         "stem_presence": job.stem_presence,
+        "stem_rms": job.stem_rms,
         "sections": job.sections,
         "sections_source": job.sections_source,
         # This write replaces the whole file, so anything the user saved on

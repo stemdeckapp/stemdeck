@@ -47,6 +47,57 @@ def _no_whisper(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_piano_hr(monkeypatch, tmp_path):
+    """No test reads, writes or downloads the real piano_hr checkpoint (172 MB
+    under MODELS_DIR, app/pipeline/piano_hr.py). Its path is a temporary one,
+    the check of a file already verified is forgotten, and the download step
+    a run starts exits at once as a failed download. Tests that want one
+    point midi._spawn_fetch_cmd at a stub of their own."""
+    from app.pipeline import midi as _midi
+    from app.pipeline import piano_hr as _piano_hr
+
+    checkpoint = tmp_path / "_models" / "piano_hr" / "piano_hr.pth"
+    monkeypatch.setattr(_piano_hr, "checkpoint_path", lambda: checkpoint)
+    monkeypatch.setattr(_piano_hr, "_verified", None)
+    monkeypatch.setattr(
+        _midi,
+        "_spawn_fetch_cmd",
+        lambda dst, *args: [
+            sys.executable,
+            "-c",
+            'print(\'{"event":"error","code":"download"}\', flush=True); raise SystemExit(3)',
+        ],
+    )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_ymt3(monkeypatch, tmp_path):
+    """No test reads, writes, downloads or converts YourMT3+'s real files (a
+    561 MB checkpoint and a 188 MB weights file under MODELS_DIR,
+    app/pipeline/ymt3.py). config.MODELS_DIR, which their PinnedFile looks
+    up when asked, is a temporary folder, each file's verified state is
+    forgotten, and the conversion step exits at once as a failed one (the
+    download fails already, _isolate_piano_hr). Tests that want either point
+    midi._spawn_fetch_cmd or midi._spawn_convert_cmd at a stub of their own."""
+    from app.core import config as _config
+    from app.pipeline import midi as _midi
+    from app.pipeline import ymt3 as _ymt3
+
+    monkeypatch.setattr(_config, "MODELS_DIR", tmp_path / "_models")
+    for pinned in (_ymt3.CHECKPOINT, _ymt3.WEIGHTS):
+        monkeypatch.setitem(pinned._verified, "ident", None)
+    monkeypatch.setattr(
+        _midi,
+        "_spawn_convert_cmd",
+        lambda ckpt, out: [
+            sys.executable,
+            "-c",
+            'print(\'{"event":"error","code":"convert"}\', flush=True); raise SystemExit(3)',
+        ],
+    )
+
+
+@pytest.fixture(autouse=True)
 def _no_acoustid_or_musicbrainz(monkeypatch, tmp_path):
     """No test reaches api.acoustid.org or musicbrainz.org. Every job with an
     artist tag is identified while it runs (app/pipeline/identify.py), and so
