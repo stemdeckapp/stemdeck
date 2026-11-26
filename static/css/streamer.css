@@ -382,8 +382,11 @@ html.streamer-open .daw-footer { display: none !important; }
 .sm-rec-time { font: 500 12px var(--font-mono); color: var(--sm-text); padding: 0 9px; }
 
 /* Under the preview: Take Timeline, undo and redo, the clock */
-.sm-strip { flex: none; height: var(--sm-strip-h); display: flex; gap: 8px; }
-.sm-strip .sm-card { border-radius: 8px; background: var(--sm-panel); }
+/* The strip is as tall as its row of cards: one line of --sm-strip-h, or two
+   in a narrow strip (the tier at the end of this file). */
+.sm-strip { flex: none; }
+.sm-strip-row { display: flex; gap: 8px; }
+.sm-strip .sm-card { height: var(--sm-strip-h); border-radius: 8px; background: var(--sm-panel); }
 .sm-strip-title {
   display: flex;
   align-items: center;
@@ -429,17 +432,95 @@ html.streamer-open .daw-footer { display: none !important; }
 .sm-tp-btn.sm-play { width: 56px; border-color: var(--sm-yellow); background: var(--sm-yellow); color: var(--bg); }
 .sm-tp-btn.sm-play:hover:not(:disabled) { filter: brightness(1.08); color: var(--bg); }
 .sm-tp-btn:disabled { opacity: .4; cursor: default; }
+/* The clock, centred in its card. */
 .sm-clock {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  white-space: nowrap;
+}
+/* The clock and the speed stay together: on the strip's one line, or on a
+   line of their own in a narrow strip (the tier at the end of this file). */
+.sm-clock-pair { flex: 1; min-width: 0; display: flex; gap: 8px; }
+/* The speed's own card, titled like the Take Timeline card. */
+.sm-speed-card {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 6px 0 14px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--sm-text);
+  white-space: nowrap;
+}
+.sm-speed-card > svg { color: var(--sm-icon); flex: none; }
+.sm-clock-time {
   flex: 1;
   min-width: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  white-space: nowrap;
 }
 .sm-clock-now { font: 700 18px var(--font-mono); }
 .sm-clock-dur { font: 500 13px var(--font-mono); color: var(--sm-faint); }
+/* The speed (the footer's one value, transport.js): a notch slower, the box,
+   a notch faster, in the card's height less 4 px top and bottom. */
+.sm-speed {
+  flex: none;
+  height: calc(100% - 8px);
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--sm-edge);
+  border-radius: 6px;
+  background: var(--sm-field);
+  overflow: hidden;
+}
+.sm-speed-step {
+  width: 26px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--sm-icon);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.sm-speed-step:hover:not(:disabled) { color: var(--sm-text); }
+.sm-speed-step:disabled { color: var(--sm-faint); cursor: default; }
+.sm-speed-value {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px 0 4px;
+  border-left: 1px solid var(--sm-line);
+  border-right: 1px solid var(--sm-line);
+  font: 600 12.5px var(--font-mono);
+  color: var(--sm-text);
+  cursor: text;
+}
+.sm-speed-input {
+  width: 4ch;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: right;
+  outline: none;
+}
+.sm-speed-input:disabled { color: var(--sm-faint); cursor: default; }
+/* The focus ring goes round the box and its "x", not the bare input. */
+.sm-speed-input:focus-visible { outline: none; }
+.sm-speed-value:has(.sm-speed-input:focus-visible) { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.sm-speed-unit { opacity: .8; }
+/* Lit when not the song's own speed, as the footer's box is. */
+.sm-speed.active { border-color: color-mix(in srgb, var(--sm-yellow) 45%, transparent); }
+.sm-speed.active .sm-speed-value { color: var(--sm-yellow); }
 
 .sm-primary {
   height: 34px;
@@ -1308,8 +1389,30 @@ html.streamer-open .daw-footer { display: none !important; }
   .sm-strip-title { gap: 6px; padding: 0 10px; font-size: 13px; }
   .sm-history-btn { width: 32px; }
   .sm-clock { gap: 5px; }
+  .sm-speed-card { gap: 6px; padding: 0 4px 0 10px; font-size: 13px; }
   .sm-clock-now { font-size: 14px; }
   .sm-clock-dur { font-size: 11.5px; }
+}
+/* Under 660 px of strip (a window under about 780 px, or a phone width) one
+   line has no room for the title, undo and redo, the clock and the speed's
+   card: measured, the clock's time is cut below 640 px. The clock and the
+   speed then take a line of their own under the other two, and the strip
+   grows by one row. streamer.js reads its real height when it places the
+   windows. */
+@container (max-width: 659px) {
+  .sm-strip-row { flex-wrap: wrap; }
+  .sm-strip-title { flex: 1; }
+  /* The clock never narrower than its time: where the clock and the speed
+     cannot share the line (a phone of 320 px), the speed's card takes a
+     third line, as wide as the strip. */
+  .sm-clock-pair { flex: 1 1 100%; flex-wrap: wrap; }
+  .sm-clock { min-width: max-content; }
+  .sm-speed-card { flex: 1 0 auto; justify-content: center; }
+}
+/* At a phone's width the speed's card drops its icon, so the clock and the
+   speed still share the second line at 375 px. */
+@container (max-width: 400px) {
+  .sm-speed-card > svg { display: none; }
 }
 
 /* ── Hear myself and the live effects (streamer/streamerFx.js) ──
