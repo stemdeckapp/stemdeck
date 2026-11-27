@@ -156,6 +156,17 @@ const FRIEND_GROUPS = [
           { label: "Apple Music", url: "https://music.apple.com/us/album/happy/1592026727?i=1592026728" },
         ],
       },
+      {
+        name: "Tiziano Alimonti",
+        isNew: true,
+        roleKey: "friends.role.tizianoAlimonti",
+        links: [
+          { label: "Instagram", url: "https://www.instagram.com/lion_brutus/" },
+          { label: "Website", url: "https://www.tizianoalimonti.com/en/" },
+        ],
+        logo: "/img/friends/tiziano-alimonti.jpg",
+        avatar: true,
+      },
     ],
   },
   {
