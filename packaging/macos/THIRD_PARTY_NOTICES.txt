@@ -102,6 +102,214 @@ Copyright Carbo Kuo (BYVoid) and the OpenCC contributors: only the first
 simplified form of each character is kept. The license text is
 app/_vendor/opencc/LICENSE.
 
+Basic Pitch, with pretty-midi, mir-eval, mido and importlib-resources
+License: Apache License 2.0 (Basic Pitch, importlib-resources),
+         MIT (pretty-midi, mir-eval, mido)
+Website: https://github.com/spotify/basic-pitch
+StemDeck makes MIDI from the piano and bass stems with Spotify's Basic
+Pitch 0.4.0 and its ONNX model, shipped unchanged in
+app/_vendor/transcribe/ with pretty-midi 0.2.11.post0
+(https://github.com/craffel/pretty-midi), mir-eval 0.8.2
+(https://github.com/mir-evaluation/mir_eval), mido 1.3.3
+(https://github.com/mido/mido) and importlib-resources 7.1.0
+(https://github.com/python/importlib_resources). Each package's license
+text is in its .dist-info folder there; the Apache License 2.0 text is
+app/_vendor/transcribe/basic_pitch-0.4.0.dist-info/LICENSE. Basic Pitch's
+NOTICE file reads:
+
+Basic Pitch
+Copyright 2022 Spotify AB
+
+This product includes software developed at
+Spotify AB (http://www.spotify.com/).
+
+This product includes software from Librosa (ISC).
+* Copyright (C) 2013--2017, librosa development team.
+
+This product includes software from mir_eval (MIT)
+* Copyright (C) 2014 Colin Raffel
+
+This product includes software from numpy (BSD)
+* Copyright (C) 2005-2022, NumPy Developers.
+
+This product includes software from pretty-midi (MIT)
+* Copyright (C) 2014 Colin Raffel
+
+This product includes software from resampy (ISC)
+* Copyright (C) 2016, Brian McFee
+
+This product includes software from scipy (BSD)
+* Copyright (C) 2001-2002 Enthought, Inc. 2003-2022, SciPy Developers
+
+This product includes software from tensorflow (Apache 2.0)
+* Copyright (C) 2019 Google, LLC <packages@tensorflow.org>
+
+The tests for `basic-pitch` include audio files from the
+Vocadito dataset liscened under Creative Commons
+Attribution 4.0 International. The dataset can be found at:
+https://zenodo.org/record/5578807#.YnRm5vPMKDU
+
+pretty-midi and mir-eval:
+
+The MIT License (MIT)
+
+Copyright (c) 2014 Colin Raffel
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+mido:
+
+The MIT License
+
+Copyright (c) Ole Martin Bjørndalen
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+piano_transcription_inference and torchlibrosa
+License: MIT
+Website: https://github.com/qiuqiangkong/piano_transcription_inference
+StemDeck can make the piano's MIDI with ByteDance's high-resolution piano
+transcription (Kong et al., "High-resolution Piano Transcription with Pedals
+by Regressing Onset and Offset Times"): piano_transcription_inference 0.0.6
+and torchlibrosa 0.1.0 (https://github.com/qiuqiangkong/torchlibrosa), in
+app/_vendor/piano_hr/. Two lines were removed from the first and nothing
+else changed; app/_vendor/piano_hr/README.md says which and why. The license
+texts are in app/_vendor/piano_hr/piano_transcription_inference-0.0.6.sdist/
+and app/_vendor/piano_hr/torchlibrosa-0.1.0.sdist/.
+
+piano_transcription_inference:
+
+MIT License
+
+Copyright (c) 2026 Qiuqiang Kong
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+torchlibrosa:
+
+The MIT License
+
+Copyright (c) 2018-2021 Qiuqiang Kong
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+YourMT3+ (inference code), with parts of Hugging Face transformers,
+rotary-embedding-torch and x-transformers
+License: Apache License 2.0 (YourMT3+, transformers),
+         MIT (rotary-embedding-torch, x-transformers)
+Website: https://huggingface.co/spaces/mimbres/YourMT3
+         https://github.com/mimbres/YourMT3
+StemDeck can make MIDI from the drums, bass, guitar, piano and other stems
+with YourMT3+ (Chang et al. 2024, "YourMT3+: Multi-instrument Music
+Transcription with Enhanced Transformer Architectures and Cross-dataset Stem
+Augmentation"): the inference code of the Hugging Face Space mimbres/YourMT3
+at revision 5e66c1ea173a8186e0d20432b841d3180cc015b5, in
+app/_vendor/ymt3/src/. Its files carry the header "Copyright 2024 The YourMT3
+Authors. Licensed under the Apache License, Version 2.0", and the Space's card
+declares Apache-2.0; the GitHub repository mimbres/YourMT3 states GPL-3.0.
+StemDeck, under the AGPL-3.0, can take the code under either. Two files are
+patched to remove training code, and nothing else changed;
+app/_vendor/ymt3/README.md says which and why.
+
+app/_vendor/ymt3/shim/ holds classes copied unchanged from Hugging Face
+transformers 4.45.1 (Apache-2.0, Copyright 2018- The Hugging Face team),
+beside small rewrites. src/model/RoPE/RoPE.py is based on
+lucidrains/rotary-embedding-torch (MIT, Copyright (c) 2021 Phil Wang) and the
+ALiBi bias in src/model/positional_encoding.py on lucidrains/x-transformers
+(MIT, Copyright (c) 2020 Phil Wang). The license texts are in
+app/_vendor/ymt3/: LICENSE.yourmt3 and LICENSE.transformers (Apache License
+2.0), LICENSE.rotary-embedding-torch and LICENSE.x-transformers (MIT, below).
+
+rotary-embedding-torch and x-transformers:
+
+MIT License
+
+Copyright (c) 2021 Phil Wang (rotary-embedding-torch)
+Copyright (c) 2020 Phil Wang (x-transformers)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 Separation model weights
 ------------------------
 Separation model weights are not bundled either. They are downloaded when a
@@ -115,3 +323,20 @@ StemDeck:
 - Demucs fine-tuned models (htdemucs_ft), from the same Demucs project as the
   Demucs entry above. License: MIT (Meta/Facebook Research).
   Source: https://github.com/facebookresearch/demucs
+- ByteDance high-resolution piano transcription weights
+  (CRNN_note_F1=0.9677_pedal_F1=0.9186.pth, "High-resolution Piano
+  Transcription with Pedals by Regressing Onsets and Offsets Times", by
+  Qiuqiang Kong, 2020). License: CC BY 4.0
+  (https://creativecommons.org/licenses/by/4.0/). Source:
+  https://zenodo.org/records/4034264 (doi:10.5281/zenodo.4034264).
+  Downloaded unchanged the first time a song's piano is transcribed with
+  ByteDance Piano Transcription, and checked against its SHA-256.
+- YourMT3+ weights (the YPTF.MoE+Multi model without pitch-shift
+  augmentation, logs/2024/mc13_256_g4_all_v7_mt3f_sqr_rms_moe_wf4_n8k2_silu_
+  rope_rp_b36_nops/checkpoints/last.ckpt, by Sungkyun Chang, Emmanouil
+  Benetos, Holger Kirchhoff and Simon Dixon). License: Apache-2.0, as the
+  model card declares. Source: https://huggingface.co/mimbres/YourMT3 at
+  revision e45ebd70398682d54b7bb1901a5216e18f3b1824. Downloaded the first time
+  a stem is transcribed with YourMT3+ and checked against its SHA-256, then
+  converted on this computer into a weights-only file (the same tensors,
+  checked against their own SHA-256); the downloaded file is then deleted.

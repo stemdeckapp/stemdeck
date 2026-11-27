@@ -28,6 +28,8 @@ import { createTickLoop } from "./tickLoop.js";
 import { loadStretchWorklet, disposeStretchNode, pipelineLatencySeconds as stretchLatency } from "./tempoStage.js";
 import { createEngineFx, engineFxApi } from "./fxChain.js";
 import { reachedEnd } from "./playbackEnd.js";
+import { altSourceStart, laneSourceMode, sourceOn } from "./altSource.js";
+import { scheduleDip } from "./laneDip.js";
 
 export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   // Mobile/iOS only starts audio from a context resumed inside a user gesture.
@@ -49,6 +51,17 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   const busLanes = new Array(INPUT_COUNT).fill(0);
   /** @type {Map<string,object>} playback tracks by stem name (filled while decoding) */
   const tracks = new Map();
+  // A lane's alternate source (addAltSource): a second track of the lane, its
+  // controlName the lane's, so it takes the lane's volume, mute, solo, EQ,
+  // effects chain, key and the shared tempo stage exactly as the stem does.
+  // Which of the two sound is the lane's source (setLaneSource): "stem",
+  // "alt" or "both", by controlName; a track's `srcOn` is 1 or 0 from it.
+  // chunkedAudioEngine.js does the same with the same helpers (altSource.js).
+  const laneSource = new Map();
+  const srcOnFor = (controlName, alt) => sourceOn(laneSource.get(controlName), alt);
+  // The gain a track's node is set to: the lane's level, unless the lane's
+  // source switch has its source off.
+  const levelOf = (t) => t.level * t.srcOn;
   // Effects: a slot per track between its gain and its analyser, and the
   // master slot between master and the destination (fxChain.js).
   // The effects chain of a lane (Advanced mode only) goes between its source
@@ -209,7 +222,10 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
             level: 1,
             visualOnly,
             fx: null,
+            alt: false,
+            srcOn: srcOnFor(s.controlName || s.name, false),
           };
+          gain.gain.value = levelOf(track);
           tracks.set(s.name, track);
           // gain -> fx slot (EQ) -> analyser; the VU reads post-EQ.
           if (!visualOnly) fx.attachSource(track, gain, analyser);
@@ -419,16 +435,15 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     for (const t of tracks.values()) {
       if (!t.visualOnly && t.controlName === name) {
         t.level = Math.max(0, v);
-        t.gain.gain.setTargetAtTime(t.level, ctx.currentTime, 0.01);
+        t.gain.gain.setTargetAtTime(levelOf(t), ctx.currentTime, 0.01);
       }
     }
   }
 
-  // Ducking either side of a bus change. Both buses are delayed by the same
-  // amount, so a dip scheduled at the source lands at the output as one short
-  // dip rather than as a click from splicing two different keys together.
-  const ROUTE_FADE = 0.006;
-  const ROUTE_HOLD = 0.02;
+  // Ducking either side of a bus change (laneDip.js). Both buses are delayed
+  // by the same amount, so a dip scheduled at the source lands at the output
+  // as one short dip rather than as a click from splicing two different keys
+  // together.
 
   // A track arriving on, or leaving, a bus. Mirrors chunkedAudioEngine.js:
   // only the first arrival and the last departure touch the worklet, the
@@ -463,14 +478,103 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
       _laneLeft(previous);
     };
     if (immediate || !playing) { swap(); return; }
-    const g = t.gain.gain;
-    const at = ctx.currentTime;
-    g.cancelScheduledValues(at);
-    g.setValueAtTime(g.value, at);
-    g.linearRampToValueAtTime(0, at + ROUTE_FADE);
-    g.setValueAtTime(0, at + ROUTE_FADE + ROUTE_HOLD);
-    g.linearRampToValueAtTime(t.level, at + ROUTE_FADE + ROUTE_HOLD + ROUTE_FADE);
-    setTimeout(swap, (ROUTE_FADE + ROUTE_HOLD / 2) * 1000);
+    // On the track's dip node, not its gain: a volume, mute or Sound change
+    // inside the dip is then not undone by it.
+    setTimeout(swap, scheduleDip(t.dip.gain, ctx.currentTime) * 1000);
+  }
+
+  /**
+   * A second source for lane `controlName`: `buffer` (a MIDI rendering, say)
+   * plays in step with the stems through the lane's own gain, effects, EQ,
+   * pitch bus and the tempo stage. It replaces the lane's earlier one. It
+   * sounds only while setLaneSource says so, and it never changes the song's
+   * length or what getBuffers() hands the visuals. Joins a running playback
+   * at the place the other sources have reached. False when the lane has no
+   * track to follow.
+   */
+  function addAltSource(controlName, buffer) {
+    if (destroyed || !buffer) return false;
+    const lead = [...tracks.values()].find((t) => !t.visualOnly && !t.alt && t.controlName === controlName);
+    if (!lead) return false;
+    removeAltSource(controlName);
+    const gain = ctx.createGain();
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    const track = {
+      buffer,
+      gain,
+      analyser,
+      source: null,
+      name: `${controlName}::alt`,
+      controlName,
+      pitchable: lead.pitchable,
+      pitched: lead.pitched,
+      pitch: lead.pitch,
+      bus: null,
+      level: lead.level,
+      visualOnly: false,
+      fx: null,
+      alt: true,
+      srcOn: srcOnFor(controlName, true),
+    };
+    gain.gain.value = levelOf(track);
+    tracks.set(track.name, track);
+    fx.attachSource(track, gain, analyser);
+    routeTrack(track, true);
+    if (playing) {
+      // Just ahead of now, at the place the running sources will have
+      // reached by then (altSource.js); during a count-in, their start.
+      const at = altSourceStart({
+        startCtxTime, startOffset, srcRate: srcRate(), ctxNow: ctx.currentTime,
+        bufferDuration: buffer.duration, join: true,
+      });
+      if (at) {
+        const src = ctx.createBufferSource();
+        src.buffer = buffer;
+        if (!stNode) src.playbackRate.value = _playbackRate;
+        src.connect(fx.sourceInput(track));
+        src.start(at.when, at.offset);
+        track.source = src;
+      }
+    }
+    return true;
+  }
+
+  /** Take lane `controlName`'s alternate source out of the graph. */
+  function removeAltSource(controlName) {
+    for (const [key, t] of tracks) {
+      if (!t.alt || t.controlName !== controlName) continue;
+      if (t.source) {
+        try { t.source.stop(); } catch { /* already stopped */ }
+        try { t.source.disconnect(); } catch { /* noop */ }
+        t.source = null;
+      }
+      // Its effects chain, if the lane has one (fx/chainHost.js), goes with it.
+      try { t.chainHost?.dispose(); } catch { /* already gone */ }
+      t.chainHost = null;
+      try { t.gain.disconnect(); } catch { /* noop */ }
+      try { t.dip?.disconnect(); } catch { /* noop */ }
+      // Its EQ slot, with any EQ branch still fading out on a timer.
+      try { t.fx?.dispose(); } catch { /* noop */ }
+      t.fx = null;
+      try { t.analyser.disconnect(); } catch { /* noop */ }
+      _laneLeft(t.bus);
+      t.bus = null;
+      tracks.delete(key);
+    }
+  }
+
+  /**
+   * Which source lane `controlName` sounds: "stem" (the default), "alt" or
+   * "both". A short ramp, so a switch while playing does not click.
+   */
+  function setLaneSource(controlName, mode) {
+    laneSource.set(controlName, laneSourceMode(mode));
+    for (const t of tracks.values()) {
+      if (t.visualOnly || t.controlName !== controlName) continue;
+      t.srcOn = srcOnFor(controlName, t.alt);
+      t.gain.gain.setTargetAtTime(levelOf(t), ctx.currentTime, 0.01);
+    }
   }
 
   function setMasterGain(v) {
@@ -612,6 +716,12 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     },
     setGain,
     setMasterGain,
+    // A lane's alternate source (the MIDI of a lane, laneMidiPlay.js). The
+    // chunked engine has the same; the legacy <audio> path has none.
+    supportsAltSource: true,
+    addAltSource,
+    removeAltSource,
+    setLaneSource,
     getAnalysers: (name) => [...tracks.values()]
       .filter((track) => !track.visualOnly && track.controlName === name)
       .map((track) => track.analyser),
@@ -622,7 +732,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     // multitrack to also decode the audio. Map<name, AudioBuffer>.
     getBuffers: () => {
       const m = new Map();
-      for (const [name, t] of tracks) m.set(name, t.buffer);
+      for (const [name, t] of tracks) if (!t.alt) m.set(name, t.buffer);
       return m;
     },
     ...engineFxApi(fx),

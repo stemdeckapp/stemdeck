@@ -1,0 +1,71 @@
+Metadata-Version: 2.2
+Name: mir_eval
+Version: 0.8.2
+Summary: Common metrics for common audio/music processing tasks.
+Home-page: https://github.com/mir-evaluation/mir_eval
+Author: Colin Raffel
+Author-email: craffel@gmail.com
+License: MIT
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python
+Classifier: Development Status :: 5 - Production/Stable
+Classifier: Intended Audience :: Developers
+Classifier: Topic :: Multimedia :: Sound/Audio :: Analysis
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.7
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3.13
+Description-Content-Type: text/x-rst; charset=UTF-8
+License-File: LICENSE.txt
+Requires-Dist: numpy>=1.15.4
+Requires-Dist: scipy>=1.4.0
+Requires-Dist: decorator
+Provides-Extra: display
+Requires-Dist: matplotlib>=3.3.0; extra == "display"
+Provides-Extra: docs
+Requires-Dist: numpydoc; extra == "docs"
+Requires-Dist: sphinx_rtd_theme; extra == "docs"
+Requires-Dist: matplotlib>=3.3.0; extra == "docs"
+Provides-Extra: tests
+Requires-Dist: matplotlib>=3.3.0; extra == "tests"
+Requires-Dist: pytest; extra == "tests"
+Requires-Dist: pytest-cov; extra == "tests"
+Requires-Dist: pytest-mpl; extra == "tests"
+
+.. image:: https://anaconda.org/conda-forge/mir_eval/badges/version.svg 
+    :target: https://anaconda.org/conda-forge/mir_eval
+
+.. image:: https://img.shields.io/pypi/v/mir_eval.svg
+    :target: https://pypi.python.org/pypi/mir_eval
+
+.. image:: https://github.com/mir-evaluation/mir_eval/actions/workflows/test.yml/badge.svg
+    :target: https://github.com/mir-evaluation/mir_eval/actions/workflows/test.yml
+
+.. image:: https://codecov.io/gh/mir-evaluation/mir_eval/graph/badge.svg?token=OzRL3aW7TX 
+    :target: https://codecov.io/gh/mir-evaluation/mir_eval
+
+.. image:: https://img.shields.io/pypi/l/mir_eval.svg
+    :target: https://github.com/mir-evaluation/mir_eval/blob/main/LICENSE.txt
+
+
+mir_eval
+========
+
+Python library for computing common heuristic accuracy scores for various music/audio information retrieval/signal processing tasks.
+
+Documentation, including installation and usage information: https://mir-evaluation.github.io/mir_eval/
+
+Dependencies:
+
+* `Scipy/Numpy <http://www.scipy.org/>`_
+* `decorator <https://github.com/micheles/decorator>`_
+
+If you use mir_eval in a research project, please cite the following paper:
+
+Colin Raffel, Brian McFee, Eric J. Humphrey, Justin Salamon, Oriol Nieto, Dawen Liang, and Daniel P. W. Ellis, "`mir_eval: A Transparent Implementation of Common MIR Metrics <http://colinraffel.com/publications/ismir2014mir_eval.pdf>`_", Proceedings of the 15th International Conference on Music Information Retrieval, 2014.
+
+

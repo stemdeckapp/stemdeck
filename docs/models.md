@@ -4,6 +4,42 @@ Records the license basis for ML checkpoints StemDeck downloads at runtime.
 Not exhaustive -- only entries where the decision wasn't a simple upstream
 license file are documented here.
 
+## Where each model comes from
+
+Settings > Models shows a **Source** line under every built-in model: who
+made it, and a link to the page they publish it on. The link is always the
+original author's own page, never a re-upload or a mirror, and it opens in
+your web browser (in the desktop app too). Each fact below was read on that
+page itself on 2026-11-26 (`_SOURCES` in `app/core/model_inventory.py`).
+
+| Model | Author | Page | Licence |
+|---|---|---|---|
+| HT Demucs 6 stems, HT Demucs fine-tuned | Meta AI (Rouard, Massa, Défossez) | https://github.com/facebookresearch/demucs | MIT (its `LICENSE`) |
+| Mel-Band RoFormer (Kim) | Kimberley Jensen | https://huggingface.co/KimberleyJSN/melbandroformer | MIT, as the model card declares at the pinned revision |
+| UVR-MDX-NET Karaoke 2 | Ultimate Vocal Remover (Anjok07, aufr33) | https://github.com/Anjok07/ultimatevocalremovergui | MIT, with credit to UVR |
+| Basic Pitch | Spotify | https://github.com/spotify/basic-pitch | Apache-2.0 |
+| ByteDance Piano Transcription | Qiuqiang Kong (ByteDance) | https://zenodo.org/records/4034264 | CC BY 4.0 (the Zenodo record) |
+| YourMT3+ | Sungkyun Chang | https://huggingface.co/mimbres/YourMT3 | Apache-2.0 (the model card) |
+| Whisper turbo, Whisper small | OpenAI | https://github.com/openai/whisper | MIT (its README: code and weights) |
+| Beat This! (final0) | Foscarin, Schlüter and Widmer (JKU Linz) | https://github.com/CPJKU/beat_this | MIT (its README: code and weights) |
+
+A model that is not downloaded, or only partly, has a **Download** button
+beside its state, so it can be fetched before the first song needs it: the
+same file from the same address its own code would fetch, checked against
+its pinned size and SHA-256 before it takes its name. While it runs the state
+says "Downloading X of Y MB" and the button is **Cancel**; nothing of a
+cancelled or failed download is kept. Karaoke 2, beat_this's `final0` and the
+two Whisper files are pinned for this in `app/core/config.py` (the address,
+the size, and a SHA-256 measured on 2026-11-26, cross-checked against what
+each host publishes: UVR's own model index for Karaoke 2, the file share's
+SHA-1 for beat_this, the SHA-256 in Whisper's own addresses).
+
+A model a deployment swapped in through the environment
+(`STEMDECK_KARAOKE_MODEL`, `STEMDECK_BEAT_MODEL`) says **Source: not
+verified**, with no link and no licence: StemDeck knows it only by its name. A
+model you added yourself says **Source: added by you**, with the Hugging Face
+link you added it from, if any.
+
 ## Demucs (htdemucs_6s)
 
 MIT, published by the `demucs` PyPI package (Meta/Facebook Research). No
@@ -36,7 +72,12 @@ time is left to you.
 - **Checkpoint**: `MelBandRoformer.ckpt`, Kimberley Jensen's Mel-Band RoFormer
   vocals model.
 - **Source**: https://huggingface.co/KimberleyJSN/melbandroformer
-- **License**: MIT, as the model card declares.
+- **License**: MIT, as the model card declares. That is the only licence
+  statement there is: neither the Hugging Face repository nor the author's
+  GitHub repository (`KimberleyJensen/Mel-Band-Roformer-Vocal-Model`) has a
+  LICENSE file. The card's licence field read `unknown` at the first upload
+  (2024-08-06), `gpl-3.0` from 2025-06-17 and `mit` from 2026-04-22, the
+  revision StemDeck pins.
 - **Runtime**: audio-separator's `MelBandRoformer` class (MIT,
   `nomadkaraoke/python-audio-separator`), the same package that runs Karaoke 2.
   StemDeck reads the checkpoint itself and runs it in its own separation worker.
@@ -148,7 +189,7 @@ the page asks you to run it again.
 
 ## My models (bring your own)
 
-Settings > Separation > **Advanced: My models** adds a separation model you
+Settings > Models > **Advanced: My models** adds a separation model you
 found yourself. StemDeck ships none of these, downloads none on its own, and
 checks no licence. The notice there says it plainly: the models come from third
 parties, and the model you load, its licence and your right to use it are your
@@ -241,7 +282,11 @@ The checkpoint is not bundled in StemDeck installers.
 - **Checkpoints**: `large-v3-turbo` (1.6 GB) on a GPU with room for it,
   `small` (0.5 GB) on a CPU or a smaller GPU. Overridable with
   `STEMDECK_WHISPER_MODEL_GPU` / `STEMDECK_WHISPER_MODEL_CPU`.
-- **License**: MIT for both the code and the published weights.
+- **License**: MIT for both the code and the published weights: the
+  repository's README says "Whisper's code and model weights are released
+  under the MIT License". StemDeck fetches the files that package names. The
+  `openai/whisper-small` card on Hugging Face says Apache-2.0 for its own
+  copy in another format, which StemDeck does not use.
 - **Upstream**: https://github.com/openai/whisper
 
 Runs only when no lyrics were found for a job and the `transcribe_lyrics`
@@ -249,6 +294,227 @@ setting allows it (by default on a GPU only). Weights download on first use
 into `<TORCH_HOME>/whisper`, or during desktop setup when transcription would
 run, and are verified by Whisper's own SHA-256 check. Not bundled in StemDeck
 installers.
+
+## Beat This! (beat grid)
+
+- **Model**: `final0`, the main model of the ISMIR 2024 paper "Beat This!
+  Accurate Beat Tracking Without DBN Postprocessing" by Francesco Foscarin,
+  Jan Schlüter and Gerhard Widmer (Institute of Computational Perception,
+  JKU Linz), PyPI `beat-this`.
+- **License**: MIT for the code and the published weights; its README says
+  so, and notes that some of its training data is under stricter terms.
+- **Upstream**: https://github.com/CPJKU/beat_this
+- **Download**: 81,058,141 bytes from the authors' own file share, fetched
+  the first time a song needs it into torch.hub's checkpoints folder.
+
+## MIDI from a stem
+
+- **Engine**: Spotify's Basic Pitch 0.4.0 (PyPI `basic-pitch`, released
+  2024-08-16, `spotify/basic-pitch`), its ICASSP 2022 model as ONNX
+  (`nmp.onnx`, 230 KB), run by the onnxruntime StemDeck already ships for the
+  Lead + Backing split. CPU only.
+- **Shipped in**: `app/_vendor/transcribe/`, with pretty-midi 0.2.11.post0,
+  mir-eval 0.8.2, mido 1.3.3 and importlib-resources 7.1.0, each unpacked
+  unchanged from its PyPI wheel and checked against the wheel's sha256 and
+  RECORD. Vendored rather than declared in `pyproject.toml`: the PyPI
+  package pulls TensorFlow, and a new dependency would change `uv.lock` and
+  stop the desktop's in-app update. The folder's `README.md` has the versions,
+  hashes and how to update.
+- **License**: Apache-2.0 for Basic Pitch's code and its published model
+  weights (its `LICENSE` and `NOTICE` ship beside it); MIT for pretty-midi,
+  mir-eval and mido; Apache-2.0 for importlib-resources.
+- **Upstream**: https://github.com/spotify/basic-pitch
+
+**Training data: not settled.** The weights are published under Apache-2.0,
+but Basic Pitch's own dataset loaders (`basic_pitch/data/datasets/`) name the
+sets it was trained on: GuitarSet, iKala, MAESTRO, MedleyDB-Pitch and Slakh.
+Some of those are distributed for non-commercial use only (MAESTRO and
+MedleyDB under CC BY-NC-SA, iKala for non-commercial research, going by their
+publishers; not verified for this note). Whether a non-commercial dataset
+licence reaches a model trained on it is a legal question with no settled
+answer, and Spotify publishes the weights without such a restriction.
+StemDeck is free and never sold, which keeps this out of the commercial case
+those terms are about; anyone redistributing StemDeck commercially should
+check it for themselves.
+
+What it does: the notes of a finished song's stem, on request (the lane's
+MIDI chip in the studio, `POST /api/jobs/{id}/midi`), as a standard MIDI file:
+every stem but the drums, which it cannot hear. Each stem has its engine
+(`transcribe_<stem>_engine`); Basic Pitch is the default for the vocals and the
+guitar, and a choice for the bass, piano and other. Each run is a fresh worker
+process with no network access, with the pitch range set per stem (piano and
+other 27.5 to 4200 Hz, bass 30 to 400 Hz, guitar 60 to 1600 Hz, vocals 65 to
+1100 Hz, one note at a time) and one of three detail presets
+(`transcribe_detail`). Measured on the CPU of the
+development machine: a 6 minute song took 6 to 12 s per stem and about 0.5 GB
+of memory, a 30 s excerpt about 6 s, most of it starting the process. Not
+available on Intel macOS, whose runtime has no onnxruntime.
+
+Basic Pitch is one model for every instrument. It hears overtones as quiet
+extra notes and a held note can come out as several; the file is a starting
+point to edit, not a score.
+
+### Second piano engine: ByteDance Piano Transcription (piano_hr)
+
+- **Engine**: ByteDance's high-resolution piano transcription (Kong et al.
+  2021, "High-resolution Piano Transcription with Pedals by Regressing Onset
+  and Offset Times"), PyPI `piano-transcription-inference` 0.0.6 with
+  `torchlibrosa` 0.1.0, run on the torch StemDeck already ships: on the GPU
+  when the separation device setting resolves to CUDA and 2 GB of it is free,
+  else on the CPU. MPS is not used: it was never measured on a Mac.
+- **Shipped in**: `app/_vendor/piano_hr/`, each sdist checked against the
+  sha256 PyPI publishes. The class that downloads its own checkpoint with
+  `wget` is left out, and the unused matplotlib import and audioread loader
+  are patched away; the folder's `README.md` and its patch say exactly what
+  changed. No change to `pyproject.toml` or `uv.lock`.
+- **Weights**: `CRNN_note_F1=0.9677_pedal_F1=0.9186.pth`, 171,966,578 bytes,
+  by Qiuqiang Kong, on Zenodo (record 4034264, doi:10.5281/zenodo.4034264).
+  Not bundled: the first piano run with this engine downloads it into
+  `<models dir>/piano_hr/`, in a process of its own (the transcription worker
+  has no network), with the run's progress and its Cancel. The address, size
+  and SHA-256 are pinned in `app/core/config.py`; a file that does not match
+  is never used and is downloaded again. Loaded with `weights_only`.
+- **License**: MIT for both packages' code (their texts ship beside them);
+  CC BY 4.0 for the weights, credited in Settings > Models and in the
+  third-party notices.
+- **Upstream**: https://github.com/qiuqiangkong/piano_transcription_inference
+
+**Training data**: MAESTRO, which its publisher distributes under CC BY-NC-SA
+4.0; the weights are published under CC BY 4.0. The same unsettled question
+as Basic Pitch's above, with the same answer for a free StemDeck.
+
+One of the Piano lane's engines in Settings > Transcription
+(`transcribe_piano_engine`: `ymt3`, the default, `basic_pitch` or `piano_hr`).
+It knows only the piano's 88 keys, so no other lane offers it. Measured with
+`scripts/midi_bench.py` (onset F1 at 50 ms, then with offsets too) on the
+held-out items (BabySlakh tracks 11 to 20, MAESTRO v3 test pieces, never tuned
+on), wav, Detail Balanced:
+
+| Held out | Basic Pitch | ByteDance Piano Transcription |
+|---|---|---|
+| MAESTRO, the recording | 0.813, 0.236 | 0.972, 0.877 |
+| MAESTRO, separated by htdemucs_6s | 0.748, 0.215 | 0.927, 0.810 |
+| BabySlakh, the piano stem | 0.868, 0.415 | 0.901, 0.770 |
+| BabySlakh, piano separated from the mix | 0.394, 0.121 | 0.350, 0.145 |
+
+Its thresholds were tuned on the BabySlakh tuning tracks only
+(`MIDI_PIANO_HR_PRESETS` in `app/core/config.py` has the sweep and the held
+out check). On real piano, solo or clearly audible, it is far better at both
+when notes start and when they end. On piano separated from a busy pop mix it
+writes the other instruments' bleed as notes (precision 0.38 against 0.43),
+so it is not the default; YourMT3+ (below) is, which measured better there.
+
+No automatic choice: `scripts/midi_bench.py compare` tested four signals a run
+could measure (the piano stem's share of the separated stems, the ratio and
+the agreement of the two engines' notes, and the model's own onset
+confidence), each rule fitted on the tuning split and then applied unchanged
+to held out. With the shipped thresholds none beat simply taking ByteDance
+Piano Transcription on the tuning split: the best, its own confidence, picked
+the winner on 21 of the 28 tuning units where the engines differ, against 22
+for always ByteDance Piano Transcription, though it held up on held out (64 of
+70, mean onset F1 0.788 against 0.771 and 0.697). A rule that does no better
+than a constant where it was fitted is not one to ship
+(`results/compare-engines-tuned.md`).
+
+Speed, through the real worker (its start, the model's load, the run and the
+file), measured 2026-11-26 with `score --worker`: on an RTX 3080 with torch
+2.6.0+cu124, 3.8 s per minute of audio on the 3 to 4 minute BabySlakh songs:
+about 9 s a song to start the process and load the model, then 1.4 s a minute
+for the model itself; on a 24-thread CPU with torch 2.6.0, 36.9 s per minute (nine songs,
+38 minutes of audio). Basic Pitch takes 1 to 2 s a minute on the CPU.
+
+### Third engine: YourMT3+ (ymt3)
+
+- **Engine**: YourMT3+ (Chang, Benetos, Kirchhoff and Dixon 2024,
+  "YourMT3+: Multi-instrument Music Transcription with Enhanced Transformer
+  Architectures and Cross-dataset Stem Augmentation"), the YPTF.MoE+Multi
+  variant trained without pitch-shift augmentation. It hears every
+  instrument at once and names each note's instrument, so a stem's file keeps
+  only the notes of the stem's own instrument class (`MIDI_YMT3_CLASSES` in
+  `app/core/config.py`): what bleeds in from the other stems is left out. The
+  drums' file is General MIDI percussion on channel 10. Run on the torch
+  StemDeck already ships: on the GPU (8 segments of 2 s at a time) when the
+  separation device setting resolves to CUDA and 3.5 GB of it is free, else
+  on the CPU. A run that fails on the GPU is run again, whole, on the CPU.
+  MPS is not used: it was never measured on a Mac.
+- **Shipped in**: `app/_vendor/ymt3/`: the inference code of the Hugging Face
+  Space `mimbres/YourMT3` at a pinned revision, each file checked against its
+  git blob id there, two of them patched to take out training code, and
+  stand-ins for the parts of `transformers` and `pytorch_lightning` it imports
+  (classes copied unchanged from transformers 4.45.1, and small rewrites). The
+  folder's `README.md`, manifest and patch say exactly what is there and
+  what changed. No change to `pyproject.toml` or `uv.lock`.
+- **Weights**: StemDeck hosts no files. The first run with this engine
+  downloads the checkpoint the authors published (`last.ckpt`, 561,544,628
+  bytes, with the optimizer's state) from huggingface.co/mimbres/YourMT3 at
+  the pinned revision `e45ebd70398682d54b7bb1901a5216e18f3b1824`, checks its
+  size and SHA-256, then makes it into a weights-only safetensors file of
+  188,412,704 bytes on this computer (`app/pipeline/ymt3_convert.py`, the
+  run's "prepare" phase, about 5 s), checks that file against its own pinned
+  SHA-256, and deletes the checkpoint. The conversion reads the checkpoint
+  with torch's weights-only loader, its few pickled objects (the training
+  task's tokenizer) given an inert stand-in, so nothing in it runs; the worker
+  reads only the safetensors file, without pickle.
+  `scripts/ymt3_weights.py` is the same conversion by hand, to reproduce the
+  pinned hash.
+- **License**: Apache-2.0 for the weights (the model card) and in every
+  source file's header and the Space's card; the GitHub repository states
+  GPL-3.0. StemDeck (AGPL-3.0) can take either; both are in the third-party
+  notices.
+- **Upstream**: https://github.com/mimbres/YourMT3
+
+**Training data**: the authors' `all_cross_v7` preset: Slakh2100 (train),
+MusicNet, MIR-ST500, ENST-Drums, GuitarSet, E-GMD, URMP, MAESTRO,
+IDMT-SMT-Bass and CMedia. Several are distributed for non-commercial use;
+the same unsettled question as Basic Pitch's above, with the same answer for
+a free StemDeck.
+
+Chosen per lane in Settings > Transcription. It is the default for the
+drums, bass, piano and other lanes, the measured winner among the engines
+that need no weights the person brings (data/midi-bench/results/
+engines-per-stem.md; `MIDI_DEFAULT_ENGINES` in `app/core/config.py` has the
+numbers and the reasons); Basic Pitch stays the default for the vocals and
+the guitar. Onset F1 at 50 ms on held-out separated stems, through the real
+worker (`scripts/midi_bench.py --engine ymt3 eng`):
+
+| Held out | Stem | YourMT3+ | Basic Pitch |
+|---|---|---|---|
+| Slakh2100 test, separated by htdemucs_6s (48 to 50 songs, 90 s each) | other | **0.442** | 0.145 |
+| | piano | **0.509** | 0.425 |
+| | bass (octave-aligned) | **0.551** | 0.521 |
+| | guitar | **0.481** | 0.330 |
+| | drums (hits, five classes) | 0.699 | cannot |
+| MDB Drums, separated (23 songs) | drums | 0.704 | cannot |
+| Guitar-TECHS, amp and microphone (12) | guitar | 0.550 | **0.684** |
+| Guitar-TECHS, direct input (12) | guitar | **0.694** | 0.664 |
+| vocadito, separated (40, annotator A1) | vocals | 0.481 | **0.555** |
+
+Every number matches the engine comparison's own run of the same inputs
+(data/midi-bench/results/engines-per-stem.md) to within 0.007 on the mean;
+the file's ticks and the merging of a repeated note move single songs a
+little. The vocals row is YourMT3+ run with the worker's own functions in
+the benchmark's process: it is below Basic Pitch on annotator A1 and with
+offsets (0.249 against 0.359), above it only on annotator A2 (0.585 against
+0.545), so it is not offered for the vocals. Slakh is in-domain for
+YourMT3+ (its training set is Slakh's train split, rendered with the same
+patches), so those rows are an upper bound; the real recordings (MDB,
+Guitar-TECHS) are the ones to weigh.
+
+Speed, through the real worker (its start, the model's load, the run and the
+file): measured 2026-11-26 with nothing else running, on 90 s
+separated Slakh stems: on an RTX 3080 with torch 2.6.0+cu124, 15.6 s per
+minute of audio on drums, 16.2 on bass and 26.4 on a dense piano, about 12 s
+of each run being the process's start and the model's load; on a 24-thread
+CPU with torch 2.6.0, 52.8 s per minute on bass and 113.6 on a dense piano.
+The model decodes token by token, so a dense stem costs more. Settings and
+the lane say 20 s a minute on a GPU and 90 on a CPU before the first run.
+At batch 8 torch reserved 1.6 to 3.0 GB of GPU memory (a run needs 3.5 GB
+free to start there). On the CPU segments run one at a time: batching was no
+faster there and one at a time keeps the progress coming every few seconds.
+The GPU's notes and the CPU's can differ a little (matrix products at
+different precision feeding an autoregressive decoder): on one dense piano
+the CPU file scored 0.428 against the GPU's 0.357.
+
 
 ## UVR-MDX-NET Karaoke 2 (on-demand lead/backing vocal split, #275)
 
@@ -261,7 +527,10 @@ installers.
   > the default model or any other model trained as part of the UVR project,
   > please honor the MIT license by providing credit to UVR and its
   > developers."
-- **Credit**: Ultimate Vocal Remover (Anjok07) -- https://github.com/Anjok07/ultimatevocalremovergui
+- **Trained by**: UVR's core developers, Anjok07 and aufr33. UVR's README
+  says they "trained all of the models provided in this package" (except the
+  Demucs 4-stem models); no single trainer of Karaoke 2 is named.
+- **Credit**: Ultimate Vocal Remover (Anjok07, aufr33) -- https://github.com/Anjok07/ultimatevocalremovergui
 
 This is the shipped default (`VOCAL_SPLIT_MODEL` in `app/core/config.py`,
 overridable via `STEMDECK_KARAOKE_MODEL`).
@@ -282,8 +551,9 @@ directly verifying:
   now returns 401 (gated/removed) -- confirmed directly, not secondhand.
 
 Kimberley Jensen's Mel-Band RoFormer vocals model was checked at the same
-time and was found to have no LICENSE file in its repository. Its Hugging Face
-model card does declare MIT, so it is now offered for vocals; see
+time and was found to have no LICENSE file in its repository, and it still has
+none (checked again 2026-11-26). Its Hugging Face model card does declare MIT
+at the pinned revision, so it is offered for vocals; see
 "Mel-Band RoFormer vocals (kim_mel_roformer)" above for the pinned revision and
 hash that make that declaration safe to rely on.
 

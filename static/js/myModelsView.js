@@ -12,11 +12,13 @@
 //   POST   /api/my-models/{id}/cancel   200 { id, model }
 //   DELETE /api/my-models/{id}          200 { removed: id }
 // An entry: { id, name, status, pct, step, code, size, sha256, stems, arch,
-// params, source: { kind, label, license_declared }, added_at, checked_at,
+// params, source: { kind, label, license_declared, link }, added_at, checked_at,
 // cpu_rtf, usable, missing }. status is staging, downloading, checking, ready,
 // refused, or missing (a ready model whose file went).
 // A refusal is { detail, code }; the page says it with
 // settings.myModels.reason.<code>, never with the server's own words.
+
+import { linkedSentence } from "./sourceLink.js";
 
 /** The stems a model can declare, in the order the form lists them. */
 export const ADD_STEMS = ["vocals", "drums", "bass", "guitar", "piano"];
@@ -318,6 +320,14 @@ export function sourceLine(entry, t) {
     parts.push(t("settings.myModels.row.licenseDeclared", { license: src.license_declared }));
   }
   return parts.join(" ");
+}
+
+/** A row's "Source" line: always "added by you", with the Hugging Face link
+ *  it was added from when there is one. The parts modelsSettings.linkedLine
+ *  draws: { before, link: { text, url } | null, after }. */
+export function userSourceView(entry, t) {
+  const link = isObj(entry?.source) ? entry.source.link : null;
+  return linkedSentence("settings.myModels.row.sourceByYouLink", "settings.myModels.row.sourceByYou", {}, link, t);
 }
 
 /** Which button keeps focus after the row it was on went: the next row's

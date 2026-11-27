@@ -1,0 +1,103 @@
+{
+  "id": "9cb67425cd5058dc",
+  "patch": "patches/piano_transcription_inference-0.0.6.patch",
+  "patch_sha256": "e1ae6fda8a37f578c91cc2ebc67f280ff57780f83edae08a296990160102f937",
+  "packages": [
+    {
+      "name": "piano-transcription-inference",
+      "version": "0.0.6",
+      "sdist": "piano_transcription_inference-0.0.6.tar.gz",
+      "url": "https://files.pythonhosted.org/packages/15/d8/8b2d1f2f9dba01c122686e2b7910ced8dfe14fc246099d44607c6fa460f1/piano_transcription_inference-0.0.6.tar.gz",
+      "sha256": "b6dd00f9b4bcacb6140725f03b4139a5e0f4acd35a69e492a5d1f734ecfbd231",
+      "size": 13881,
+      "licence": "MIT",
+      "packages": [
+        "piano_transcription_inference"
+      ],
+      "meta_dir": "piano_transcription_inference-0.0.6.sdist",
+      "licence_file": {
+        "path": "piano_transcription_inference-0.0.6.sdist/LICENSE",
+        "source": "https://github.com/qiuqiangkong/piano_transcription_inference/blob/566057930a8423aa31b91296e7002c513269446d/LICENSE",
+        "git_blob": "4c9a472c5b695682e388f15e611cd23823844f36",
+        "sha256": "3e34153b2e7902bf0ba1d2c010678b7addf9a7ba0fc6e09fce862f183f78b37d"
+      },
+      "patched": [
+        "piano_transcription_inference/__init__.py",
+        "piano_transcription_inference/models.py",
+        "piano_transcription_inference/utilities.py"
+      ],
+      "removed": {
+        "piano_transcription_inference/inference.py": {
+          "sdist_sha256": "38782eff4b1336c5fe0cf9c3dd3ed80c7e8a70fd03f802292c78aba2a7836772"
+        }
+      },
+      "files": {
+        "piano_transcription_inference/__init__.py": {
+          "sdist_sha256": "4270b5beeeda9e49ccd51bbec3064201459e608bb5ade3241be1c73528d2fc7e",
+          "sha256": "adc30c7155fac865a8d67f1ea6e0578411903af4800c41ba3d59c6562d5f7408"
+        },
+        "piano_transcription_inference/config.py": {
+          "sdist_sha256": "a6454d23a3f3736da5d001ad2ce59687d4bea115677b75e8eb0213abd33e4bc3",
+          "sha256": "a6454d23a3f3736da5d001ad2ce59687d4bea115677b75e8eb0213abd33e4bc3"
+        },
+        "piano_transcription_inference/models.py": {
+          "sdist_sha256": "0fb600e73c77683bd881a15e8106ea4f5079eb3a89b7f295d805924d726e14b1",
+          "sha256": "e109dbd6746d2f076f91ea904c37e1d4ab51a8630b529598f0f135dab08cf6e7"
+        },
+        "piano_transcription_inference/piano_vad.py": {
+          "sdist_sha256": "010201f0804729a6800521bfad8038c910036ef4895405b2f24efdd77d318cd3",
+          "sha256": "010201f0804729a6800521bfad8038c910036ef4895405b2f24efdd77d318cd3"
+        },
+        "piano_transcription_inference/pytorch_utils.py": {
+          "sdist_sha256": "fb898f0dc8b598aad578608bcb6e44c78a408028a7c347e7723c94cbb133fc0f",
+          "sha256": "fb898f0dc8b598aad578608bcb6e44c78a408028a7c347e7723c94cbb133fc0f"
+        },
+        "piano_transcription_inference/utilities.py": {
+          "sdist_sha256": "0b06b1b470ac4ab3f2781538618b2a8af01465d264ffcc50a2e10ddcdc84e2ad",
+          "sha256": "4ea3c60da19675f4796b37bdeb1a88f785364165dc33aef2a7eeb12113bc02bc"
+        },
+        "piano_transcription_inference-0.0.6.sdist/PKG-INFO": {
+          "sdist_sha256": "b315799fe4bcf35e4f671a28dbcc0a070c1cd14cc490b1a44950d007366bebd4",
+          "sha256": "b315799fe4bcf35e4f671a28dbcc0a070c1cd14cc490b1a44950d007366bebd4"
+        }
+      }
+    },
+    {
+      "name": "torchlibrosa",
+      "version": "0.1.0",
+      "sdist": "torchlibrosa-0.1.0.tar.gz",
+      "url": "https://files.pythonhosted.org/packages/a4/67/e4c79da3f15777b9bc2b655d47dac553fc31e40360500fef5e66d6877ce8/torchlibrosa-0.1.0.tar.gz",
+      "sha256": "62a8beedf9c9b4141a06234df3f10229f7ba86e67678ccee02489ec4ef044028",
+      "size": 11719,
+      "licence": "MIT",
+      "packages": [
+        "torchlibrosa"
+      ],
+      "meta_dir": "torchlibrosa-0.1.0.sdist",
+      "patched": [],
+      "removed": {},
+      "files": {
+        "torchlibrosa/__init__.py": {
+          "sdist_sha256": "42184e8889ed6b546b84a744900c112d988d9575ed8804842b062e6fed4c1b45",
+          "sha256": "42184e8889ed6b546b84a744900c112d988d9575ed8804842b062e6fed4c1b45"
+        },
+        "torchlibrosa/augmentation.py": {
+          "sdist_sha256": "b883ddac5f72f12f415b3df9ac4a830bde06d8e603d98632460e4b5640683857",
+          "sha256": "b883ddac5f72f12f415b3df9ac4a830bde06d8e603d98632460e4b5640683857"
+        },
+        "torchlibrosa/stft.py": {
+          "sdist_sha256": "c5dd1b1043ea74725c79b5e89efaaef760558b5f0abbf311efc075eb9ed653c6",
+          "sha256": "c5dd1b1043ea74725c79b5e89efaaef760558b5f0abbf311efc075eb9ed653c6"
+        },
+        "torchlibrosa-0.1.0.sdist/PKG-INFO": {
+          "sdist_sha256": "f521a1f415c5d2cf87d9ef866c3f60ed616c94c3c1719789ca718e1e914a964e",
+          "sha256": "f521a1f415c5d2cf87d9ef866c3f60ed616c94c3c1719789ca718e1e914a964e"
+        },
+        "torchlibrosa-0.1.0.sdist/LICENSE.md": {
+          "sdist_sha256": "ed54db13809b82568eaa17e585dbae2cfcf040081172db914edb6bac8abd5ecc",
+          "sha256": "ed54db13809b82568eaa17e585dbae2cfcf040081172db914edb6bac8abd5ecc"
+        }
+      }
+    }
+  ]
+}

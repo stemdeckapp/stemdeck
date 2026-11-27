@@ -47,7 +47,7 @@ logger = logging.getLogger("stemdeck.registry")
 
 REGISTRY_VERSION = 2
 
-Operation = Literal["pipeline", "fill", "split", "retime", "reextract"]
+Operation = Literal["pipeline", "fill", "split", "retime", "reextract", "midi"]
 
 _jobs: dict[str, Job] = {}
 # Active subprocesses keyed by job id and operation. Lets POST /cancel
@@ -118,6 +118,9 @@ SAVED_FIELDS = (
     "stem_undo",
     "stem_revisions",
     "stem_gain",
+    # The MIDI made from its stems: the files are in midi/, but the state of
+    # the last run of each (and why one failed) is not.
+    "midi",
     "auto_lyrics",
     "created_at",
 )
@@ -1080,6 +1083,7 @@ def _rebuild_from_folder(job_dir: Path) -> tuple[Job, bool] | None:
         loudness_version=meta.get("loudness_version"),
         tempo_stability=meta.get("tempo_stability"),
         stem_presence=meta.get("stem_presence"),
+        stem_rms=meta.get("stem_rms") if isinstance(meta.get("stem_rms"), dict) else None,
         sections=meta.get("sections"),
         sections_source=meta.get("sections_source"),
         # Through _clean_timeline_tags, the one check _repair_field_types also

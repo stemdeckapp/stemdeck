@@ -1,0 +1,3 @@
+[console_scripts]
+basic-pitch = basic_pitch.predict:main
+bp-download = basic_pitch.data.download:main

@@ -399,6 +399,13 @@ TIMEOUT_DEMUCS_STALL = _env_int("STEMDECK_TIMEOUT_DEMUCS_STALL", 1800)
 TIMEOUT_MODEL_DOWNLOAD_READ = max(1, _env_int("STEMDECK_TIMEOUT_MODEL_DOWNLOAD_READ", 30))
 MODEL_DOWNLOAD_ATTEMPTS = max(1, _env_int("STEMDECK_MODEL_DOWNLOAD_ATTEMPTS", 3))
 MODEL_DOWNLOAD_BACKOFF = (2, 5)
+# Settings > Models' Download button (app/core/model_get.py): its process is
+# stopped after this many seconds without a line from it. A download says
+# its bytes every half second while they come, and gives up by
+# itself after TIMEOUT_MODEL_DOWNLOAD_READ seconds without one, tried
+# MODEL_DOWNLOAD_ATTEMPTS times on two hosts at most (the mirror, then the
+# original): about 200 s with the defaults, well inside this.
+TIMEOUT_MODEL_GET_STALL = max(60, _env_int("STEMDECK_TIMEOUT_MODEL_GET_STALL", 300))
 _MODEL_MIRROR_DEFAULT = "https://files.stemdeck.app"
 
 
@@ -494,6 +501,21 @@ SECTION_REFINEMENT_RECURRENCE_LABEL_MARGIN = 0.25
 # deployment swap the checkpoint (e.g. to a roformer model) without a code
 # change; see docs/models.md for the license audit behind this default.
 VOCAL_SPLIT_MODEL = os.environ.get("STEMDECK_KARAOKE_MODEL", "").strip() or "UVR_MDXNET_KARA_2.onnx"
+# The default Karaoke 2 file, pinned for Settings > Models' Download button
+# (app/core/model_get.py): the address audio-separator fetches it from (its
+# public_model_repo_url_prefix in Separator.download_model_files, 0.44.5),
+# and its size and SHA-256, measured 2026-11-26 on that download. GitHub
+# publishes no digest for the asset; the bytes are the UVR-published model:
+# the MD5 audio-separator identifies a model by (of its last 10,240,000
+# bytes), 1d64a6d2c30f709b8c9b4ce1366d96ee, is the Karaoke entry of UVR's own
+# mdx_model_data/model_data_new.json, and the size is the asset's in the
+# releases API.
+KARAOKE_2_URL = (
+    "https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/"
+    "UVR_MDXNET_KARA_2.onnx"
+)
+KARAOKE_2_SHA256 = "bf32e15105a09c0f7dddd2b67346146334d6f3ecb399ed7638eba2ab07cbf5f4"
+KARAOKE_2_SIZE = 52_786_726
 # A first run downloads the checkpoint (hundreds of MB); generous default so a
 # slow connection isn't mistaken for a stall.
 TIMEOUT_VOCAL_SPLIT = _env_int("STEMDECK_TIMEOUT_VOCAL_SPLIT", 1800)
@@ -1130,6 +1152,26 @@ LYRICS_REPAIR_ALIGN_MAX_CELLS = 4_000_000
 # small on a CPU, or on a GPU without room for turbo: 0.5 GB.
 TRANSCRIBE_MODEL_GPU = os.environ.get("STEMDECK_WHISPER_MODEL_GPU", "").strip() or "turbo"
 TRANSCRIBE_MODEL_CPU = os.environ.get("STEMDECK_WHISPER_MODEL_CPU", "").strip() or "small"
+# The two default Whisper files, pinned for Settings > Models' Download
+# button: the addresses openai-whisper 20250625 fetches them from
+# (whisper._MODELS), whose folder is the file's full SHA-256 (what Whisper
+# checks on every load), and their sizes, the Content-Length those addresses
+# answered on 2026-11-26. A file put there by the button is the one Whisper
+# would have fetched itself, so it loads it as its own.
+_WHISPER_HOST = "https://openaipublic.azureedge.net/main/whisper/models/"
+WHISPER_FILES: dict[str, tuple[str, str, int]] = {
+    "turbo": (
+        _WHISPER_HOST
+        + "aff26ae408abcba5fbf8813c21e62b0941638c5f6eebfb145be0c9839262a19a/large-v3-turbo.pt",
+        "aff26ae408abcba5fbf8813c21e62b0941638c5f6eebfb145be0c9839262a19a",
+        1_617_941_637,
+    ),
+    "small": (
+        _WHISPER_HOST + "9ecf779972d90ba49c06d968637d720dd632c55bbf19d441fb42bf17a411e794/small.pt",
+        "9ecf779972d90ba49c06d968637d720dd632c55bbf19d441fb42bf17a411e794",
+        483_617_219,
+    ),
+}
 # Free VRAM the GPU model needs, checked in the worker before loading, since
 # the Demucs worker keeps its own allocation resident on the same card.
 # Measured on an RTX 3080 (Nirvana "Lithium", 255 s): turbo held in fp16
@@ -1163,6 +1205,392 @@ TRANSCRIBE_WORD_GAP_SEC = 0.3
 # line) in the plain text.
 TRANSCRIBE_STANZA_GAP_SEC = 4.0
 
+# MIDI from a song's stems (app/pipeline/midi.py, midi_worker.py): notes
+# transcribed by one of three engines (MIDI_ENGINE_STEMS below), each run in
+# a fresh worker process per request. Basic Pitch 0.4.0 (Spotify,
+# Apache-2.0) is vendored in app/_vendor/transcribe with its ONNX model and
+# runs on the CPU. Not the lyrics transcription above, which is Whisper.
+#
+# Measured in the 2026-11-25 spike (data/transcribe-spike/bp/out/results.json,
+# onnxruntime 1.29 on the CPU): a 359 s song took 6.3 to 12.3 s per stem and
+# a 229 s song 4.6 to 7.8 s, with a 0.4 to 0.5 GB peak working set. Basic
+# Pitch decodes the whole file before it starts, and memory grew by about
+# 0.9 MB per second of audio, so the length is capped, checked from the file
+# header before anything is decoded: 1200 s is a 20 minute song, about 1.5 GB.
+TRANSCRIBE_MAX_SECONDS = max(30, _env_int("STEMDECK_TRANSCRIBE_MAX_SECONDS", 1200))
+# The whole run. At the spike's slowest rate (12.3 s for 359 s) the longest
+# song allowed takes about 45 s; ten times that is a hang, not a slow machine.
+TIMEOUT_MIDI = max(60, _env_int("STEMDECK_TIMEOUT_MIDI", 600))
+# No output for this long is a hang. The worker reports each 2 s model window,
+# and decoding the longest song allowed is the one quiet stretch.
+TIMEOUT_MIDI_STALL = max(30, _env_int("STEMDECK_TIMEOUT_MIDI_STALL", 120))
+# The stems a MIDI file is made from: every stem of htdemucs_6s, in the
+# order Settings lists them. And the pitch range Basic Pitch searches in
+# each (Hz, its minimum_frequency and maximum_frequency). Piano: A0 to about
+# C8, the 88 keys. Bass: B0 on a five-string down to 30 Hz, up to 400 Hz,
+# above the 24th fret of a four-string's G string (392 Hz); the spike ran
+# with exactly these two. Guitar: 60 Hz (a drop-C low string is 65 Hz) to
+# 1600 Hz; other: the piano's range; vocals: 65 Hz (C2) to 1100 Hz (C#6):
+# the ranges data/midi-bench/results/engines-per-stem.md measured with,
+# chosen before scoring. Basic Pitch cannot transcribe drums.
+MIDI_STEMS = ("vocals", "drums", "bass", "guitar", "piano", "other")
+MIDI_STEM_RANGES: dict[str, tuple[float, float]] = {
+    "vocals": (65.0, 1100.0),
+    "bass": (30.0, 400.0),
+    "guitar": (60.0, 1600.0),
+    "piano": (27.5, 4200.0),
+    "other": (27.5, 4200.0),
+}
+# The General MIDI program (0-based) and track name of each stem's file, when
+# the engine names no instrument: 53 Voice Oohs, 33 Electric Bass (finger),
+# 27 Electric Guitar (clean), 0 Acoustic Grand Piano, 48 String Ensemble 1.
+# The drums are on MIDI channel 10, General MIDI's percussion channel, which
+# takes no program (midi_file.build_midi). YourMT3+ names an instrument per
+# note: its file takes the program most of its notes have (ymt3.stem_notes).
+MIDI_DRUM_CHANNEL = 9
+MIDI_STEM_PROGRAMS: dict[str, tuple[int, str]] = {
+    "vocals": (53, "Vocals"),
+    "drums": (0, "Drums"),
+    "bass": (33, "Bass"),
+    "guitar": (27, "Guitar"),
+    "piano": (0, "Keys"),
+    "other": (48, "Other"),
+}
+# How much detail is kept, per stem: Basic Pitch's thresholds (0..1), its
+# minimum note length (ms), and "one_voice" (midi_notes.one_voice, one note
+# at a time). Notes come from onsets only (midi_notes.onset_notes): Basic
+# Pitch's "melodia trick" is never used.
+#
+# Tuned on the BabySlakh tuning tracks 1 to 10 with scripts/midi_bench.py
+# (note onset F1 at 50 ms, mir_eval), weighted on what a person gets: the mix
+# separated by htdemucs_6s, then transcribed. "balanced", before (one preset
+# for both stems: onset 0.5, frame 0.3, 80 ms, melodia on) and after:
+# - bass, separated: F1 0.445 to 0.667 (tuning), 0.544 to 0.772 (held-out
+#   tracks 11 to 20); clean stem: 0.573 to 0.879, 0.639 to 0.936. Most of
+#   the gain is one_voice: Basic Pitch heard a bass note's octave partial as
+#   a second note (2736 of 3952 extra notes on the clean tuning stems; 9
+#   after). The higher thresholds drop most of what bleeds in from other
+#   instruments (2049 extra notes with no reference note near, 129 after).
+# - piano, separated: F1 0.328 to 0.413 (tuning), 0.326 to 0.394 (held-out);
+#   clean stem: 0.779 to 0.864, 0.792 to 0.868; MAESTRO v3 test pieces,
+#   real recordings never tuned on: 0.755 to 0.813 clean, 0.711 to 0.748
+#   separated. The melodia trick makes notes from the frame activation where
+#   there is no onset; on piano those were mostly fragments of held notes
+#   (1360 extra notes on the clean tuning stems, 272 after) and notes with
+#   nothing in the reference near them (556, 59 after), so it is off, and the
+#   onset threshold goes up to 0.6. Octave confusions are what is left (2063).
+# - Tried and left out, no gain: dropping a weak note that sits a harmonic
+#   above a held one on piano (ratios 0.3 to 1.0), and Basic Pitch's inferred
+#   onsets off.
+# "detailed" keeps more quiet and short notes, "clean" only clear ones, from
+# the same sweep; every preset is scored in data/midi-bench/results/after.md.
+MIDI_DETAILS = ("balanced", "detailed", "clean")
+MIDI_DEFAULT_DETAIL = "balanced"
+MIDI_DETAIL_PRESETS: dict[str, dict[str, dict[str, float | bool]]] = {
+    "piano": {
+        "balanced": {
+            "onset_threshold": 0.6,
+            "frame_threshold": 0.3,
+            "minimum_note_length": 58.0,
+            "one_voice": False,
+        },
+        "detailed": {
+            "onset_threshold": 0.5,
+            "frame_threshold": 0.2,
+            "minimum_note_length": 58.0,
+            "one_voice": False,
+        },
+        "clean": {
+            "onset_threshold": 0.7,
+            "frame_threshold": 0.4,
+            "minimum_note_length": 80.0,
+            "one_voice": False,
+        },
+    },
+    "bass": {
+        "balanced": {
+            "onset_threshold": 0.7,
+            "frame_threshold": 0.5,
+            "minimum_note_length": 58.0,
+            "one_voice": True,
+        },
+        "detailed": {
+            "onset_threshold": 0.6,
+            "frame_threshold": 0.4,
+            "minimum_note_length": 58.0,
+            "one_voice": True,
+        },
+        "clean": {
+            "onset_threshold": 0.8,
+            "frame_threshold": 0.5,
+            "minimum_note_length": 80.0,
+            "one_voice": True,
+        },
+    },
+}
+# Guitar, other and vocals take the piano's thresholds, not tuned for them:
+# what engines-per-stem.md measured Basic Pitch with ("balanced", chosen
+# before scoring). The vocals keep one note at a time (one_voice): a voice
+# sings one, and on vocadito one voice scored 0.567 against 0.558 for every
+# note (clean, onset F1 at 50 ms).
+for _stem in ("guitar", "other", "vocals"):
+    MIDI_DETAIL_PRESETS[_stem] = {
+        detail: {**preset, "one_voice": _stem == "vocals"}
+        for detail, preset in MIDI_DETAIL_PRESETS["piano"].items()
+    }
+del _stem
+# The second piano engine (app/pipeline/piano_hr.py): ByteDance's
+# high-resolution piano transcription (Kong et al. 2021, "High-resolution
+# Piano Transcription with Pedals by Regressing Onset and Offset Times"),
+# piano_transcription_inference 0.0.6 and torchlibrosa 0.1.0 (MIT), vendored
+# in app/_vendor/piano_hr, run on the torch StemDeck already ships. Its
+# weights (CC BY 4.0) are fetched on first use from the Zenodo record the
+# package itself names, pinned by size and SHA-256 (Zenodo publishes the
+# file's MD5, 22b961b77c1878239fec963362097045, and the copy hashed here
+# matched it on 2026-11-26). The file name holds no "%" and no "=": the
+# address does ("=" only), and stem_models.ModelFile refuses a "%".
+
+PIANO_HR_CHECKPOINT_URL = (
+    "https://zenodo.org/api/records/4034264/files/CRNN_note_F1=0.9677_pedal_F1=0.9186.pth/content"
+)
+PIANO_HR_CHECKPOINT_SHA256 = "c3fa9730725bf4a762f1c14bc80cd5986eacda01b026f5a4a2525cd607876141"
+PIANO_HR_CHECKPOINT_SIZE = 171_966_578
+PIANO_HR_CHECKPOINT_RELPATH = "piano_hr/CRNN_note_F1_0.9677_pedal_F1_0.9186.pth"
+# Segments (10 s each, 5 s apart) run at once. Measured 2026-11-26 on a
+# 3.3 min stem (BabySlakh Track00011, app/pipeline/piano_hr.model_output),
+# torch 2.6.0: on an RTX 3080 (cu124) 1, 4, 8 and 16 at a time took 9.7,
+# 2.8, 1.4 and 1.2 s per audio minute, holding 0.3, 0.7, 1.2 and 2.2 GB of
+# GPU memory; on a 24-thread CPU 1, 2, 4 and 8 took 38.4, 30.7, 29.0 and
+# 28.4 s per minute. Notes identical at every size. 8 on the GPU; 4 on the
+# CPU, where 8 gains 2% and halves how often progress is reported (each
+# batch is one line, against TIMEOUT_MIDI_STALL).
+PIANO_HR_BATCH_GPU = 8
+PIANO_HR_BATCH_CPU = 4
+# Free GPU memory a run needs to start on the GPU (batch 8 held 1.2 GB, plus
+# the allocator's rounding); with less, a separation is likely holding the
+# card, and the run goes to the CPU instead of failing on the GPU.
+PIANO_HR_GPU_MIN_FREE_MB = max(0, _env_int("STEMDECK_PIANO_HR_GPU_MIN_FREE_MB", 2048))
+# The whole piano_hr run. Through the worker on that CPU a minute of audio
+# took 36.9 s (scripts/midi_bench.py score --worker, nine BabySlakh songs), so
+# the longest song allowed (TRANSCRIBE_MAX_SECONDS, 1200 s) takes about 740 s;
+# eight times that is a hang, not a slower computer.
+TIMEOUT_MIDI_PIANO_HR = max(60, _env_int("STEMDECK_TIMEOUT_MIDI_PIANO_HR", 6000))
+# The longest a first-use download may take, and the longest it may send
+# nothing (a try that times out says so on stderr, which resets it). 172 MB
+# at 100 KB/s is 29 minutes.
+TIMEOUT_MIDI_MODEL_DOWNLOAD = max(60, _env_int("STEMDECK_TIMEOUT_MIDI_MODEL_DOWNLOAD", 3600))
+# piano_hr's post-processing thresholds per detail (0..1): onset, offset and
+# frame as RegressionPostProcessor takes them, the pedal's offset, and
+# whether notes are held by the detected sustain pedal (midi_notes.
+# pedal_extend), as the benchmark's references are.
+#
+# Tuned on the BabySlakh tuning tracks 1 to 10 only (scripts/midi_bench.py
+# --engine piano_hr sweep, results/sweep-hr1.json and sweep-hr2.json; onset
+# F1 at 50 ms | with offsets): the package's own 0.3 onset, 0.1 frame gave
+# 0.909|0.731 clean and 0.367|0.153 separated. The onset threshold is what
+# counts (frame moves only the offsets): 0.5 gave 0.919|0.742 and 0.391|0.168,
+# 0.6 0.923|0.762 and 0.400|0.169 (frame 0.3), 0.7 0.922|0.761 and
+# 0.408|0.178 (frame 0.2), 0.8 0.906|0.754 and 0.375|0.171, 0.9 collapses
+# (0.434). Offset 0.2 or 0.4 and the pedal off changed nothing over 0.003.
+# "balanced" is 0.7, 0.2, the best separated score on tuning.
+#
+# Held out (BabySlakh 11 to 20, MAESTRO v3 test pieces, never tuned on;
+# results/hr-held-default.md against hr-held-cand-balanced.md, wav), the
+# package's defaults then balanced: MAESTRO clean 0.978|0.870 to
+# 0.972|0.877, MAESTRO separated 0.933|0.799 to 0.927|0.810, BabySlakh clean
+# 0.860|0.728 to 0.901|0.770, separated 0.284|0.106 to 0.350|0.145. Better
+# with offsets everywhere and on onsets by 0.04 and 0.07 on BabySlakh; 0.006
+# lower on onsets on MAESTRO, where precision went 0.986 to 0.998 and recall
+# 0.971 to 0.948. "detailed" is 0.5, 0.1 and "clean" 0.8, 0.3, from the same
+# sweep (held out: results/hr-held-cand-detailed.md, hr-held-cand-clean.md).
+MIDI_PIANO_HR_PRESETS: dict[str, dict[str, float | bool]] = {
+    "balanced": {
+        "onset_threshold": 0.7,
+        "offset_threshold": 0.3,
+        "frame_threshold": 0.2,
+        "pedal_offset_threshold": 0.2,
+        "pedal": True,
+    },
+    "detailed": {
+        "onset_threshold": 0.5,
+        "offset_threshold": 0.3,
+        "frame_threshold": 0.1,
+        "pedal_offset_threshold": 0.2,
+        "pedal": True,
+    },
+    "clean": {
+        "onset_threshold": 0.8,
+        "offset_threshold": 0.3,
+        "frame_threshold": 0.3,
+        "pedal_offset_threshold": 0.2,
+        "pedal": True,
+    },
+}
+# The engines, and the stems each can transcribe (app/core/midi_engines.py
+# lists them; settings.transcribe_<stem>_engine picks one per stem). Basic
+# Pitch hears pitch, not drums. piano_hr knows the piano's 88 keys only.
+# YourMT3+ takes every stem but the vocals: on vocadito (40 sung clips,
+# separated from a mix) it scored 0.481 onset F1 against Basic Pitch's 0.554
+# on annotator A1, 0.249 against 0.357 with offsets, and better only on
+# annotator A2 (0.585 against 0.544), so it does not meet Basic Pitch there.
+MIDI_ENGINES = ("basic_pitch", "piano_hr", "ymt3")
+MIDI_ENGINE_STEMS: dict[str, tuple[str, ...]] = {
+    "basic_pitch": ("vocals", "bass", "guitar", "piano", "other"),
+    "piano_hr": ("piano",),
+    "ymt3": ("drums", "bass", "guitar", "piano", "other"),
+}
+# Each stem's engine until the person picks another: the measured winner
+# among the engines that need no weights the person brings
+# (data/midi-bench/results/engines-per-stem.md: onset F1 at 50 ms on
+# separated stems, paired over the same tracks, 95% bootstrap interval):
+# - other: YourMT3+, 0.439 against Basic Pitch's 0.144 (+0.295,
+#   +0.232..+0.362, 44 of 49 Slakh songs). Pads, strings and brass are what
+#   Basic Pitch's onset decoding misses.
+# - piano: YourMT3+, 0.502 against 0.425 (+0.077, +0.031..+0.125, 35 of 49).
+#   piano_hr stays a choice: it is better on solo piano (MAESTRO).
+# - bass: YourMT3+, octave-aligned 0.551 against 0.521 (+0.030,
+#   +0.014..+0.047, 31 of 48). One data set, low certainty, but the same
+#   engine as three other stems.
+# - drums: YourMT3+, the only engine here that hears drums (0.704 overall on
+#   MDB Drums separated, 0.699 on Slakh separated). ADTOF measured better
+#   (0.854 on MDB) but its weights are non-commercial and the person would
+#   have to bring them.
+# - guitar: Basic Pitch. The two data sets disagree: on Slakh (synthetic,
+#   rendered with the same patches YourMT3+ trained on, 50 songs separated)
+#   YourMT3+ led, 0.482 against 0.330 (+0.153, +0.103..+0.207, 38 of 50); on
+#   Guitar-TECHS (real guitar recorded through an amplifier and a microphone,
+#   12 excerpts) Basic Pitch led, 0.683 against 0.544 for YourMT3+ as it
+#   ships (its class filter), and against 0.603 for all its notes (+0.081,
+#   +0.010..+0.156, 10 of 12); on the same excerpts' direct input YourMT3+
+#   led, 0.694 against 0.664. A guitar in a song is heard through an
+#   amplifier and a microphone, so the real, miked set decides; Basic Pitch
+#   also needs no 562 MB download. Through the real worker the same sets
+#   scored the same (scripts/midi_bench.py eng, results/bp-worker-small.md,
+#   ymt3-worker-gtechs.md).
+# - vocals: Basic Pitch, the only engine here that takes them (above).
+MIDI_DEFAULT_ENGINES: dict[str, str] = {
+    "vocals": "basic_pitch",
+    "drums": "ymt3",
+    "bass": "ymt3",
+    "guitar": "basic_pitch",
+    "piano": "ymt3",
+    "other": "ymt3",
+}
+# The third engine (app/pipeline/ymt3.py): YourMT3+ (Chang et al. 2024,
+# "YourMT3+: Multi-instrument Music Transcription with Enhanced Transformer
+# Architectures and Cross-dataset Stem Augmentation"), the YPTF.MoE+Multi
+# variant without pitch-shift augmentation ("noPS"), its inference code
+# vendored from the Hugging Face Space mimbres/YourMT3 (Apache-2.0) in
+# app/_vendor/ymt3 with a stand-in for transformers and Lightning, run on the
+# torch StemDeck already ships. It transcribes every instrument at once and
+# names each note's instrument, so a stem's file keeps only the notes of the
+# stem's own instrument class (MIDI_YMT3_CLASSES below).
+#
+# Its weights (Apache-2.0, the model card of huggingface.co/mimbres/YourMT3)
+# are the Lightning checkpoint the authors published, 561.5 MB with the
+# optimizer's state. StemDeck hosts no files, so the first run downloads that
+# checkpoint from Hugging Face at a pinned revision of the repository (the
+# address names the commit, so its bytes cannot change), checks its size and
+# SHA-256 (the Hub's own LFS hash, which the copy hashed here matched on
+# 2026-11-26), and converts it on this computer into a weights-only
+# safetensors file (app/pipeline/ymt3_convert.py, scripts/ymt3_weights.py):
+# the tensors, sorted, nothing else, so the result is the same bytes on every
+# computer and is checked against its own pinned SHA-256 before it is kept.
+# The checkpoint is then deleted. Nothing in it is ever run: it is read with
+# torch's weights-only loader, its few pickled objects (the training task's
+# tokenizer) given an inert stand-in.
+YMT3_CHECKPOINT_URL = (
+    "https://huggingface.co/mimbres/YourMT3/resolve/e45ebd70398682d54b7bb1901a5216e18f3b1824/"
+    "logs/2024/mc13_256_g4_all_v7_mt3f_sqr_rms_moe_wf4_n8k2_silu_rope_rp_b36_nops/"
+    "checkpoints/last.ckpt"
+)
+YMT3_CHECKPOINT_SHA256 = "ae38e415c79efd5592dcb9b658cdb99ddb11d4c4e1eaa364cab04a052473fc25"
+YMT3_CHECKPOINT_SIZE = 561_544_628
+YMT3_CHECKPOINT_RELPATH = "ymt3/last.ckpt"
+YMT3_WEIGHTS_SHA256 = "dbe76ceca4a7edddbe3e05468861567d67a257e50c8dd9824273efc0f198f292"
+YMT3_WEIGHTS_SIZE = 188_412_704
+YMT3_WEIGHTS_RELPATH = "ymt3/yourmt3_yptf_moe_multi_nops.safetensors"
+# Which of the model's notes a stem's file keeps: its General MIDI program
+# family (0-based programs; 100 and 101 are the model's two singing voices),
+# or the drums. "other" is every pitched note that is none of the piano,
+# guitar, bass or voice families: what htdemucs_6s leaves in its sixth stem.
+# Measured on separated Slakh stems (engines-per-stem.md): keeping only the
+# class lifted onset F1 by 0.108 on guitar to 0.218 on other over keeping
+# every pitched note, because it drops what bled in from the other stems.
+_YMT3_PIANO = frozenset(range(0, 8))
+_YMT3_GUITAR = frozenset(range(24, 32))
+_YMT3_BASS = frozenset(range(32, 40))
+_YMT3_VOICE = frozenset({100, 101})
+MIDI_YMT3_CLASSES: dict[str, dict[str, frozenset[int]]] = {
+    "piano": {"programs": _YMT3_PIANO},
+    "guitar": {"programs": _YMT3_GUITAR},
+    "bass": {"programs": _YMT3_BASS},
+    "vocals": {"programs": _YMT3_VOICE},
+    "other": {"not_programs": _YMT3_PIANO | _YMT3_GUITAR | _YMT3_BASS | _YMT3_VOICE},
+    "drums": {},
+}
+# The model's vocabulary has one loudness (every note is velocity 1), so a
+# file's notes all get this amplitude: velocity 92 of MIDI_VELOCITY_MIN..MAX.
+YMT3_NOTE_AMPLITUDE = 0.8
+# Segments (2.05 s each) decoded at once. On the GPU 8, the size
+# engines-per-stem.md measured on a 10 GB RTX 3080 (48 filled the card and ran
+# far slower). On the CPU one: measured 2026-11-26 on a dense separated
+# piano (Slakh Track01880, 60 s, 24 threads, ymt3.model_output), 8, 4, 2 and
+# 1 at a time took 108.5, 88.6, 90.6 and 84.0 s per audio minute, the longest
+# wait between two progress lines 37.2, 27.0, 16.7 and 11.1 s, notes identical
+# at every size. Batching buys nothing on the CPU, and one at a time keeps a
+# slow CPU's progress lines well inside TIMEOUT_MIDI_STALL.
+YMT3_BATCH_GPU = 8
+YMT3_BATCH_CPU = 1
+# Free GPU memory a run needs to start on the GPU; with less, a separation is
+# likely holding the card, and the run goes to the CPU instead of failing.
+# Measured through the worker (scripts/midi_bench.py --engine ymt3 eng, the
+# "gpu_peak_mb" it reports): torch reserved 1.6 GB on a sparse 90 s stem and
+# at most 3.0 GB on a dense one, at batch 8; the CUDA context adds about
+# 0.4 GB that torch does not count, so 3.5 GB.
+YMT3_GPU_MIN_FREE_MB = max(0, _env_int("STEMDECK_YMT3_GPU_MIN_FREE_MB", 3584))
+# Seconds of work per minute of audio, what Settings and the lane tell the
+# person before the first run. The model decodes token by token, so a dense
+# stem takes longer than a sparse one. Measured 2026-11-26 through the real
+# worker, nothing else running (scripts/midi_bench.py --engine ymt3 eng
+# --limit, results/ymt3-speed-gpu.md and ymt3-speed-cpu.md), on 90 s
+# separated Slakh stems, the worker's start and the model's load (about 12 s)
+# included: on an RTX 3080, drums 15.6, bass 16.2, a dense piano 26.4 s per
+# audio minute; on a 24-thread CPU, bass 52.8, a dense piano 113.6. The model
+# alone (engines-per-stem.md) is 12.1 on that GPU and 68.8 on that CPU. Said
+# as 20 and 90: what a typical stem costs, start included, rounded up.
+YMT3_SECONDS_PER_MINUTE = {"cuda": 20, "cpu": 90}
+# The whole ymt3 run: the longest song allowed (TRANSCRIBE_MAX_SECONDS, 20
+# minutes) at a dense stem's CPU rate above (113.6 s a minute) is 2272 s; six
+# times that, for a slower CPU, is a hang.
+TIMEOUT_MIDI_YMT3 = max(60, _env_int("STEMDECK_TIMEOUT_MIDI_YMT3", 14400))
+# Making the weights from the checkpoint: about 5 s here; a slow disk or an
+# antivirus scan of 750 MB can take minutes, an hour is a hang.
+TIMEOUT_MIDI_MODEL_PREPARE = max(60, _env_int("STEMDECK_TIMEOUT_MIDI_MODEL_PREPARE", 3600))
+# The written file: ticks per quarter note, and the velocity range a note's
+# amplitude (0..1) maps onto, so the quietest note is still heard and the
+# loudest leaves headroom.
+MIDI_PPQ = 480
+MIDI_VELOCITY_MIN = 20
+MIDI_VELOCITY_MAX = 110
+# A beat grid is trusted for the file's tempo and bar lines when it is steady
+# (the beat grid's own regularity gate, BEATGRID_MAX_IRREGULARITY below) and
+# at least this many of its beats sit on a detected onset. The same floor the
+# section refiner uses to trust the grid for snapping
+# (SECTION_REFINEMENT_GRID_MIN_CONFIDENCE). A grid the user edited is trusted
+# as it is. Anything else is written at 120 BPM, tempo_source "default".
+# Measured on the six beat_this grids in the repository's test libraries
+# (2026-11-25): the three steady songs scored irregularity 0.021 to 0.026 and
+# confidence 90 to 95 (one meter each, or three bar marks); the three that
+# change tempo or meter all the way through (Bohemian Rhapsody, What Is This
+# Feeling, one more) scored 62, 64 and 68 with 6 to 11 bar marks, and one of
+# them irregularity 0.68. One tempo cannot describe those, so they get the
+# default; the gap between 68 and 90 is where 70 sits. Job.bpm (librosa, the
+# first 180 s, no beat times) is never used: on What Is This Feeling it says
+# 152 where the grid's median beat says 104.
+MIDI_TEMPO_MIN_CONFIDENCE = SECTION_REFINEMENT_GRID_MIN_CONFIDENCE
+MIDI_DEFAULT_BPM = 120.0
+
 # Beat-grid analysis parameters. 22050 Hz is plenty for onset detection (the
 # percussive energy that matters lives well under 11 kHz) and keeps the decode
 # cheap; hop 512 gives ~23 ms grid resolution, the librosa default pairing.
@@ -1186,6 +1614,14 @@ if BEAT_DETECTOR not in ("auto", "model", "librosa"):
 # beat_this checkpoint name; resolved through torch.hub, so it lands under
 # TORCH_HOME (which configure_portable_environment points at MODELS_DIR).
 BEAT_MODEL_CHECKPOINT = os.environ.get("STEMDECK_BEAT_MODEL", "").strip() or "final0"
+# The default checkpoint pinned for Settings > Models' Download button: the
+# address beat_this asks torch.hub for (beat_this.inference.CHECKPOINT_URL,
+# beat-this 1.1.0, plus "/final0.ckpt"), and its size and SHA-256, measured
+# 2026-11-26. The host publishes a SHA-1 of the file (its oc-checksum header,
+# e1506282faf66ca10e8ab50ee26bd542b7b9ff0a), which that download matched.
+BEAT_THIS_FINAL0_URL = "https://cloud.cp.jku.at/public.php/dav/files/7ik4RrBKTS273gp/final0.ckpt"
+BEAT_THIS_FINAL0_SHA256 = "8c328b45f59d8dd3dff219253ff6a8d6482be57d0133a29140e2febbf8eb8331"
+BEAT_THIS_FINAL0_SIZE = 81_058_141
 
 BEATGRID_SR = 22050
 BEATGRID_HOP = 512

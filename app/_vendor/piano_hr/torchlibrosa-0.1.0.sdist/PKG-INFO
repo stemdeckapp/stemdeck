@@ -1,0 +1,109 @@
+Metadata-Version: 2.1
+Name: torchlibrosa
+Version: 0.1.0
+Summary: PyTorch implemention of part of librosa functions.
+Home-page: https://github.com/qiuqiangkong/torchlibrosa
+Author: Qiuqiang Kong
+Author-email: qiuqiangkong@gmail.com
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.6
+Description-Content-Type: text/markdown
+License-File: LICENSE.md
+
+# TorchLibrosa: PyTorch implementation of Librosa
+
+This codebase provides PyTorch implementation of some librosa functions. If users previously used for training cpu-extracted features from librosa, but want to add GPU acceleration during training and evaluation, TorchLibrosa will provide almost identical features to standard torchlibrosa functions (numerical difference less than 1e-5).
+
+## Install
+```bash
+$ pip install torchlibrosa
+```
+
+## Examples 1
+
+Extract Log mel spectrogram with TorchLibrosa.
+
+```python
+import torch
+import torchlibrosa as tl
+
+batch_size = 16
+sample_rate = 22050
+win_length = 2048
+hop_length = 512
+n_mels = 128
+
+batch_audio = torch.empty(batch_size, sample_rate).uniform_(-1, 1)  # (batch_size, sample_rate)
+
+# TorchLibrosa feature extractor the same as librosa.feature.melspectrogram()
+feature_extractor = torch.nn.Sequential(
+    tl.Spectrogram(
+        hop_length=hop_length,
+        win_length=win_length,
+    ), tl.LogmelFilterBank(
+        sr=sample_rate,
+        n_mels=n_mels,
+        is_log=False, # Default is true
+    ))
+batch_feature = feature_extractor(batch_audio) # (batch_size, 1, time_steps, mel_bins)
+```
+
+## Examples 2
+
+Extracting spectrogram, then log mel spectrogram, STFT and ISTFT with TorchLibrosa.
+
+```python
+import torch
+import torchlibrosa as tl
+
+batch_size = 16
+sample_rate = 22050
+win_length = 2048
+hop_length = 512
+n_mels = 128
+
+batch_audio = torch.empty(batch_size, sample_rate).uniform_(-1, 1)  # (batch_size, sample_rate)
+
+# Spectrogram
+spectrogram_extractor = tl.Spectrogram(n_fft=win_length, hop_length=hop_length)
+sp = spectrogram_extractor.forward(batch_audio)   # (batch_size, 1, time_steps, freq_bins)
+
+# Log mel spectrogram
+logmel_extractor = tl.LogmelFilterBank(sr=sample_rate, n_fft=win_length, n_mels=n_mels)
+logmel = logmel_extractor.forward(sp)   # (batch_size, 1, time_steps, mel_bins)
+
+# STFT
+stft_extractor = tl.STFT(n_fft=win_length, hop_length=hop_length)
+(real, imag) = stft_extractor.forward(batch_audio)
+# real: (batch_size, 1, time_steps, freq_bins), imag: (batch_size, 1, time_steps, freq_bins) #
+
+# ISTFT
+istft_extractor = tl.ISTFT(n_fft=win_length, hop_length=hop_length)
+y = istft_extractor.forward(real, imag, length=batch_audio.shape[-1])    # (batch_size, samples_num)
+```
+
+## Example 3
+
+Check the compability of TorchLibrosa to Librosa. The numerical difference should be less than 1e-5.
+
+```python
+python3 torchlibrosa/stft.py --device='cuda'    # --device='cpu' | 'cuda'
+```
+
+## Contact
+Qiuqiang Kong, qiuqiangkong@gmail.com
+
+## Cite
+[1] Qiuqiang Kong, Yin Cao, Turab Iqbal, Yuxuan Wang, Wenwu Wang, and Mark D. Plumbley. "PANNs: Large-scale pretrained audio neural networks for audio pattern recognition." IEEE/ACM Transactions on Audio, Speech, and Language Processing 28 (2020): 2880-2894.
+
+## External links
+Other related repos include:
+
+torchaudio: https://github.com/pytorch/audio
+
+Asteroid-filterbanks: https://github.com/asteroid-team/asteroid-filterbanks
+
+Kapre: https://github.com/keunwoochoi/kapre
+
