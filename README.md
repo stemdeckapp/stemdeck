@@ -222,6 +222,7 @@ StemDeck is free and **does not accept any money, sponsorship, or funding**  fro
 | Artists & Creators | Killah Trakz | Industry Secret Villain and Media Influencer | [@killahtrakz](https://www.instagram.com/killahtrakz/) · [Spotify](https://open.spotify.com/artist/6nePYOqT4E7D4C48twPtKk) · [Apple Music](https://music.apple.com/us/artist/killah-trakz/371296633) |
 | Artists & Creators | More Notes Less Talk | Gear-focused creative project with a raw, tape-recorded identity | [@morenoteslesstalk](https://www.youtube.com/@morenoteslesstalk) |
 | Artists & Creators | NIHIL | Modern alternative metal from Argentina. Fueled by emotionally charged vocals, anger and emptiness | [@somosnihil](https://www.instagram.com/somosnihil/) · [Spotify](https://open.spotify.com/artist/1OeKplJxFNM6JHrWeo2SaV) |
+| Artists & Creators | Tiziano Alimonti | Guitarist, songwriter & audio content creator | [@lion_brutus](https://www.instagram.com/lion_brutus/) · [tizianoalimonti.com](https://www.tizianoalimonti.com/en/) |
 | Instrument Builders & Repair | Dlima Guitars | Custom guitars and basses | [@dlimaguitars](https://www.instagram.com/dlimaguitars) |
 | Instrument Builders & Repair | Kris Luthier | Instrument repair and restoration | [@krisluthier](https://www.instagram.com/krisluthier) |
 | Instrument Builders & Repair | Lisbon Guitar Works | Handmade guitars in Lisbon | [dlimaguitars.com](https://dlimaguitars.com) |
