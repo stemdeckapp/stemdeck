@@ -231,7 +231,7 @@ export function buildRenderRequest({
   return body;
 }
 
-// ── The Export Performance menu ──
+// ── The Export menu ──
 
 // What the menu makes: one MP4, or a package for DaVinci Resolve (.otioz).
 export const EXPORT_FORMATS = ["mp4", "resolve"];
@@ -269,7 +269,7 @@ export function buildPackageRequest({
 }
 
 /**
- * What the Export Performance menu shows for `format`:
+ * What the Export menu shows for `format`:
  * - runKey/descKey: the action row's title and line ("Try again" after this
  *   format's export failed in a way trying again can fix);
  * - options: whether the Resolve options show; clickOff: the click option

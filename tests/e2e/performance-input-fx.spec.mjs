@@ -558,7 +558,7 @@ test.describe("Performance input effects", () => {
     await expect(fxBtn).toHaveAccessibleName(TRANSLATIONS.en["streamer.lane.takeFx"]);
     // The MP4 export with the effects on: the take printed, the print rendered.
     let download = page.waitForEvent("download", { timeout: 120000 });
-    // Export Performance opens its menu; the MP4 row exports.
+    // Export opens its menu; the MP4 row exports.
     await sm(page, ".sm-export-go").click();
     await sm(page, '.sm-export-fmt[data-format="mp4"]').click();
     await sm(page, ".sm-export-run").click();

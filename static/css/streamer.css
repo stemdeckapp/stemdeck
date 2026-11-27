@@ -1073,19 +1073,25 @@ html.streamer-open .daw-footer { display: none !important; }
 .sm-rec { z-index: 2; }
 
 /* ── Right panel: Recording & Output ── */
+/* The card is 290 px wide and the panel is the card, its 10 px right padding
+   and the room the platform's scrollbar takes, kept whether or not the panel
+   scrolls (scrollbar-gutter): a scrollbar that appears when the Export menu
+   opens never takes width from the controls (#1144). With overlay scrollbars
+   (macOS) that room is 0 and the panel is 300 px. */
 .sm-side {
   flex: none;
-  width: 300px;
+  width: max-content;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
   gap: 8px;
   padding: 10px 10px 8px 0;
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 /* The panel's one card (export to a file is the only way out for now):
    it fills the panel, and the export sits at its foot. */
-.sm-out { flex: 1 0 auto; display: flex; flex-direction: column; }
+.sm-out { flex: 1 0 auto; width: 290px; display: flex; flex-direction: column; }
 /* Compact rows, so every control and the export fit without scrolling in a
    short window and in the drawer. */
 .sm-out-head { padding: 11px 14px; border-bottom: 1px solid var(--sm-line); font-size: 15px; font-weight: 600; }
@@ -1261,6 +1267,9 @@ html.streamer-open .daw-footer { display: none !important; }
     display: none;
   }
   .sm-drawer-open .sm-side { display: flex; }
+  /* The drawer's width is fixed, so the card fills what the scrollbar's
+     room leaves, the same with the menu open or shut. */
+  .sm-side .sm-out { width: auto; }
   /* In the drawer each source's label sits beside its select, which keeps
      every control and Export in view in a short window. */
   .sm-side .sm-out-head { padding: 9px 14px; }
@@ -1322,6 +1331,8 @@ html.streamer-open .daw-footer { display: none !important; }
 .sm-rec.recording .sm-rec-ring { border-color: #ff6b70; }
 .sm-rec.recording .sm-rec-dot { background: #ff4d55; animation: sm-rec-blink 1s steps(2, start) infinite; }
 @keyframes sm-rec-blink { to { visibility: hidden; } }
+/* The last take's status line and its Export row. The menu and the sync
+   section are its siblings, under it in the card, not inside it. */
 .sm-export {
   display: flex;
   flex-direction: column;
@@ -1329,7 +1340,9 @@ html.streamer-open .daw-footer { display: none !important; }
   margin-top: auto;
   padding-top: 10px;
   border-top: 1px solid var(--sm-line);
-  /* Where the panel must scroll (a very short window), Export stays in view. */
+  /* Where the panel must scroll (a very short window), Export stays in view.
+     Only this row is sticky: a sticky block holding the open menu and the
+     sync section slid up over the controls above it (#1144). */
   position: sticky;
   bottom: 0;
   z-index: 1;
@@ -1352,7 +1365,7 @@ html.streamer-open .daw-footer { display: none !important; }
 .sm-export-caret { transition: transform var(--t-fast) var(--easing); }
 .sm-export-go[aria-expanded="true"] .sm-export-caret { transform: rotate(180deg); }
 
-/* The Export Performance menu (streamer.js buildExportMenu): inline under its
+/* The Export menu (streamer.js buildExportMenu): inline under its
    button at every width, since a popover would be cut by the scrolling side
    panel. The format tabs share the row 50/50; every target is 38 px high or
    more; nothing is wider than the panel. */

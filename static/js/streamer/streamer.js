@@ -90,7 +90,7 @@ import { buildTabs, readTab, writeTab, viewCentre } from "./streamerTabs.js";
 import { libraryFoldStart, libraryFoldEnd, fitLibrary } from "./libraryFold.js";
 
 const SAFE_KEY = "stemdeck.streamer.safeZones";
-// The Export Performance menu's last format ("mp4" or "resolve"), per viewer.
+// The Export menu's last format ("mp4" or "resolve"), per viewer.
 const EXPORT_FORMAT_KEY = "stemdeck.streamer.exportFormat";
 const ASPECT_LABEL = { "16:9": "streamer.aspect169", "9:16": "streamer.aspect916", "1:1": "streamer.aspect11" };
 // The header's title while no song is open.
@@ -811,9 +811,9 @@ function buildSide() {
     sw[key].b.dataset.setting = key;
     switches.append(sw[key].b);
   }
-  // The last take: Export Performance (a menu: one MP4, or a package for
-  // DaVinci Resolve), its progress and Cancel, Show in folder, and the raw
-  // recording when no MP4 can be made.
+  // The last take: Export (a menu: one MP4, or a package for DaVinci
+  // Resolve), its progress and Cancel, Show in folder, and the raw recording
+  // when no MP4 can be made.
   const exp = el("div", "sm-export");
   exp.hidden = true;
   const expText = el("p", "sm-export-text");
@@ -847,11 +847,15 @@ function buildSide() {
   // measured, and the nudge the export then uses (syncControl.js).
   const expSync = createSyncControl({ onSaved: syncSaved });
   const expMenu = buildExportMenu(expGo);
-  exp.append(expText, expBar, expRow, expMenu.panel, expSync.el);
+  // The menu and the sync section are the card's own rows, after the
+  // export: only the status line and the button row are sticky, so the
+  // open menu and the sync section never slide over the controls above
+  // (#1144).
+  exp.append(expText, expBar, expRow);
   body.append(
     field("streamer.videoSource", "streamerVideoSrc", vsrc.sel), vsrc.wrap, vstate.line,
     field("streamer.audioSource", "streamerAudioSrc", asrc.sel), asrc.wrap, astate.line,
-    meterRow, grid, heavy, switches, exp,
+    meterRow, grid, heavy, switches, exp, expMenu.panel, expSync.el,
   );
   rec.append(recHead, body);
 
@@ -866,7 +870,7 @@ function buildSide() {
 }
 
 /**
- * The Export Performance menu, inline under its button at every width (a
+ * The Export menu, inline under its button at every width (a
  * popover would be cut by the scrolling side panel): the format tabs, the
  * lines saying why the export is not offered, the DaVinci Resolve options,
  * and the action row. exportMenu.js owns its keyboard and ARIA; paintExport
@@ -931,6 +935,16 @@ function buildExportMenu(go) {
       checkExportGates();
       painted.exp = null;
     },
+  });
+  // In a window too short for the panel, Export stays in view over the
+  // panel's foot and its menu opens under it, out of sight: the panel then
+  // scrolls just far enough to show it. The keyboard needs none of this
+  // (focus scrolls its row into view). Runs after the menu's own listener.
+  go.addEventListener("click", () => {
+    if (!menu.isOpen()) return;
+    const side = panel.closest(".sm-side");
+    if (!side || fmts.getBoundingClientRect().bottom <= side.getBoundingClientRect().bottom) return;
+    panel.scrollIntoView({ block: "nearest" });
   });
   // A key can change while the menu is open: the gates are asked again.
   menu.wireRow(run, () => {
@@ -2167,7 +2181,7 @@ function paintRecord() {
 let exporting = null;
 let exportNote = "";
 let exportError = null; // { code, kind }
-// The Export Performance menu: the format, the DaVinci Resolve options (for
+// The Export menu: the format, the DaVinci Resolve options (for
 // the session), and what was found when it opened (a transposed mix this
 // ffmpeg cannot export, a beat grid for the click).
 let exportFormat = readExportFormat();

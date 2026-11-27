@@ -1,4 +1,4 @@
-// Performance's Export Performance menu (static/js/streamer/streamer.js
+// Performance's Export menu (static/js/streamer/streamer.js
 // buildExportMenu, static/js/exportMenu.js): one button that opens a menu with
 // two formats, MP4 and DaVinci Resolve, the Resolve options, and the action
 // row. The take is a stand-in ("fake-take", listed on the job by a route) and
@@ -48,11 +48,11 @@ async function stubExport(page, kind) {
   return bodies;
 }
 
-test.describe("Export Performance menu", () => {
+test.describe("Performance Export menu", () => {
   test("opens on its button with two formats, and the format is remembered", async ({ page }) => {
     await setUp(page);
     const go = sm(page, ".sm-export-go");
-    await expect(go).toHaveText("Export Performance");
+    await expect(go).toHaveText("Export");
     await expect(go).toHaveAttribute("aria-haspopup", "menu");
     await expect(sm(page, ".sm-export-menu")).toBeHidden();
     await go.click();

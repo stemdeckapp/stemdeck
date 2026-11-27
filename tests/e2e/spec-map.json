@@ -301,17 +301,17 @@
     {
       "why": "Performance (streamer) mode",
       "paths": ["static/js/streamer/**", "static/css/streamer.css"],
-      "specs": ["streamer", "streamer-media", "modes", "help-mode", "karaoke", "performance-record-support", "performance-input-fx", "performance-tabs", "performance-layout", "performance-volume", "performance-speed", "performance-export-menu"]
+      "specs": ["streamer", "streamer-media", "modes", "help-mode", "karaoke", "performance-record-support", "performance-input-fx", "performance-tabs", "performance-layout", "performance-volume", "performance-speed", "performance-export-menu", "performance-export-panel"]
     },
     {
-      "why": "The shared export menu (Performance's Export Performance and the Studio's Export Mix), the take export clients and the DaVinci Resolve package",
+      "why": "The shared export menu (Performance's Export and the Studio's Export Mix), the take export clients and the DaVinci Resolve package",
       "paths": ["static/js/exportMenu.js", "static/js/video/videoRender.js", "app/pipeline/resolve_package.py", "app/pipeline/resolve_timeline.py"],
-      "specs": ["performance-export-menu", "export-menu", "export-ogg", "export-transpose", "export-all-stems", "reaper-export", "footer-no-clip", "master-live", "streamer", "streamer-media", "video-take", "help-mode"]
+      "specs": ["performance-export-menu", "performance-export-panel", "export-menu", "export-ogg", "export-transpose", "export-all-stems", "reaper-export", "footer-no-clip", "master-live", "streamer", "streamer-media", "video-take", "help-mode"]
     },
     {
       "why": "Sound and picture sync of a take with a camera: the export step's state in words and its nudge (syncControl.js, video/avSync.js), the sync route and the one picture placement on the server, and the loaded take it updates (takeLanes.js updateTakeEntry)",
       "paths": ["static/js/streamer/syncControl.js", "static/js/video/avSync.js", "static/js/capture/takeLanes.js", "static/js/video/cameraAudio.js", "static/js/video/cameraRecorder.js", "static/js/streamer/streamerRecord.js", "app/api/takes.py", "app/core/takes.py", "app/pipeline/av_sync.py", "app/pipeline/take_render.py", "static/js/video/frameAge.js", "static/js/video/videoCodec.js"],
-      "specs": ["avsync-export", "streamer-media", "video-sync", "video-take", "help-mode", "avsync-record"]
+      "specs": ["avsync-export", "streamer-media", "video-sync", "video-take", "help-mode", "avsync-record", "performance-export-panel"]
     },
     {
       "why": "A lane's level as a number (the Studio fader's dB text, Performance's lane volumes and Monitor level)",
