@@ -1347,6 +1347,71 @@ html.streamer-open .daw-footer { display: none !important; }
 /* Show in folder or Save the raw recording beside it when they fit. */
 .sm-export-row .sm-ib.sm-export-reveal, .sm-export-row .sm-ib.sm-export-raw { height: 38px; }
 .sm-export-go:disabled { opacity: .45; cursor: default; }
+.sm-export-go > svg { flex: none; }
+.sm-export-go-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sm-export-caret { transition: transform var(--t-fast) var(--easing); }
+.sm-export-go[aria-expanded="true"] .sm-export-caret { transform: rotate(180deg); }
+
+/* The Export Performance menu (streamer.js buildExportMenu): inline under its
+   button at every width, since a popover would be cut by the scrolling side
+   panel. The format tabs share the row 50/50; every target is 38 px high or
+   more; nothing is wider than the panel. */
+.sm-export-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--sm-edge);
+  border-radius: 10px;
+  background: var(--sm-panel);
+}
+.sm-export-menu[hidden] { display: none; }
+.sm-export-fmts { display: flex; gap: 4px; padding: 3px; border-radius: 8px; background: var(--sm-field); }
+.sm-export-fmt {
+  flex: 1 1 50%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--sm-muted);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.sm-export-fmt:hover { color: var(--sm-text); }
+.sm-export-fmt.is-on { background: var(--sm-row); color: var(--sm-yellow); box-shadow: inset 0 0 0 1px var(--sm-strong); }
+.sm-export-why { display: flex; flex-direction: column; gap: 4px; }
+.sm-export-why[hidden] { display: none; }
+.sm-export-why p, .sm-export-opt-why { margin: 0; font-size: 12px; line-height: 1.4; color: var(--sm-warn); overflow-wrap: break-word; }
+.sm-export-opt-why[hidden] { display: none; }
+.sm-export-opts { display: flex; flex-direction: column; gap: 2px; }
+.sm-export-opts[hidden] { display: none; }
+.sm-export-opts .sm-switch-row { min-height: 38px; gap: 12px; font-size: 12.5px; line-height: 1.3; }
+.sm-export-opts .sm-switch-row:disabled { opacity: .45; cursor: default; }
+.sm-export-run {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid var(--sm-edge);
+  border-radius: 8px;
+  background: var(--sm-field);
+  color: var(--sm-icon);
+  text-align: left;
+  cursor: pointer;
+}
+.sm-export-run > svg { flex: none; color: var(--sm-yellow); }
+.sm-export-run:hover:not([aria-disabled="true"]) { border-color: var(--sm-yellow); color: var(--sm-text); }
+.sm-export-run[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
+.sm-export-run-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sm-export-run-title { font-size: 13.5px; font-weight: 700; color: var(--sm-text); overflow-wrap: break-word; }
+.sm-export-run-desc { font-size: 12px; line-height: 1.4; color: var(--sm-text-2); overflow-wrap: break-word; }
 
 /* Sound and picture sync of the last take, under its export (syncControl.js):
    the state in words, the warning when it is only estimated, then the nudge

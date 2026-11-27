@@ -400,7 +400,10 @@ async def test_render_refusals(jobs_dir, client, tmp_path, monkeypatch):
         }
         await c.post(f"/api/jobs/{JOB}/takes/{plain}/finish", json=body)
         base = f"/api/jobs/{JOB}/takes/{plain}/render"
-        assert (await c.post(base, json={})).status_code == 404  # no camera
+        # No camera: 422 with its own detail, never the 404 of a deleted take
+        # (Performance forgot a take on a 404).
+        r = await c.post(base, json={})
+        assert r.status_code == 422 and r.json()["detail"] == "take has no camera"
         assert (await c.get(base)).json()["status"] == "none"
         assert (await c.get(f"{base}.mp4")).status_code == 404
         assert (

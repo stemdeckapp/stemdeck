@@ -16,6 +16,10 @@ Contract (agreed with the recording and video frontends):
     GET    /api/jobs/{id}/takes/{take_id}/render             progress
     POST   /api/jobs/{id}/takes/{take_id}/render/cancel
     GET    /api/jobs/{id}/takes/{take_id}/render.mp4
+    POST   /api/jobs/{id}/takes/{take_id}/resolve            202, DaVinci Resolve package
+    GET    /api/jobs/{id}/takes/{take_id}/resolve            progress
+    POST   /api/jobs/{id}/takes/{take_id}/resolve/cancel
+    GET    /api/jobs/{id}/takes/{take_id}/resolve.otioz
 
 Placement: the sidecar's timeline.first_sample_song_sec already has the
 round-trip latency folded in (the browser knows it); the server applies the
@@ -45,6 +49,15 @@ Streamer Mode records its composed scene as the take's camera part and asks
 for canvas 16:9, 9:16 or 1:1 at size 720 or 1080 (the short side) and
 fps 24, 30 or 60, fit "fill" (the picture is already the canvas's shape),
 and optionally the click as one more lane.
+
+The DaVinci Resolve package (POST .../resolve) is the same take, span and
+picture as files of their own on one timeline, an OpenTimelineIO bundle
+(resolve.otioz, beside render.mp4): the picture, the take, the song (one
+backing track, or one per lane) and optionally the click, every one starting
+at the span's start and exactly as long (app/pipeline/resolve_package.py).
+It runs as a _RenderRun of kind "resolve" in the same registry as the MP4
+render, so every guard that holds off an edit, a delete or a second render
+holds for both, and one take never runs both at once.
 """
 
 from __future__ import annotations
@@ -78,6 +91,9 @@ from app.core.config import (
     JOB_ID_RE,
     JOBS_DIR,
     RENDER_CLICK_GAIN,
+    RESOLVE_AUDIO_SEC_PER_SEC,
+    RESOLVE_FREE_SPACE_FACTOR,
+    RESOLVE_ZIP64_BYTES,
     STEM_NAMES,
     TAKE_AUDIO_MAX_BYTES_PER_SEC,
     TAKE_CAMERA_MAX_BYTES_PER_SEC,
@@ -87,6 +103,7 @@ from app.core.config import (
     TAKE_PART_MAX_BYTES,
     TAKE_SLACK_SEC,
     TAKES_DIRNAME,
+    TIMEOUT_FFMPEG,
     TIMEOUT_FILMSTRIP,
     TIMEOUT_RENDER_MAX,
     TIMEOUT_VIDEO_GPU_STALL,
@@ -118,10 +135,12 @@ from app.core.takes import (
     video_sync,
     write_tracks,
 )
-from app.pipeline import av_sync, video_encoder
+from app.pipeline import av_sync, resolve_package, video_encoder
 from app.pipeline.click_render import CLICK_TO_STEREO
 from app.pipeline.click_sounds import DEFAULT_CLICK_SOUND
 from app.pipeline.collect import merge_stem_peaks
+from app.pipeline.reaper_project import track_label
+from app.pipeline.resolve_timeline import TimelineClip, build_otio
 from app.pipeline.runner import _pipeline_lock
 from app.pipeline.take_render import (
     TAKE_RATE,
@@ -147,11 +166,17 @@ _PART_KINDS = ("audio", "camera")
 _STATE_FILE = "parts.json"
 _SIDECAR_FILE = "take.json"
 _RENDER_FILE = "render.mp4"
+_PACKAGE_FILE = "resolve.otioz"
+# Each kind of export (_RenderRun.kind) and the file it makes in the take.
+_EXPORT_FILES = {"mp4": _RENDER_FILE, "resolve": _PACKAGE_FILE}
 _LABEL_MAX = 80
 _SESSION_MAX_BYTES = 8 * 1024
 _NUDGE_MAX_MS = 2000.0
 _CAMERA_OFFSET_MAX_MS = 5000.0
 _RENDER_MAX_LANES = 32
+# The 422 detail of a render asked of a take without a picture. The page
+# matches it exactly (recordModel.exportErrorCode).
+NO_CAMERA_DETAIL = "take has no camera"
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 
 # One lock per take: parts, finish, edit and delete of the same take never
@@ -802,8 +827,8 @@ class PatchTakeBody(BaseModel):
 @router.patch("/{job_id}/takes/{take_id}")
 async def patch_take(job_id: str, take_id: str, request: Request) -> dict[str, Any]:
     """Rename, nudge (re-renders audio.wav from the raw capture), or set the
-    camera offset. A changed nudge or offset drops an earlier video render:
-    it no longer matches what the user hears."""
+    camera offset. A changed nudge or offset drops an earlier video render
+    and DaVinci Resolve package: they no longer match what the user hears."""
     job, folder = _take_or_404(job_id, take_id)
     body: PatchTakeBody = await _parse_body(request, PatchTakeBody)
     if body.label is None and body.user_nudge_ms is None and body.camera_offset_ms is None:
@@ -849,7 +874,7 @@ async def patch_take(job_id: str, take_id: str, request: Request) -> dict[str, A
                 )
                 _refresh_peaks(job_id, take_id, folder)
             if nudged or offset_moved:
-                (folder / _RENDER_FILE).unlink(missing_ok=True)
+                _drop_exports(folder)
             _write_json_atomic(folder / _SIDECAR_FILE, sidecar)
 
         try:
@@ -895,7 +920,8 @@ async def get_take_sync(job_id: str, take_id: str) -> dict[str, Any]:
 @router.post("/{job_id}/takes/{take_id}/sync")
 async def set_take_sync(job_id: str, take_id: str, request: Request) -> dict[str, Any]:
     """Set the picture's manual nudge, or measure its offset again. A moved
-    picture drops the earlier video render: it no longer matches."""
+    picture drops the earlier video render and DaVinci Resolve package: they
+    no longer match."""
     job, folder = _take_or_404(job_id, take_id)
     body: SyncBody = await _parse_body(request, SyncBody)
     if body.nudgeMs is None and not body.remeasure:
@@ -944,7 +970,7 @@ async def set_take_sync(job_id: str, take_id: str, request: Request) -> dict[str
 
         def apply() -> None:
             if moved:
-                (folder / _RENDER_FILE).unlink(missing_ok=True)
+                _drop_exports(folder)
             _write_json_atomic(folder / _SIDECAR_FILE, sidecar)
 
         await asyncio.to_thread(apply)
@@ -1467,6 +1493,15 @@ class _RenderRun:
     device: str = ""  # h264_vaapi's render node (video_encoder.Choice)
     fallback: str | None = None
     gpu: _GpuPlan | None = None
+    # "mp4" (the video render) or "resolve" (the DaVinci Resolve package).
+    # One registry for both: every guard below holds for either.
+    kind: str = "mp4"
+    # Set once its background task exists, and when that task has ended: a
+    # delete waits for a package to let go of the files it writes.
+    started: bool = False
+    finished: threading.Event = field(default_factory=threading.Event)
+    # A package's size estimate in bytes (0 for a video render).
+    estimate: int = 0
 
 
 _renders: dict[tuple[str, str], _RenderRun] = {}
@@ -1474,8 +1509,30 @@ _render_tasks: set[asyncio.Task] = set()
 
 
 def _render_busy(job_id: str, take_id: str) -> bool:
+    """Whether an export of either kind is queued or running for the take."""
     run = _renders.get((job_id, take_id))
     return run is not None and run.status in ("queued", "running")
+
+
+def _busy_detail(job_id: str, take_id: str) -> str:
+    """The 409 of a second export, naming what already runs."""
+    run = _renders.get((job_id, take_id))
+    if run is not None and run.kind == "resolve":
+        return "a DaVinci Resolve export of this take is already running"
+    return "video render already running"
+
+
+def _run_of(job_id: str, take_id: str, kind: str) -> _RenderRun | None:
+    """The take's run when it is of `kind`, else None."""
+    run = _renders.get((job_id, take_id))
+    return run if run is not None and run.kind == kind else None
+
+
+def _drop_exports(folder: Path) -> None:
+    """Blocking. Delete the take's video render and DaVinci Resolve package:
+    a moved picture or sound no longer matches either."""
+    for name in _EXPORT_FILES.values():
+        (folder / name).unlink(missing_ok=True)
 
 
 def _stop_run(run: _RenderRun) -> None:
@@ -1486,7 +1543,9 @@ def _stop_run(run: _RenderRun) -> None:
 
 
 def _stop_and_wait(run: _RenderRun, timeout: float = 10.0) -> None:
-    """_stop_run, then wait (blocking) until its ffmpeg has exited."""
+    """_stop_run, then wait (blocking) until its ffmpeg has exited, and a
+    started DaVinci Resolve package until its task has ended (it also writes
+    the zip and removes its work folder in the take, with no ffmpeg)."""
     _stop_run(run)
     proc = run.proc
     if proc is not None:
@@ -1494,6 +1553,8 @@ def _stop_and_wait(run: _RenderRun, timeout: float = 10.0) -> None:
             proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             logger.warning("video render did not stop within %.0f s", timeout)
+    if run.kind == "resolve" and run.started and not run.finished.wait(timeout):
+        logger.warning("DaVinci Resolve export did not stop within %.0f s", timeout)
 
 
 def cancel_all_renders() -> None:
@@ -1513,9 +1574,12 @@ def cancel_job_renders(job_id: str) -> None:
             _renders.pop((jid, tid), None)
 
 
-def _render_view(job_id: str, take_id: str, folder: Path) -> dict[str, Any]:
-    run = _renders.get((job_id, take_id))
-    url = f"/api/jobs/{job_id}/takes/{take_id}/render.mp4"
+def _render_view(job_id: str, take_id: str, folder: Path, kind: str = "mp4") -> dict[str, Any]:
+    """The state of the take's export of `kind`: a run of that kind while
+    this process remembers it, else whether its file is there."""
+    run = _run_of(job_id, take_id, kind)
+    name = _EXPORT_FILES[kind]
+    url = f"/api/jobs/{job_id}/takes/{take_id}/{name}"
     # What made the file: known while this process remembers the run (the
     # Streamer's "Encoded with" note reads it right after the export).
     made = {
@@ -1531,7 +1595,7 @@ def _render_view(job_id: str, take_id: str, folder: Path) -> dict[str, Any]:
             "url": None,
             **made,
         }
-    if (folder / _RENDER_FILE).is_file():
+    if (folder / name).is_file():
         return {"status": "done", "progress": 1.0, "error": None, "url": url, **made}
     return {"status": "none", "progress": 0.0, "error": None, "url": None, **made}
 
@@ -1895,6 +1959,8 @@ async def _render_task(
         logger.exception("[%s] video render failed", job.id)
         run.status = "error"
         run.error = "video render failed"
+    finally:
+        run.finished.set()
 
 
 async def _prepare_render(
@@ -2014,7 +2080,9 @@ async def start_render(job_id: str, take_id: str, request: Request) -> JSONRespo
     body: RenderBody = await _parse_body(request, RenderBody, empty_ok=True)
     camera = await asyncio.to_thread(camera_file, folder)
     if camera is None:
-        raise HTTPException(status_code=404, detail="take has no camera")
+        # 422, not 404: the take is there, it has no picture. A 404 here read
+        # as "the take was deleted" in Performance, which then forgot it.
+        raise HTTPException(status_code=422, detail=NO_CAMERA_DETAIL)
     if not await asyncio.to_thread(libx264_available):
         raise HTTPException(
             status_code=422, detail="this ffmpeg build cannot encode H.264 video (no libx264)"
@@ -2041,7 +2109,7 @@ async def start_render(job_id: str, take_id: str, request: Request) -> JSONRespo
         # while the body was read is seen here, not by ffmpeg later.
         job, folder, entry = _finished_or_404(job_id, take_id)
         if _render_busy(job_id, take_id):
-            raise HTTPException(status_code=409, detail="video render already running")
+            raise HTTPException(status_code=409, detail=_busy_detail(job_id, take_id))
         # The last render is set aside first: a cancel then reports "none",
         # never "done" with an older file, and the new file has its name free.
         # It is only deleted once the new render is accepted (#789).
@@ -2074,6 +2142,7 @@ async def start_render(job_id: str, take_id: str, request: Request) -> JSONRespo
         # Cancelled while it was being prepared.
         return JSONResponse(_render_view(job_id, take_id, folder), status_code=202)
     task = asyncio.create_task(_render_task(run, job, cmd, folder / _RENDER_FILE, duration, retry))
+    run.started = True
     _render_tasks.add(task)
     task.add_done_callback(_render_tasks.discard)
     width, height = canvas_size(body.canvas, body.size)
@@ -2100,12 +2169,16 @@ def _range_outside_take(
     return float(range_out or 0.0) <= t_start or float(range_in or 0.0) >= t_start + t_len
 
 
-def _set_aside_old_render(folder: Path) -> Path | None | Literal[False]:
-    """Move the take's last render out of its name, to a temp name the
-    startup sweep removes. The new path, None when there was none, False
-    when it cannot move (Windows: a download of it still has it open)."""
-    src = folder / _RENDER_FILE
-    kept = folder / f".{_RENDER_FILE}.{uuid.uuid4().hex}.tmp.mp4"
+def _set_aside_old_render(folder: Path, name: str = _RENDER_FILE) -> Path | None | Literal[False]:
+    """Move the take's last render (or package: `name`) out of its name, to
+    a temp name the startup sweep removes. The new path, None when there was
+    none, False when it cannot move (Windows: a download of it still has it
+    open)."""
+    src = folder / name
+    if name == _PACKAGE_FILE:
+        kept = resolve_package.otioz_temp(src)
+    else:
+        kept = folder / f".{_RENDER_FILE}.{uuid.uuid4().hex}.tmp.mp4"
     try:
         os.replace(src, kept)
     except FileNotFoundError:
@@ -2115,11 +2188,11 @@ def _set_aside_old_render(folder: Path) -> Path | None | Literal[False]:
     return kept
 
 
-def _restore_old_render(kept: Path, folder: Path) -> None:
-    """Put a set-aside render back under its name (the new render was
-    refused before it started)."""
+def _restore_old_render(kept: Path, folder: Path, name: str = _RENDER_FILE) -> None:
+    """Put a set-aside render (or package: `name`) back under its name (the
+    new one was refused before it started)."""
     try:
-        os.replace(kept, folder / _RENDER_FILE)
+        os.replace(kept, folder / name)
     except OSError:
         logger.warning("earlier video not restored: %s", kept.name)
         _discard_old_render(kept)
@@ -2143,9 +2216,9 @@ async def get_render(job_id: str, take_id: str) -> dict[str, Any]:
 @router.post("/{job_id}/takes/{take_id}/render/cancel")
 async def cancel_render(job_id: str, take_id: str) -> dict[str, Any]:
     _job, folder, _entry_ = _finished_or_404(job_id, take_id)
-    run = _renders.pop((job_id, take_id), None)
-    if run is not None:
-        _stop_run(run)
+    # Only a video render: a DaVinci Resolve export has its own Cancel.
+    if _run_of(job_id, take_id, "mp4") is not None:
+        _stop_run(_renders.pop((job_id, take_id)))
     return _render_view(job_id, take_id, folder)
 
 
@@ -2153,7 +2226,7 @@ async def cancel_render(job_id: str, take_id: str) -> dict[str, Any]:
 _UNSAFE_NAME = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f]')
 
 
-def _requested_name(name: str | None) -> str | None:
+def _requested_name(name: str | None, ext: str = ".mp4") -> str | None:
     """A download name the page asked for (Streamer's "<Title> - <Artist>
     (Streamer).mp4"), made safe, or None to use the default. Only ever a
     Content-Disposition value: it names nothing on the server.
@@ -2165,7 +2238,7 @@ def _requested_name(name: str | None) -> str | None:
         return None
     visible = "".join(c for c in name if unicodedata.category(c) not in ("Cc", "Cf"))
     clean = re.sub(r"\s+", " ", _UNSAFE_NAME.sub(" ", visible)).strip().strip(".").strip()
-    if not clean.lower().endswith(".mp4") or len(clean) <= 4 or len(clean) > 160:
+    if not clean.lower().endswith(ext) or len(clean) <= len(ext) or len(clean) > 160:
         return None
     return clean
 
@@ -2175,7 +2248,8 @@ async def get_render_file(
     job_id: str, take_id: str, name: str | None = Query(default=None, max_length=200)
 ) -> FileResponse:
     job, folder, entry = _finished_or_404(job_id, take_id)
-    if _render_busy(job_id, take_id):
+    run = _run_of(job_id, take_id, "mp4")
+    if run is not None and run.status in ("queued", "running"):
         # The file is about to be replaced: never half of one, or the old one.
         raise HTTPException(status_code=409, detail="video render running")
     path = (folder / _RENDER_FILE).resolve()
@@ -2183,3 +2257,392 @@ async def get_render_file(
         raise HTTPException(status_code=404, detail="no video render")
     filename = _requested_name(name) or _download_name(job, entry["label"], "mp4")
     return FileResponse(path, media_type="video/mp4", filename=filename)
+
+
+# ---------------------------------------------------------------------------
+# DaVinci Resolve package (app/pipeline/resolve_package.py)
+
+
+class PackageBody(RenderBody):
+    """POST .../resolve: the render's request (the lanes as heard, the take's
+    gain and effects print, the canvas, the span, the click) and how the song
+    goes in. Never a master: it is one chain over every track, which a
+    package of separate tracks cannot carry."""
+
+    master: Literal[""] = ""
+    # "mix": the backing as one track; "stems": one track per lane as heard.
+    backing: Literal["mix", "stems"] = "mix"
+    # The timeline's name in DaVinci Resolve ("<Title> - <Artist>
+    # (Performance)"); None: the song's title. Only ever a name in the file.
+    name: str | None = Field(default=None, max_length=200)
+
+
+class _PackageFile(NamedTuple):
+    """One file of the package: its member name ("media/<file>"), "video" or
+    "audio", its track's name in the timeline, its ffmpeg command, and its
+    share of the progress bar."""
+
+    member: str
+    kind: str
+    track: str
+    cmd: list[str]
+    weight: float
+
+
+@dataclass
+class _PackagePlan:
+    files: list[_PackageFile]
+    otio: str
+    frames: int
+    samples: int
+    duration: float
+    estimate: int
+
+
+# The share of the progress bar each part takes: the picture is the slow one.
+_PACKAGE_VIDEO_WEIGHT = 0.7
+_PACKAGE_AUDIO_WEIGHT = 0.05
+_PACKAGE_ZIP_WEIGHT = 0.05
+# A lane's file name part: the mixer's own names (stems, track and take ids).
+_LANE_FILE_RE = re.compile(r"^[A-Za-z0-9_]{1,40}\Z")
+
+
+def _timeline_name(value: str | None, job: Job) -> str:
+    """The timeline's name: what the page asked for, made printable, or the
+    song's title, or "Performance"."""
+    if value:
+        visible = "".join(c for c in value if unicodedata.category(c) not in ("Cc", "Cf"))
+        clean = re.sub(r"\s+", " ", visible).strip()[:160]
+        if clean:
+            return clean
+    return (job.title or "").strip()[:160] or "Performance"
+
+
+def _lane_track_name(job: Job, name: str) -> str:
+    """A backing lane's track name in the timeline: a stem by its label
+    ("Lead Vocals"), a recording track by its name, a take by its label."""
+    if TRACK_ID_RE.match(name):
+        track = next((t for t in job.tracks if t.get("id") == name), None)
+        return str((track or {}).get("name") or name)
+    if TAKE_ID_RE.match(name):
+        take = next((t for t in job.takes if t.get("id") == name), None)
+        return str((take or {}).get("label") or name)
+    return track_label(name)
+
+
+def _package_audio(
+    job: Job, audio: _RenderAudio, backing: str
+) -> list[tuple[str, str, list[AudioLane]]]:
+    """The song's files: (file part, track name, lanes). One backing file of
+    every lane, or one file per lane as heard (a lane at gain 0, muted, is
+    left out; a lane built from several stems, Original transposed, is one
+    file of all of them)."""
+    if not audio.lanes:
+        return []
+    if backing == "mix":
+        return [("backing", "Backing", list(audio.lanes))]
+    groups: dict[str, list[AudioLane]] = {}
+    for lane, name in zip(audio.lanes, audio.names, strict=True):
+        groups.setdefault(name, []).append(lane)
+    out = []
+    for i, (name, lanes) in enumerate(groups.items()):
+        if all(lane.gain <= 0 for lane in lanes):
+            continue
+        part = name if _LANE_FILE_RE.match(name) else f"lane{i + 1}"
+        out.append((part, _lane_track_name(job, name), lanes))
+    return out
+
+
+async def _prepare_package(
+    job: Job,
+    take_id: str,
+    folder: Path,
+    entry: dict[str, Any],
+    body: PackageBody,
+    camera: Path,
+    audio: _RenderAudio,
+    take: _TakeSound,
+) -> _PackagePlan:
+    """Every file's command, the timeline and the length, from the take's
+    sidecar and the request; refuses (507) when the disk cannot hold it."""
+    sidecar = await asyncio.to_thread(_read_json, folder / _SIDECAR_FILE)
+    camera_start = camera_start_sec(sidecar, body.camera_offset_ms)
+    song_sec = await asyncio.to_thread(_song_frames, job.id) / TAKE_RATE
+    if body.span == "range" and _range_outside_take(
+        sidecar, song_sec, body.range_in, body.range_out
+    ):
+        raise HTTPException(status_code=422, detail="the trim is outside what this take recorded")
+    start, duration = _render_span(sidecar, song_sec, body.span, body.range_in, body.range_out)
+    start = resolve_package.span_start(start)
+    fps = body.fps
+    frames = resolve_package.span_frames(duration, fps)
+    samples = frames * resolve_package.samples_per_frame(fps)
+    slug = stems_api._title_slug(job.title) or "performance"
+
+    files = [
+        _PackageFile(
+            f"media/{slug}_video.mp4",
+            "video",
+            "Video",
+            resolve_package.package_video_cmd(
+                camera,
+                camera_start - start,
+                frames,
+                fps,
+                body.canvas,
+                body.size,
+                body.fit,
+                body.mirror,
+            ),
+            _PACKAGE_VIDEO_WEIGHT,
+        )
+    ]
+
+    def audio_file(part: str, track: str, lanes: list[AudioLane]) -> _PackageFile:
+        return _PackageFile(
+            f"media/{slug}_{part}.wav",
+            "audio",
+            track,
+            resolve_package.package_audio_cmd(lanes, start, samples),
+            _PACKAGE_AUDIO_WEIGHT,
+        )
+
+    files.append(
+        audio_file(
+            f"take_{take_id}",
+            str(entry.get("label") or "Take"),
+            [AudioLane(take.path, take.gain, "", audio.take_fx)],
+        )
+    )
+    files += [audio_file(*part) for part in _package_audio(job, audio, body.backing)]
+    if body.click:
+        click = await asyncio.to_thread(
+            stems_api._click_lane,
+            job.id,
+            True,
+            1.0,
+            -1,
+            RENDER_CLICK_GAIN,
+            sound=body.click_sound,
+        )
+        if click is None:
+            # Asked for and not there: refused, never left out unsaid.
+            raise HTTPException(status_code=422, detail="this song has no beat grid")
+        # The mono click to stereo at unity, as the MP4 render and the app (#833).
+        files.append(
+            audio_file("click", "Click", [AudioLane(click.path, click.gain, f"{CLICK_TO_STEREO},")])
+        )
+
+    try:
+        otio = build_otio(
+            _timeline_name(body.name, job),
+            fps,
+            frames,
+            [TimelineClip(f.kind, f.track, f.member) for f in files],
+        )
+    except ValueError:
+        logger.exception("[%s] take %s: the DaVinci Resolve timeline was refused", job.id, take_id)
+        raise HTTPException(status_code=500, detail="the export could not be planned") from None
+
+    width, height = canvas_size(body.canvas, body.size)
+    estimate = resolve_package.estimate_bytes(width, height, fps, frames / fps, len(files) - 1)
+    free = (await asyncio.to_thread(shutil.disk_usage, folder)).free
+    if free < estimate * RESOLVE_FREE_SPACE_FACTOR:
+        logger.warning(
+            "[%s] take %s: %d bytes free, a DaVinci Resolve export needs about %d",
+            job.id,
+            take_id,
+            free,
+            int(estimate * RESOLVE_FREE_SPACE_FACTOR),
+        )
+        raise HTTPException(status_code=507, detail="not enough free disk space for this export")
+    if estimate > RESOLVE_ZIP64_BYTES:
+        logger.warning("[%s] take %s: package estimate %d bytes", job.id, take_id, estimate)
+    return _PackagePlan(files, otio, frames, samples, frames / fps, estimate)
+
+
+async def _package_task(run: _RenderRun, job: Job, folder: Path, plan: _PackagePlan) -> None:
+    """Make every file in a work folder beside the take, check each one, zip
+    them into resolve.otioz, and remove the work folder whatever happened."""
+
+    def cancelled() -> bool:
+        return run.cancel.is_set() or registry_get(job.id) is not job
+
+    def on_proc(proc: subprocess.Popen | None) -> None:
+        run.proc = proc
+
+    total = sum(f.weight for f in plan.files) + _PACKAGE_ZIP_WEIGHT
+    work: Path | None = None
+    try:
+        # Behind the pipeline lock, like the video render.
+        async with _pipeline_lock:
+            if cancelled():
+                raise RenderCancelled()
+            run.status = "running"
+            run.encoder = VIDEO_CPU_ENCODER
+            work = folder / f".resolvework-{uuid.uuid4().hex}"
+            await asyncio.to_thread(work.mkdir)
+            done = 0.0
+            media: list[tuple[str, Path]] = []
+            for f in plan.files:
+                dest = work / f.member.removeprefix("media/")
+                video = f.kind == "video"
+
+                def report(share: float, base: float = done, weight: float = f.weight) -> None:
+                    run.progress = min(0.99, (base + share * weight) / total)
+
+                per_sec = VIDEO_RENDER_SEC_PER_SEC if video else RESOLVE_AUDIO_SEC_PER_SEC
+                floor = TIMEOUT_VIDEO_RENDER if video else TIMEOUT_FFMPEG
+                await asyncio.to_thread(
+                    run_video_render,
+                    f.cmd,
+                    dest,
+                    plan.duration,
+                    cancelled=cancelled,
+                    report=report,
+                    on_proc=on_proc,
+                    timeout=max(floor, min(TIMEOUT_RENDER_MAX, plan.duration * per_sec)),
+                    out_format="mp4" if video else "wav",
+                )
+                # Every file exactly as long as the timeline says, or no package.
+                if video:
+                    await asyncio.to_thread(resolve_package.check_video, dest, plan.frames)
+                else:
+                    await asyncio.to_thread(resolve_package.check_wav, dest, plan.samples)
+                media.append((f.member, dest))
+                done += f.weight
+
+            def zip_report(share: float, base: float = done) -> None:
+                run.progress = min(0.99, (base + share * _PACKAGE_ZIP_WEIGHT) / total)
+
+            await asyncio.to_thread(
+                resolve_package.write_otioz,
+                folder / _PACKAGE_FILE,
+                plan.otio,
+                media,
+                cancelled,
+                zip_report,
+            )
+        run.status = "done"
+        run.progress = 1.0
+    except RenderCancelled:
+        run.status = "none"
+    except TakeRenderError:
+        logger.warning("[%s] DaVinci Resolve export failed", job.id, exc_info=True)
+        run.status = "error"
+        run.error = "the DaVinci Resolve export failed"
+    except Exception:
+        logger.exception("[%s] DaVinci Resolve export failed", job.id)
+        run.status = "error"
+        run.error = "the DaVinci Resolve export failed"
+    finally:
+        if work is not None:
+            await asyncio.to_thread(shutil.rmtree, work, ignore_errors=True)
+        run.finished.set()
+
+
+def _package_view(job_id: str, take_id: str, folder: Path) -> dict[str, Any]:
+    """The package's state, as the video render's, and whether its estimate
+    is over what a plain zip holds (the page then says so)."""
+    view = _render_view(job_id, take_id, folder, "resolve")
+    run = _run_of(job_id, take_id, "resolve")
+    estimate = run.estimate if run is not None else 0
+    return {**view, "estimate_bytes": estimate, "large": estimate > RESOLVE_ZIP64_BYTES}
+
+
+@router.post("/{job_id}/takes/{take_id}/resolve", status_code=202)
+async def start_package(job_id: str, take_id: str, request: Request) -> JSONResponse:
+    """Make the take's DaVinci Resolve package in the background: 202, then
+    GET .../resolve follows it. The same checks and lanes as the video
+    render; one export per take at a time, of either kind (409)."""
+    job, folder, entry = _finished_or_404(job_id, take_id)
+    body: PackageBody = await _parse_body(request, PackageBody, empty_ok=True)
+    camera = await asyncio.to_thread(camera_file, folder)
+    if camera is None:
+        raise HTTPException(status_code=422, detail=NO_CAMERA_DETAIL)
+    if not await asyncio.to_thread(libx264_available):
+        # The video render's own detail: the page offers the raw recording.
+        raise HTTPException(
+            status_code=422, detail="this ffmpeg build cannot encode H.264 video (no libx264)"
+        )
+    if body.span == "range" and (
+        body.range_in is None or body.range_out is None or body.range_out <= body.range_in
+    ):
+        raise HTTPException(status_code=422, detail="range needs range_in before range_out")
+    take = await asyncio.to_thread(_take_sound, job_id, take_id, folder, body)
+    audio = await asyncio.to_thread(
+        _render_lanes, job_id, take_id, body, take.path, entry.get("track_id") or None
+    )
+    key = (job_id, take_id)
+    run = _RenderRun(kind="resolve")
+    async with _lock_for(job_id, take_id):
+        job, folder, entry = _finished_or_404(job_id, take_id)
+        if _render_busy(job_id, take_id):
+            raise HTTPException(status_code=409, detail=_busy_detail(job_id, take_id))
+        # As the video render: the last package is set aside, deleted only
+        # once this one is accepted, and a cancel then reports "none".
+        kept = await asyncio.to_thread(_set_aside_old_render, folder, _PACKAGE_FILE)
+        if kept is False:
+            raise HTTPException(
+                status_code=409,
+                detail="the last export is still being saved: try again when it ends",
+            )
+        _renders[key] = run
+    try:
+        plan = await _prepare_package(job, take_id, folder, entry, body, camera, audio, take)
+    except BaseException:
+        if _renders.get(key) is run:
+            if kept is not None and not run.cancel.is_set():
+                await asyncio.to_thread(_restore_old_render, kept, folder, _PACKAGE_FILE)
+            _renders.pop(key, None)
+        elif kept is not None:
+            await asyncio.to_thread(_discard_old_render, kept)
+        raise
+    run.estimate = plan.estimate
+    if kept is not None:
+        await asyncio.to_thread(_discard_old_render, kept)
+    if run.cancel.is_set():
+        return JSONResponse(_package_view(job_id, take_id, folder), status_code=202)
+    task = asyncio.create_task(_package_task(run, job, folder, plan))
+    run.started = True
+    _render_tasks.add(task)
+    task.add_done_callback(_render_tasks.discard)
+    logger.info(
+        "[%s] take %s DaVinci Resolve export queued (%d files, %d frames at %d fps)",
+        job_id,
+        take_id,
+        len(plan.files),
+        plan.frames,
+        body.fps,
+    )
+    return JSONResponse(_package_view(job_id, take_id, folder), status_code=202)
+
+
+@router.get("/{job_id}/takes/{take_id}/resolve")
+async def get_package(job_id: str, take_id: str) -> dict[str, Any]:
+    _job, folder, _entry_ = _finished_or_404(job_id, take_id)
+    return _package_view(job_id, take_id, folder)
+
+
+@router.post("/{job_id}/takes/{take_id}/resolve/cancel")
+async def cancel_package(job_id: str, take_id: str) -> dict[str, Any]:
+    _job, folder, _entry_ = _finished_or_404(job_id, take_id)
+    # Only a package: the video render has its own Cancel.
+    if _run_of(job_id, take_id, "resolve") is not None:
+        _stop_run(_renders.pop((job_id, take_id)))
+    return _package_view(job_id, take_id, folder)
+
+
+@router.get("/{job_id}/takes/{take_id}/resolve.otioz", response_model=None)
+async def get_package_file(
+    job_id: str, take_id: str, name: str | None = Query(default=None, max_length=200)
+) -> FileResponse:
+    job, folder, entry = _finished_or_404(job_id, take_id)
+    run = _run_of(job_id, take_id, "resolve")
+    if run is not None and run.status in ("queued", "running"):
+        raise HTTPException(status_code=409, detail="the DaVinci Resolve export is running")
+    path = (folder / _PACKAGE_FILE).resolve()
+    if not path.is_file() or not path.is_relative_to(JOBS_DIR.resolve()):
+        raise HTTPException(status_code=404, detail="no DaVinci Resolve export")
+    filename = _requested_name(name, ".otioz") or _download_name(job, entry["label"], "otioz")
+    return FileResponse(path, media_type="application/zip", filename=filename)

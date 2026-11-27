@@ -90,7 +90,7 @@ check("only the REAPER request sets reaper=1", (player.match(/q\.set\("reaper", 
 check("it is conditional on the reaper flag", /if \(reaper\) q\.set\("reaper", "1"\)/.test(player));
 check(
   "Export Extracted Stems does not ask for a project",
-  /itemStems\?\.addEventListener[\s\S]{0,300}downloadAllStemsZip\(format, onStart\)/.test(main),
+  /menu\.wireRow\(itemStems,[\s\S]{0,300}downloadAllStemsZip\(menu\.format, onStart\), t\(/.test(main),
 );
 
 console.log(`\n${pass} passed, ${fail} failed`);

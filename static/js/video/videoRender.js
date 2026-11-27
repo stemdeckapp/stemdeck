@@ -1,11 +1,20 @@
 // Client for the take render endpoints. Every path and field name the video
 // UI depends on is in this file, so a change on the server side is one edit.
+//
+// Two kinds of export run the same way (app/api/takes.py): "render", the
+// MP4 (.../render, .../render.mp4), and "resolve", the DaVinci Resolve
+// package (.../resolve, .../resolve.otioz). Status, wait and cancel take the
+// kind; the default is the MP4 every caller had before.
 
 const POLL_MS = 1000;
 
 function _base(jobId, takeId) {
   return `/api/jobs/${encodeURIComponent(jobId)}/takes/${encodeURIComponent(takeId)}`;
 }
+
+// Each kind's path and its file.
+const KINDS = { render: { path: "render", file: "render.mp4" }, resolve: { path: "resolve", file: "resolve.otioz" } };
+const _kind = (kind) => KINDS[kind] || KINDS.render;
 
 async function _detail(res) {
   try {
@@ -69,31 +78,32 @@ export async function requestRender(jobId, takeId, {
   return res.json();
 }
 
-/** Stop a render that is queued or running. The server kills its ffmpeg. */
-export async function cancelRender(jobId, takeId) {
-  const res = await fetch(`${_base(jobId, takeId)}/render/cancel`, { method: "POST" });
+/** Stop a render (or a package: `kind` "resolve") that is queued or running.
+ * The server kills its ffmpeg. */
+export async function cancelRender(jobId, takeId, kind = "render") {
+  const res = await fetch(`${_base(jobId, takeId)}/${_kind(kind).path}/cancel`, { method: "POST" });
   if (!res.ok) throw Object.assign(new Error(await _detail(res)), { status: res.status });
   return res.json();
 }
 
-export async function renderStatus(jobId, takeId) {
-  const res = await fetch(`${_base(jobId, takeId)}/render`, { cache: "no-store" });
+export async function renderStatus(jobId, takeId, kind = "render") {
+  const res = await fetch(`${_base(jobId, takeId)}/${_kind(kind).path}`, { cache: "no-store" });
   if (!res.ok) throw Object.assign(new Error(await _detail(res)), { status: res.status });
   return res.json();
 }
 
-export function renderDownloadUrl(jobId, takeId, status) {
-  return status?.url || `${_base(jobId, takeId)}/render.mp4`;
+export function renderDownloadUrl(jobId, takeId, status, kind = "render") {
+  return status?.url || `${_base(jobId, takeId)}/${_kind(kind).file}`;
 }
 
 /**
  * Poll until the render is done or failed. onProgress(fraction 0..1).
  * `signal` (AbortSignal) stops polling, e.g. when the track is closed.
  */
-export async function waitForRender(jobId, takeId, { onProgress, signal } = {}) {
+export async function waitForRender(jobId, takeId, { onProgress, signal, kind = "render" } = {}) {
   for (;;) {
     if (signal?.aborted) throw new DOMException("aborted", "AbortError");
-    const st = await renderStatus(jobId, takeId);
+    const st = await renderStatus(jobId, takeId, kind);
     const p = Number(st.progress);
     if (Number.isFinite(p)) onProgress?.(Math.max(0, Math.min(1, p)));
     if (st.status === "done") return st;

@@ -558,7 +558,10 @@ test.describe("Performance input effects", () => {
     await expect(fxBtn).toHaveAccessibleName(TRANSLATIONS.en["streamer.lane.takeFx"]);
     // The MP4 export with the effects on: the take printed, the print rendered.
     let download = page.waitForEvent("download", { timeout: 120000 });
+    // Export Performance opens its menu; the MP4 row exports.
     await sm(page, ".sm-export-go").click();
+    await sm(page, '.sm-export-fmt[data-format="mp4"]').click();
+    await sm(page, ".sm-export-run").click();
     await download;
     await expect(sm(page, ".sm-export-text")).toContainText("Saved", { timeout: 30000 });
     expect(prints.map((p) => p.lane)).toEqual([ids.take]);
@@ -569,6 +572,7 @@ test.describe("Performance input effects", () => {
     await expect.poll(() => page.evaluate(async (id) => (await import("/js/fxEngine.js")).getLaneChain(id).on, ids.track)).toBe(false);
     download = page.waitForEvent("download", { timeout: 120000 });
     await sm(page, ".sm-export-go").click();
+    await sm(page, ".sm-export-run").click();
     await download;
     await expect(sm(page, ".sm-export-text")).toContainText("Saved", { timeout: 30000 });
     expect(renders.length).toBe(2);

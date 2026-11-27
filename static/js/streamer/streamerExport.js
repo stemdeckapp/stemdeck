@@ -8,13 +8,17 @@
 // are videoRender.js's. When the server's ffmpeg cannot make MP4 (no
 // libx264), the raw recording is offered instead: the take's picture as the
 // browser recorded it, untrimmed.
+//
+// The DaVinci Resolve package (exportPackage) runs the same way through its
+// own endpoints (.../resolve): the same take, span, picture and lanes, as
+// separate files on one timeline (app/pipeline/resolve_package.py).
 
 import { currentMixLanes, triggerDownload } from "../player.js";
 import { exportFxParam } from "../eqEngine.js";
 import { exportMasterParam } from "../masterEngine.js";
 import { waitForRender, cancelRender, renderDownloadUrl } from "../video/videoRender.js";
-import { buildRenderRequest, isNoEncoder } from "./recordModel.js";
-import { transposeExportAvailable, mixerState } from "../state.js";
+import { buildRenderRequest, buildPackageRequest, exportErrorCode } from "./recordModel.js";
+import { transposeExportAvailable, mixerState, metronomeSound } from "../state.js";
 import { transposeExportBlocked } from "../transposeExport.js";
 import { t } from "../i18n.js";
 import { ensurePrint } from "../fx/fxPrint.js";
@@ -52,14 +56,54 @@ export function renderRequest({ trackId, settings, aspect, range, remove = "" })
 }
 
 /**
+ * The package request for this take (recordModel.buildPackageRequest): the
+ * backing as heard with its EQs whatever "Record mixed audio" says (the
+ * package is for editing, and the take is on a track of its own), `backing`
+ * "mix" or "stems", the click with the studio's click sound, the timeline's
+ * `name`.
+ */
+export function packageRequest({ trackId, settings, aspect, range, remove = "", backing = "mix", click = false, name = "" }) {
+  const mix = currentMixLanes();
+  const names = (mix.names || []).filter((n) => n !== trackId);
+  return buildPackageRequest({
+    mix,
+    exclude: trackId ? [trackId] : [],
+    aspect,
+    resolution: settings.resolution,
+    fps: settings.fps,
+    range,
+    fx: exportFxParam(trackId ? [...names, trackId] : names),
+    remove,
+    takeGain: trackId ? mixerState[trackId]?.volume ?? 1 : 1,
+    backing,
+    click,
+    clickSound: metronomeSound,
+    name,
+  });
+}
+
+/**
  * Render and save. Resolves { saved: true|false, encoder, fallback } (saved
  * false: the save dialog was cancelled; encoder: what made the video, e.g.
  * "h264_nvenc" or "libx264"; fallback: a GPU attempt failed and the CPU made
  * it). Rejects with an Error whose `code` is "no-encoder" (offer
- * the raw recording), "cancelled", or "failed".
+ * the raw recording), "no-camera", "gone", "cancelled", or "failed".
  * `onProgress(fraction)`, `onTransferStart()` as triggerDownload's.
  */
-export async function exportTake({ jobId, takeId, body, filename, onProgress, onTransferStart, signal, print = null }) {
+export function exportTake(o) {
+  return runExport("render", o);
+}
+
+/**
+ * Make the DaVinci Resolve package and save it, as exportTake: resolves
+ * { saved, encoder, fallback, large } (large: over 4 GB, the zip needs
+ * ZIP64), rejects with the same codes.
+ */
+export function exportPackage(o) {
+  return runExport("resolve", o);
+}
+
+async function runExport(kind, { jobId, takeId, body, filename, onProgress, onTransferStart, signal, print = null }) {
   // A key change this FFmpeg cannot export (no rubberband, #858): fail here,
   // with the reason, rather than send a render the server refuses.
   if (transposeExportBlocked(body?.pitches, transposeExportAvailable)) {
@@ -79,7 +123,7 @@ export async function exportTake({ jobId, takeId, body, filename, onProgress, on
       throw Object.assign(new Error(t("fx.print.failed")), { code: "failed" });
     }
   }
-  const res = await fetch(`${base(jobId, takeId)}/render`, {
+  const res = await fetch(`${base(jobId, takeId)}/${kind}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -87,19 +131,20 @@ export async function exportTake({ jobId, takeId, body, filename, onProgress, on
   if (!res.ok) {
     const detail = await detailOf(res);
     const err = new Error(detail);
-    // 404: the take (or its picture) is no longer on the server.
-    err.code = isNoEncoder(res.status, detail) ? "no-encoder" : res.status === 404 ? "gone" : "failed";
+    // 404: the take is no longer on the server; 422 "no camera": it is,
+    // without a picture (recordModel.exportErrorCode).
+    err.code = exportErrorCode(res.status, detail);
     throw err;
   }
   // Cancel pressed while the POST was on its way: the server has a render
   // queued now that nothing will follow; stop it.
   if (signal?.aborted) {
-    await cancelRender(jobId, takeId).catch((err) => console.warn("[streamer] cancel failed:", err));
+    await cancelRender(jobId, takeId, kind).catch((err) => console.warn("[streamer] cancel failed:", err));
     throw Object.assign(new Error("cancelled"), { code: "cancelled" });
   }
   let status;
   try {
-    status = await waitForRender(jobId, takeId, { onProgress, signal });
+    status = await waitForRender(jobId, takeId, { onProgress, signal, kind });
   } catch (err) {
     const e = new Error(err?.message || "render failed");
     e.code = signal?.aborted || err?.name === "AbortError" || err?.message === "none" ? "cancelled" : "failed";
@@ -108,7 +153,7 @@ export async function exportTake({ jobId, takeId, body, filename, onProgress, on
   // The name rides along for a browser download (the server's
   // Content-Disposition wins over <a download>); the desktop's save dialog
   // already proposes it.
-  const url = `${renderDownloadUrl(jobId, takeId, status)}?name=${encodeURIComponent(filename)}`;
+  const url = `${renderDownloadUrl(jobId, takeId, status, kind)}?name=${encodeURIComponent(filename)}`;
   const saved = await triggerDownload(url, filename, onTransferStart);
   // The desktop app's save token: Show in folder reveals this file only.
   if (typeof saved === "string") savedToken = saved;
@@ -116,14 +161,15 @@ export async function exportTake({ jobId, takeId, body, filename, onProgress, on
     saved: saved !== false,
     encoder: typeof status?.encoder === "string" ? status.encoder : null,
     fallback: Boolean(status?.fallback),
+    large: Boolean(status?.large),
   };
 }
 
 let savedToken = null;
 
-/** Stop a render that is queued or running. */
-export function cancelExport(jobId, takeId) {
-  return cancelRender(jobId, takeId).catch((err) => console.warn("[streamer] cancel failed:", err));
+/** Stop a render (`kind` "render") or a package ("resolve") that is queued or running. */
+export function cancelExport(jobId, takeId, kind = "render") {
+  return cancelRender(jobId, takeId, kind).catch((err) => console.warn("[streamer] cancel failed:", err));
 }
 
 /** The raw recording's Content-Type (its file's own container), or "". */

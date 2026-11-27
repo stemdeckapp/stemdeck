@@ -18,12 +18,14 @@
 // Recording is streamerRecord.js, export streamerExport.js.
 
 import { t, onLanguageChange } from "../i18n.js";
-import { currentJobId, mixerState, trackIndex, totalDuration, audioEngine, playbackSpeed } from "../state.js";
+import { currentJobId, mixerState, trackIndex, totalDuration, audioEngine, playbackSpeed, transposeExportAvailable } from "../state.js";
 import { transport, setPlayheadTime, togglePlayPause, stopTransport, getSpeed, stepSpeed, wireSpeedBox, getGlobalPitch } from "../transport.js";
 import { reloadKeepingPlace } from "../reloadPlace.js";
 import { laneLabel, STEM_COLORS } from "../constants.js";
 import { getSections, sectionDisplayName } from "../sections.js";
-import { overviewPeaks, setPlaybackExclusion, playbackExclusion } from "../player.js";
+import { overviewPeaks, setPlaybackExclusion, playbackExclusion, currentMixLanes } from "../player.js";
+import { transposeExportBlocked } from "../transposeExport.js";
+import { createExportMenu } from "../exportMenu.js";
 import {
   choiceKey, parseChoice, serializeChoice, offeredChoices, effectiveChoice, excludedNames, sameNames,
   timelineLanes, BASE_STEMS,
@@ -68,8 +70,14 @@ import {
   lastTake, streamerTrackId, markExport, takeInfo, forgetTake, keepChosenTake,
 } from "./streamerRecord.js";
 import { encoderNote } from "../videoEncoderNote.js";
-import { renderRequest, exportTake, cancelExport, saveRawRecording, rawRecordingType, canRevealSaved, revealSaved, forgetSaved } from "./streamerExport.js";
-import { shouldAutoStop, exportFileName, rawExtension, takeHoldStep, reviewStep, performanceTrackId } from "./recordModel.js";
+import {
+  renderRequest, packageRequest, exportTake, exportPackage, cancelExport, saveRawRecording, rawRecordingType, canRevealSaved,
+  revealSaved, forgetSaved,
+} from "./streamerExport.js";
+import {
+  shouldAutoStop, exportFileName, rawExtension, takeHoldStep, reviewStep, performanceTrackId, exportMenuState,
+  exportFormatOf, EXPORT_EXT,
+} from "./recordModel.js";
 import { renderStage } from "./stageRenderer.js";
 import { createSyncControl } from "./syncControl.js";
 import { reviewTier, reviewView, reviewNote, showsTake, takeVideoTime, syncStep, compactShows, fitRatio } from "./reviewModel.js";
@@ -82,6 +90,8 @@ import { buildTabs, readTab, writeTab, viewCentre } from "./streamerTabs.js";
 import { libraryFoldStart, libraryFoldEnd, fitLibrary } from "./libraryFold.js";
 
 const SAFE_KEY = "stemdeck.streamer.safeZones";
+// The Export Performance menu's last format ("mp4" or "resolve"), per viewer.
+const EXPORT_FORMAT_KEY = "stemdeck.streamer.exportFormat";
 const ASPECT_LABEL = { "16:9": "streamer.aspect169", "9:16": "streamer.aspect916", "1:1": "streamer.aspect11" };
 // The header's title while no song is open.
 const NO_TITLE = String.fromCharCode(0x2014);
@@ -121,6 +131,16 @@ let texts = [];
 
 function readSafeZones() {
   try { return localStorage.getItem(SAFE_KEY) === "1"; } catch { return false; }
+}
+
+function readExportFormat() {
+  try { return exportFormatOf(localStorage.getItem(EXPORT_FORMAT_KEY)); } catch { return "mp4"; }
+}
+
+function writeExportFormat(format) {
+  try { localStorage.setItem(EXPORT_FORMAT_KEY, format); } catch (err) {
+    console.warn("[streamer] saving the export format failed:", err);
+  }
 }
 
 function writeSafeZones() {
@@ -201,6 +221,8 @@ const ICONS = {
   stop: [["rect", { x: 6, y: 6, width: 12, height: 12, rx: 1.5, fill: "currentColor", stroke: "none" }]],
   speaker: [["path", { d: "M4 9h4l5-4v14l-5-4H4z", fill: "currentColor" }], "M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"],
   trash: ["M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"],
+  download: ["M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", "M7 10l5 5 5-5", "M12 15V3"],
+  chevron: ["M6 9l6 6 6-6"],
 };
 function selectBox(cls, leadIcon) {
   const wrap = el("div", `sm-select ${cls || ""}`.trim());
@@ -789,8 +811,9 @@ function buildSide() {
     sw[key].b.dataset.setting = key;
     switches.append(sw[key].b);
   }
-  // The last take: Export MP4, its progress and Cancel, Show in folder, and
-  // the raw recording when no MP4 can be made.
+  // The last take: Export Performance (a menu: one MP4, or a package for
+  // DaVinci Resolve), its progress and Cancel, Show in folder, and the raw
+  // recording when no MP4 can be made.
   const exp = el("div", "sm-export");
   exp.hidden = true;
   const expText = el("p", "sm-export-text");
@@ -800,8 +823,14 @@ function buildSide() {
   expBar.value = 0;
   expBar.hidden = true;
   const expRow = el("div", "sm-export-row");
+  // Opens the menu (exportMenu.js); the menu's action row exports.
   const expGo = button("sm-primary sm-export-go");
-  expGo.addEventListener("click", () => runExport());
+  expGo.setAttribute("aria-haspopup", "menu");
+  expGo.setAttribute("aria-expanded", "false");
+  expGo.setAttribute("aria-controls", "sm-export-menu");
+  const expCaret = icon(ICONS.chevron, { size: 13, width: 2.4 });
+  expCaret.classList.add("sm-export-caret");
+  expGo.append(icon(ICONS.download, { size: 16, width: 2 }), tx(el("span", "sm-export-go-label"), "streamer.export.menu"), expCaret);
   const expCancel = tx(button("sm-ib sm-export-cancel"), "streamer.export.cancel");
   expCancel.addEventListener("click", () => cancelRunningExport());
   const expReveal = tx(button("sm-ib sm-export-reveal"), "streamer.export.reveal");
@@ -817,7 +846,8 @@ function buildSide() {
   // Sound and picture sync of the last take, under its export: what was
   // measured, and the nudge the export then uses (syncControl.js).
   const expSync = createSyncControl({ onSaved: syncSaved });
-  exp.append(expText, expBar, expRow, expSync.el);
+  const expMenu = buildExportMenu(expGo);
+  exp.append(expText, expBar, expRow, expMenu.panel, expSync.el);
   body.append(
     field("streamer.videoSource", "streamerVideoSrc", vsrc.sel), vsrc.wrap, vstate.line,
     field("streamer.audioSource", "streamerAudioSrc", asrc.sel), asrc.wrap, astate.line,
@@ -831,8 +861,87 @@ function buildSide() {
   return {
     aside, fps: fps.sel, vsrc: vsrc.sel, asrc: asrc.sel, vstate, astate,
     meter, meterRows, level, res: res.sel, heavy, sw,
-    exp, expText, expBar, expGo, expCancel, expReveal, expRaw, expSync,
+    exp, expText, expBar, expGo, expCancel, expReveal, expRaw, expSync, expMenu,
   };
+}
+
+/**
+ * The Export Performance menu, inline under its button at every width (a
+ * popover would be cut by the scrolling side panel): the format tabs, the
+ * lines saying why the export is not offered, the DaVinci Resolve options,
+ * and the action row. exportMenu.js owns its keyboard and ARIA; paintExport
+ * paints it from recordModel.exportMenuState.
+ */
+function buildExportMenu(go) {
+  const panel = el("div", "sm-export-menu");
+  panel.id = "sm-export-menu";
+  panel.hidden = true;
+  panel.setAttribute("role", "menu");
+  tx(panel, "export.optionsAria", "aria-label");
+  const fmts = el("div", "sm-export-fmts");
+  fmts.setAttribute("role", "radiogroup");
+  tx(fmts, "export.formatAria", "aria-label");
+  const fmt = {};
+  // Format names, the same in every language.
+  for (const [value, label] of [["mp4", "MP4"], ["resolve", "DaVinci Resolve"]]) {
+    const b = button("sm-export-fmt");
+    b.setAttribute("role", "radio");
+    b.dataset.format = value;
+    b.textContent = label;
+    fmt[value] = b;
+    fmts.append(b);
+  }
+  const why = el("div", "sm-export-why");
+  why.setAttribute("role", "status");
+  why.hidden = true;
+  const opts = el("div", "sm-export-opts");
+  const stems = makeSwitch("sm-export-opt", "streamer.export.stems", exportOpts.stems, (on) => {
+    exportOpts.stems = on;
+  });
+  stems.b.dataset.opt = "stems";
+  const click = makeSwitch("sm-export-opt", "export.includeClick", exportOpts.click, (on) => {
+    exportOpts.click = on;
+  });
+  click.b.dataset.opt = "click";
+  const clickWhy = tx(el("p", "sm-export-opt-why"), "click.reason.noBeatGrid");
+  clickWhy.hidden = true;
+  opts.append(stems.b, click.b, clickWhy);
+  const run = button("sm-export-run");
+  run.setAttribute("role", "menuitem");
+  const runText = el("span", "sm-export-run-text");
+  const runTitle = el("span", "sm-export-run-title");
+  const runDesc = el("span", "sm-export-run-desc");
+  runText.append(runTitle, runDesc);
+  run.append(icon(ICONS.download, { size: 18, width: 1.9 }), runText);
+  panel.append(fmts, why, opts, run);
+  const menu = createExportMenu({
+    button: go,
+    panel,
+    formats: [{ value: "mp4", el: fmt.mp4 }, { value: "resolve", el: fmt.resolve }],
+    initialFormat: exportFormat,
+    activeClass: "is-on",
+    onFormat: (f) => {
+      exportFormat = f;
+      writeExportFormat(f);
+      painted.exp = null;
+    },
+    rows: () => [stems.b, click.b, run].filter((r) => r.offsetParent !== null && !r.disabled),
+    canOpen: () => !exporting && !takeOpen() && Boolean(currentJobId && lastTake(currentJobId)),
+    onOpen: () => {
+      checkExportGates();
+      painted.exp = null;
+    },
+  });
+  // A key can change while the menu is open: the gates are asked again.
+  menu.wireRow(run, () => {
+    menu.close();
+    runExport(exportFormat);
+  }, { gate: () => {
+    checkExportGates();
+    painted.exp = null;
+    if (ui) paintExport(recordState());
+  } });
+  return { panel, menu, fmt, why, opts, stems, click, clickWhy, run, runTitle, runDesc };
 }
 
 function relabel() {
@@ -2054,10 +2163,57 @@ function paintRecord() {
   paintExport(st);
 }
 
-// The export in progress: { jobId, takeId, abort, raw }.
+// The export in progress: { jobId, takeId, abort, kind } (kind "mp4" or "resolve").
 let exporting = null;
 let exportNote = "";
-let exportError = null; // { code, raw }
+let exportError = null; // { code, kind }
+// The Export Performance menu: the format, the DaVinci Resolve options (for
+// the session), and what was found when it opened (a transposed mix this
+// ffmpeg cannot export, a beat grid for the click).
+let exportFormat = readExportFormat();
+const exportOpts = { stems: false, click: false };
+let exportGates = { transposed: false, hasGrid: true };
+
+/** The gates, asked when the menu opens and again on its action. */
+function checkExportGates() {
+  const job = currentJobId;
+  const trackId = job ? streamerTrackId(job) : null;
+  const mix = currentMixLanes();
+  // The Performance track is the take itself, never the backing.
+  const pitches = (mix.names || []).map((n, i) => (n === trackId ? 0 : mix.pitches?.[i] ?? 0));
+  exportGates = { transposed: transposeExportBlocked(pitches, transposeExportAvailable), hasGrid: getBeats().length > 0 };
+}
+
+/** The menu's state now (recordModel.exportMenuState). */
+function exportMenuNow(take) {
+  const entry = serverTake(take);
+  return exportMenuState({
+    format: exportFormat,
+    hasTake: Boolean(take),
+    hasCamera: typeof entry?.has_camera === "boolean" ? entry.has_camera : null,
+    // The MP4 without the mixed audio has no backing to transpose.
+    transposeBlocked: exportGates.transposed && (exportFormat === "resolve" || settings.recordMixedAudio),
+    hasGrid: exportGates.hasGrid,
+    error: exportError,
+  });
+}
+
+function paintExportMenu(ms) {
+  const m = ui.side.expMenu;
+  m.menu.setFormat(ms.format, { silent: true });
+  m.runTitle.textContent = t(ms.runKey);
+  m.runDesc.textContent = t(ms.descKey);
+  if (ms.runOff) m.run.setAttribute("aria-disabled", "true");
+  else m.run.removeAttribute("aria-disabled");
+  m.why.hidden = !ms.reasons.length;
+  // One line per reason, each its own sentence.
+  m.why.replaceChildren(...ms.reasons.map((k) => el("p", "", t(k))));
+  m.opts.hidden = !ms.options;
+  m.stems.set(exportOpts.stems);
+  m.click.b.disabled = ms.clickOff;
+  m.click.set(exportOpts.click && !ms.clickOff);
+  m.clickWhy.hidden = !ms.clickOff;
+}
 
 function paintExport(st) {
   const s = ui.side;
@@ -2070,9 +2226,11 @@ function paintExport(st) {
   const elsewhere = busy && exporting.jobId !== job;
   const shot = take ? takeInfo(take) : null;
   const asRecorded = shot && shot.aspect !== scene.aspect ? shot.aspect : "";
-  const sig = `${st.state}|${take}|${busy}|${elsewhere}|${exportNote}|${exportError?.code || ""}|${asRecorded}|${t("streamer.export.go")}`;
+  const ms = exportMenuNow(take);
+  const sig = `${st.state}|${take}|${busy}|${elsewhere}|${exportNote}|${exportError?.code || ""}|${asRecorded}|${JSON.stringify(ms)}|${exportOpts.stems}|${exportOpts.click}|${t("streamer.export.menu")}`;
   if (painted.exp === sig) return;
   painted.exp = sig;
+  paintExportMenu(ms);
   // Always there: the one way out of Streamer (export to a file), waiting
   // for a take when there is none.
   s.exp.hidden = false;
@@ -2080,11 +2238,13 @@ function paintExport(st) {
     s.expText.textContent = t(st.state === "stopping" ? "streamer.rec.saving" : "streamer.rec.recording");
     s.expBar.hidden = true;
     for (const btn of [s.expGo, s.expCancel, s.expReveal, s.expRaw]) btn.hidden = true;
+    s.expMenu.menu.close();
     return;
   }
+  // While an export runs the menu is shut and its button gives way to Cancel.
+  if (busy || !take) s.expMenu.menu.close();
   s.expGo.hidden = busy;
   s.expGo.disabled = !take;
-  s.expGo.textContent = t(exportError && exportError.code !== "no-encoder" ? "streamer.export.retry" : "streamer.export.go");
   s.expCancel.hidden = !busy;
   s.expBar.hidden = !busy;
   s.expReveal.hidden = !(st.state === "exported" && canRevealSaved());
@@ -2097,15 +2257,19 @@ function paintExport(st) {
     : exportNote || (take ? ready : t("streamer.export.none"));
 }
 
-async function runExport() {
+/** Export the last take as `format`: "mp4" (one video file) or "resolve"
+ * (the DaVinci Resolve package). */
+async function runExport(format = "mp4") {
   const job = currentJobId;
   const takeId = job ? lastTake(job) : null;
   if (!takeId || exporting || takeOpen()) return;
+  const kind = format === "resolve" ? "resolve" : "mp4";
+  const progressKey = kind === "resolve" ? "streamer.export.packaging" : "streamer.export.rendering";
   const meta = trackMeta();
   const abort = new AbortController();
-  exporting = { jobId: job, takeId, abort };
+  exporting = { jobId: job, takeId, abort, kind };
   exportError = null;
-  exportNote = t("streamer.export.rendering", { pct: 0 });
+  exportNote = t(progressKey, { pct: 0 });
   markExport("export", { jobId: job, takeId });
   forgetSaved();
   painted.exp = null;
@@ -2115,25 +2279,35 @@ async function runExport() {
     // The take's own shape: the aspect, size and rate it was recorded at
     // (the scene may have changed since); never stretched.
     const shot = recordedShape(takeId);
-    const body = renderRequest({
+    const request = {
       trackId: streamerTrackId(job),
       settings: { ...settings, resolution: shot.resolution, fps: shot.fps },
       aspect: shot.aspect,
       // The part left out while it was recorded: the export's backing is the same.
       remove: shot.remove ?? (part.job === job ? part.remove : ""),
       range: trimRange(scene, totalDuration),
-    });
-    const res = await exportTake({
+    };
+    const filename = exportFileName(meta.title, meta.artist, EXPORT_EXT[kind]);
+    // The package's timeline is named like its file.
+    const body = kind === "resolve"
+      ? packageRequest({
+        ...request,
+        backing: exportOpts.stems ? "stems" : "mix",
+        click: exportOpts.click && getBeats().length > 0,
+        name: filename.slice(0, -".otioz".length),
+      })
+      : renderRequest(request);
+    const res = await (kind === "resolve" ? exportPackage : exportTake)({
       jobId: job,
       takeId,
       body,
       // The take through the live effects it was heard with (or none).
       print: takePrintItem(job, takeId),
-      filename: exportFileName(meta.title, meta.artist),
+      filename,
       signal: abort.signal,
       onProgress: (f) => {
         bar.value = f;
-        exportNote = t("streamer.export.rendering", { pct: Math.round(f * 100) });
+        exportNote = t(progressKey, { pct: Math.round(f * 100) });
         painted.exp = null;
       },
       onTransferStart: () => {
@@ -2146,7 +2320,9 @@ async function runExport() {
     markExport(res.saved ? "done" : "cancel");
     // Saved, with what made the video ("Encoded with NVIDIA GPU." or the
     // GPU fallback sentence) when the server said.
-    const encoded = res.saved ? encoderNote(res, t) : "";
+    // A package over 4 GB says so: whether DaVinci Resolve opens one that
+    // large is not known.
+    const encoded = !res.saved ? "" : kind === "resolve" ? (res.large ? t("streamer.export.large") : "") : encoderNote(res, t);
     exportNote = !res.saved
       ? t("streamer.export.notSaved")
       : encoded ? t("streamer.export.savedWith", { note: encoded }) : t("streamer.export.saved");
@@ -2160,9 +2336,14 @@ async function runExport() {
       markExport("fail");
       forgetTake(job, takeId);
       exportNote = t("streamer.export.takeGone");
+    } else if (err?.code === "no-camera") {
+      // The take is there without a picture: kept, and nothing to retry.
+      markExport("fail");
+      exportError = { code: "no-camera", kind };
+      exportNote = t("streamer.export.noCamera");
     } else {
       markExport("fail");
-      exportError = { code: err?.code || "failed" };
+      exportError = { code: err?.code || "failed", kind };
       // The server's reason, when it gave one, after the sentence.
       const reason = exportReason(err);
       exportNote = err?.code === "no-encoder" ? t("streamer.export.noEncoder")
@@ -2219,9 +2400,9 @@ async function checkLastTake(job) {
 
 function cancelRunningExport() {
   if (!exporting) return;
-  const { jobId, takeId, abort } = exporting;
+  const { jobId, takeId, abort, kind } = exporting;
   abort.abort();
-  cancelExport(jobId, takeId);
+  cancelExport(jobId, takeId, kind === "resolve" ? "resolve" : "render");
 }
 
 function saveRaw() {

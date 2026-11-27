@@ -48,8 +48,10 @@ function btn(cls, text) {
   return b;
 }
 
+// The Studio export panel's format (scoped: Performance has its own tabs,
+// earlier in the page).
 function exportFormat() {
-  return document.querySelector(".export-fmt.active")?.id?.replace("t-fmt-", "") || "wav";
+  return document.querySelector("#t-export-panel .export-fmt.active")?.id?.replace("t-fmt-", "") || "wav";
 }
 
 // ─── Building ───
