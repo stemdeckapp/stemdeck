@@ -1,5 +1,5 @@
 // One export menu: a button that opens a panel with a format choice (a
-// radiogroup) and action rows. Performance's Export Performance menu
+// radiogroup) and action rows. Performance's Export menu
 // (streamer/streamer.js) and the Studio's Export Mix (main.js) are both this.
 //
 // It owns what both have to get the same: the button's aria-expanded, the

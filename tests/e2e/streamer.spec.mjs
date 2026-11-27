@@ -477,13 +477,13 @@ test.describe("Streamer Mode polish", () => {
       return r.fulfill({ response: res, json: { ...job, takes: [...(job.takes || []), { id: "fake-take" }] } });
     });
     await openStreamer(page);
-    // Export Performance opens its menu; the MP4 row exports.
+    // Export opens its menu; the MP4 row exports.
     await sm(page, ".sm-export-go").click();
     await sm(page, '.sm-export-fmt[data-format="mp4"]').click();
     await sm(page, ".sm-export-run").click();
     await expect(sm(page, ".sm-export-text")).toContainText("ffmpeg exited with code 1");
     // The button keeps its name; the menu's row offers Try again.
-    await expect(sm(page, ".sm-export-go")).toHaveText("Export Performance");
+    await expect(sm(page, ".sm-export-go")).toHaveText("Export");
     await sm(page, ".sm-export-go").click();
     await expect(sm(page, ".sm-export-run-title")).toHaveText("Try again");
   });

@@ -1,4 +1,4 @@
-// Performance's Export Performance menu: its state (recordModel.exportMenuState),
+// Performance's Export menu: its state (recordModel.exportMenuState),
 // the DaVinci Resolve request (recordModel.buildPackageRequest), the file
 // names, and that every new string and Guide row is there in all ten
 // languages (static/js/i18n.js, static/js/helpMode.js).
@@ -93,11 +93,18 @@ const KEYS = [
 for (const lang of LANGS) {
   const table = TRANSLATIONS[lang];
   const missing = KEYS.filter((k) => typeof table?.[k] !== "string" || !table[k].trim());
-  check(`${lang}: every Export Performance string`, missing.length === 0, missing.join(", "));
+  check(`${lang}: every Export menu string`, missing.length === 0, missing.join(", "));
   const packaging = table?.["streamer.export.packaging"] || "";
   check(`${lang}: the progress keeps its {pct}`, packaging.includes("{pct}"));
 }
 check("English names the version floor", TRANSLATIONS.en["streamer.export.resolveDesc"].includes("18.5"));
+// The panel only exports the performance, so its button says Export (#1144).
+check("the button is Export", TRANSLATIONS.en["streamer.export.menu"] === "Export");
+check("pt-PT says it as pt does (no override)", !("streamer.export.menu" in TRANSLATIONS["pt-PT"]));
+for (const lang of LANGS) {
+  const label = TRANSLATIONS[lang]?.["streamer.export.menu"] || "";
+  check(`${lang}: the button is one short label`, label.length > 0 && label.length <= 12, label);
+}
 
 const help = readFileSync(fileURLToPath(new URL("../../static/js/helpMode.js", import.meta.url)), "utf8");
 for (const [sel, key] of [
@@ -109,7 +116,7 @@ for (const [sel, key] of [
 ]) {
   check(`the Guide explains ${sel}`, help.includes(`${sel}", "${key}"`) || help.includes(`${sel}', "${key}"`));
 }
-check("in the Guide, Export Performance still opens its menu", /const PASS = "[^"]*#streamer \.sm-export-go/.test(help));
+check("in the Guide, Export still opens its menu", /const PASS = "[^"]*#streamer \.sm-export-go/.test(help));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
